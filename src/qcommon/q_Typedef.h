@@ -6,6 +6,10 @@
 
 #pragma once
 
+#ifndef _WIN32
+	#include "platform_compat.h"
+#endif
+
 typedef float vec3_t[3];
 typedef float matrix3_t[3][3];
 

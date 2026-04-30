@@ -12,7 +12,11 @@
 #include "snd_wav.h"
 #include "Vector.h"
 
+#ifdef _WIN32
 #define SNDLIB_DECLSPEC __declspec(dllexport)
+#else
+#define SNDLIB_DECLSPEC __attribute__((visibility("default")))
+#endif
 #define SNDLIB_NAME	"SDL3 Aureal 3D"
 
 snd_import_t si;

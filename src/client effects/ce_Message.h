@@ -8,6 +8,8 @@
 
 #include "SinglyLinkedList.h"
 
+typedef struct client_entity_s client_entity_t;
+
 typedef enum CE_MsgID_e
 {
 	MSG_COLLISION = 0, // (parm1) trace_t* trace -- the trace matching the collision, valid only on the frame of collision.
@@ -20,13 +22,13 @@ typedef struct Message_s
 	SinglyLinkedList_t parms;
 } CE_Message_t;
 
-typedef void (*CE_MessageHandler_t)(struct client_entity_s* self, CE_Message_t* msg);
-typedef void (*CE_MsgReceiver_t)(struct client_entity_s* self, CE_Message_t* msg);
+typedef void (*CE_MessageHandler_t)(client_entity_t* self, CE_Message_t* msg);
+typedef void (*CE_MsgReceiver_t)(client_entity_t* self, CE_Message_t* msg);
 
 extern void CE_InitMsgMngr(void);
 extern void CE_ReleaseMsgMngr(void);
 
-extern void CE_PostMessage(struct client_entity_s* to, CE_MsgID_t id, const char* format, ...);
+extern void CE_PostMessage(client_entity_t* to, CE_MsgID_t id, const char* format, ...);
 extern int CE_ParseMsgParms(CE_Message_t* msg, const char* format, ...);
-extern void CE_ProcessMessages(struct client_entity_s* self);
-extern void CE_ClearMessageQueue(struct client_entity_s* self);
+extern void CE_ProcessMessages(client_entity_t* self);
+extern void CE_ClearMessageQueue(client_entity_t* self);

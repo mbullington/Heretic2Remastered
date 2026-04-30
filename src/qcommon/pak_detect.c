@@ -4,6 +4,7 @@
 // Searches common Heretic II installation locations and copies PAK files if found.
 //
 
+#ifdef _WIN32
 #include <windows.h>
 #include <stdio.h>
 #include <string.h>
@@ -210,3 +211,15 @@ qboolean CD_SearchAndCopyPaks(const char* base_dir)
 }
 
 #pragma endregion
+
+#else
+
+#include "qcommon.h"
+
+qboolean CD_SearchAndCopyPaks(const char* base_dir)
+{
+	(void)base_dir;
+	return false;
+}
+
+#endif // _WIN32

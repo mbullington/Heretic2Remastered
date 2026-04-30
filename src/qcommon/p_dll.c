@@ -4,7 +4,9 @@
 // Copyright 1998 Raven Software
 //
 
-#include <windows.h>
+#ifdef _WIN32
+	#include <windows.h>
+#endif
 #include "p_dll.h" //mxd
 #ifdef GAME_DLL
 	#include "g_local.h" //mxd

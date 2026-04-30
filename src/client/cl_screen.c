@@ -533,6 +533,9 @@ static void SCR_DrawConsole(void)
 
 void SCR_BeginLoadingPlaque(void)
 {
+	if (dedicated != NULL && (int)dedicated->value)
+		return;
+
 	se.StopAllSounds_Sounding();
 	se.MusicStop(); //mxd. CDAudio_Stop() in original logic.
 	cl.sound_prepped = false; // Don't play ambients.
@@ -569,6 +572,9 @@ void SCR_BeginLoadingPlaque(void)
 
 void SCR_EndLoadingPlaque(void)
 {
+	if (dedicated != NULL && (int)dedicated->value)
+		return;
+
 	cls.disable_screen = false;
 	scr_draw_loading_plaque = false; // H2
 	scr_draw_loading = false; // H2

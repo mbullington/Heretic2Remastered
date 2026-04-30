@@ -142,12 +142,14 @@ typedef struct client_particle_s
 #define SPH_YAW			1
 #define SPH_PITCH		2
 
+typedef struct client_entity_s client_entity_t;
+
 extern void InitParticleMngr(void);
 extern void ReleaseParticleMngr(void);
 
-extern void AddParticleToList(struct client_entity_s* ce, client_particle_t* fx);
+extern void AddParticleToList(client_entity_t* ce, client_particle_t* fx);
 extern void RemoveParticleList(client_particle_t** root);
-extern int AddParticlesToView(struct client_entity_s* ce);
-extern int UpdateParticles(struct client_entity_s* ce);
-extern void FreeParticles(struct client_entity_s* ce);
+extern int AddParticlesToView(client_entity_t* ce);
+extern int UpdateParticles(client_entity_t* ce);
+extern void FreeParticles(client_entity_t* ce);
 extern client_particle_t* ClientParticle_new(int type, paletteRGBA_t color, int duration);

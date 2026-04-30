@@ -5,7 +5,9 @@
 //
 
 #include <setjmp.h>
-#include <windows.h>
+#ifdef _WIN32
+	#include <windows.h>
+#endif
 #include "client.h"
 #include "clfx_dll.h"
 #include "cl_camera.h"
@@ -709,6 +711,7 @@ static void CL_Setenv_f(void)
 // and renders the loading screen while waiting).
 // ============================================================
 
+#ifdef _WIN32
 #define LOADMAP_WORKING  0
 #define LOADMAP_OK       1
 #define LOADMAP_FAILED   2
@@ -789,6 +792,12 @@ static void CL_LoadMapAsync(const char* name, qboolean clientload, uint* out_che
 
 	*out_checksum = s_loadmap.checksum;
 }
+#else
+static void CL_LoadMapAsync(const char* name, qboolean clientload, uint* out_checksum)
+{
+	CM_LoadMap(name, clientload, out_checksum);
+}
+#endif
 
 void CL_RequestNextDownload(void)
 {

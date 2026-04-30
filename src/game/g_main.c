@@ -26,7 +26,11 @@
 #include "Vector.h"
 #include "g_local.h"
 
+#ifdef _WIN32
 #define GAME_DECLSPEC	__declspec(dllexport)
+#else
+#define GAME_DECLSPEC	__attribute__((visibility("default")))
+#endif
 
 game_locals_t game;
 level_locals_t level;

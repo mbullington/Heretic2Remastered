@@ -218,6 +218,17 @@ The engine loads content from `base.pak`, `Htic2-0.pak` through `Htic2-9.pak`, a
 - **Music (OGG)** — the sound backend tries `FS_LoadFile` with `stb_vorbis_open_memory`, falling back to `stb_vorbis_open_filename` for loose files.
 - **HD videos (MP4/MKV)** — the client tries loose files first, then extracts from PAK to a temporary file for Windows Media Foundation playback (which requires a file path).
 
+## Building on macOS
+
+A native macOS CMake/Ninja build is available. Install CMake, Ninja, SDL3, and OpenAL/openal-soft, then run:
+
+```sh
+cmake -S . -B cmake-build-macos -G Ninja
+cmake --build cmake-build-macos
+```
+
+The executable and plugins are written to `build/`: `Heretic2R`, `ref_gl3.dylib`, `snd_sdl3.dylib`, `gamex86.dylib`, `Player.dylib`, `Client Effects.dylib`, and `H2Common.dylib`. The native renderer requests an OpenGL 3.3+ core profile and uses OpenGL 4.1 on macOS.
+
 ## Technical notes
 
 * Savegames/configs/screenshots/logs are stored in "**%USERPROFILE%\Saved Games\Heretic2R**".
@@ -235,6 +246,12 @@ The engine loads content from `base.pak`, `Htic2-0.pak` through `Htic2-9.pak`, a
 * [libsmacker](https://github.com/JonnyH/libsmacker)
 * [SDL3](https://www.libsdl.org)
 * [stb](https://github.com/nothings/stb) (specifically, stb_image, stb_image_write, and stb_vorbis)
+
+## Licensing and provenance
+
+This repository is not a verified clean GPLv3 source release of Heretic II. It is a reverse-engineered source port that contains files attributed to Raven Software, code with history indicating origin from the Heretic II Toolkit v1.06, project-specific contributions, and third-party libraries under their own licenses.
+
+See [LICENSE](LICENSE) for the provenance notice and [COPYING.GPL-3.0](COPYING.GPL-3.0) for the GPLv3 text that applies only to files and contributions validly licensed under GPLv3 by their copyright holders.
 
 ## SAST Tools
 

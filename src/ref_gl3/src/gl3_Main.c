@@ -29,7 +29,11 @@
 #define M_PI 3.14159265358979323846
 #endif
 
+#ifdef _WIN32
 #define REF_DECLSPEC	__declspec(dllexport)
+#else
+#define REF_DECLSPEC	__attribute__((visibility("default")))
+#endif
 
 viddef_t viddef;
 refimport_t ri;

@@ -8,7 +8,9 @@
 #include "gl3_Draw.h"
 #include "gl3_Light.h"
 #include <stb/stb_image.h>
+#ifdef _WIN32
 #include <io.h> // _findfirst, _findnext, _findclose
+#endif
 
 image_t gltextures[MAX_GLTEXTURES];
 int numgltextures;

@@ -6,8 +6,16 @@
 
 #pragma once
 
-#ifdef H2COMMON
-	#define H2COMMON_API __declspec(dllexport)
+#ifndef _WIN32
+	#include "platform_compat.h"
+#endif
+
+#ifdef _WIN32
+	#ifdef H2COMMON
+		#define H2COMMON_API __declspec(dllexport)
+	#else
+		#define H2COMMON_API __declspec(dllimport)
+	#endif
 #else
-	#define H2COMMON_API __declspec(dllimport)
+	#define H2COMMON_API __attribute__((visibility("default")))
 #endif

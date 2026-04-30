@@ -15,9 +15,11 @@
 #include "qcommon.h"
 
 #include <SDL3/SDL.h>
-#include <windows.h>
-#include <wininet.h>
-#pragma comment(lib, "wininet.lib")
+#ifdef _WIN32
+	#include <windows.h>
+	#include <wininet.h>
+	#pragma comment(lib, "wininet.lib")
+#endif
 
 #define UPDATES_URL			"https://github.com/spacefarergames/Heretic2Remastered/releases"
 #define VERSIONDATE_URL		"https://raw.githubusercontent.com/spacefarergames/Heretic2Remastered/refs/heads/main/VERSIONDATE"
@@ -53,6 +55,7 @@ static void MainOnlineFunc(void* data)
 
 static void MainCheckUpdatesFunc(void* data)
 {
+#ifdef _WIN32
 	HINTERNET h_internet = InternetOpenA("Heretic2R", INTERNET_OPEN_TYPE_PRECONFIG, NULL, NULL, 0);
 	if (h_internet == NULL)
 	{
@@ -122,6 +125,10 @@ static void MainCheckUpdatesFunc(void* data)
 		s_updates_action.generic.width = re.BF_Strlen(name_updates);
 		s_updates_action.generic.flags |= QMF_GRAYED;
 	}
+#else
+	(void)data;
+	SDL_OpenURL(UPDATES_URL);
+#endif
 }
 
 static void Main_MenuInit(void)

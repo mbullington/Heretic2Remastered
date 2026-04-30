@@ -6,7 +6,11 @@
 
 #pragma once
 
-#include <windows.h>
+#ifdef _WIN32
+	#include <windows.h>
+#else
+	#include "platform_compat.h"
+#endif
 #include "client.h"
 
 extern client_fx_import_t fxi;

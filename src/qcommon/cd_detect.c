@@ -4,6 +4,7 @@
 // Copyright 2025
 //
 
+#ifdef _WIN32
 #include <windows.h>
 #include <stdio.h>
 #include <string.h>
@@ -731,3 +732,21 @@ qboolean CD_DetectAndExtract(const char* base_dir)
 }
 
 #pragma endregion
+
+#else
+
+#include "qcommon.h"
+#include "cd_detect.h"
+
+const char* CD_GetDrivePath(void)
+{
+	return NULL;
+}
+
+qboolean CD_DetectAndExtract(const char* base_dir)
+{
+	(void)base_dir;
+	return false;
+}
+
+#endif // _WIN32

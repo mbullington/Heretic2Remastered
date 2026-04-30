@@ -4,12 +4,20 @@
 // Copyright 1998 Raven Software
 //
 
-#include <windows.h>
+#ifdef _WIN32
+	#include <windows.h>
+#endif
 #include "qcommon.h"
 #include "client.h"
 #include "snd_dll.h" //mxd
 #include "clfx_dll.h"
 #include "cd_audio.h"
+
+#ifdef _WIN32
+	#define SND_LIB_EXT ".dll"
+#else
+	#define SND_LIB_EXT ".dylib"
+#endif
 
 snd_export_t se; //mxd
 
@@ -136,7 +144,7 @@ static void SND_InitSndlibInfos(void) //mxd
 
 	// Find all compatible snd_xxx.dll libraries.
 	char mask[MAX_QPATH];
-	Com_sprintf(mask, sizeof(mask), "snd_*.dll");
+	Com_sprintf(mask, sizeof(mask), "snd_*" SND_LIB_EXT);
 
 	const char* snd_path = Sys_FindFirst(mask, 0, 0);
 

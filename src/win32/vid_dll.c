@@ -12,6 +12,11 @@
 #include "glimp_sdl3.h" // YQ2
 
 #define FALLBACK_REFLIB	"gl3" //mxd. GL3 is the only supported renderer.
+#ifdef _WIN32
+	#define REF_LIB_EXT ".dll"
+#else
+	#define REF_LIB_EXT ".dylib"
+#endif
 
 // Structure containing functions exported from refresh DLL.
 refexport_t re;
@@ -303,7 +308,7 @@ static void VID_InitReflibInfos(void) //mxd
 
 	// Find all compatible ref_xxx.dll libraries.
 	char mask[MAX_QPATH];
-	Com_sprintf(mask, sizeof(mask), "ref_*.dll");
+	Com_sprintf(mask, sizeof(mask), "ref_*" REF_LIB_EXT);
 
 	const char* ref_path = Sys_FindFirst(mask, 0, 0);
 	
@@ -339,7 +344,7 @@ void VID_CheckChanges(void) //TODO: check YQ2 logic.
 		Cvar_ForceSet("vid_ref", "gl3"); //mxd. GL3 is the only supported renderer.
 
 		char ref_name[100];
-		Com_sprintf(ref_name, sizeof(ref_name), "ref_%s.dll", vid_ref->string);
+		Com_sprintf(ref_name, sizeof(ref_name), "ref_%s" REF_LIB_EXT, vid_ref->string);
 
 		if (!VID_LoadRefresh(ref_name))
 		{

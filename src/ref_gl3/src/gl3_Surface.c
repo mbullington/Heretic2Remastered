@@ -6,6 +6,7 @@
 //
 
 #include "gl3_Surface.h"
+#include "gl3_Sprite.h"
 #include "gl3_FlexModel.h"
 #include "gl3_Image.h"
 #include "gl3_Light.h"

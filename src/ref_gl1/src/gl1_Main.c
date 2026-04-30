@@ -23,7 +23,11 @@
 #include "Vector.h"
 #include "vid.h"
 
+#ifdef _WIN32
 #define REF_DECLSPEC	__declspec(dllexport)
+#else
+#define REF_DECLSPEC	__attribute__((visibility("default")))
+#endif
 
 viddef_t viddef; // H2: renamed from vid, defined in vid.h?
 refimport_t ri;

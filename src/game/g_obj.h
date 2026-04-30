@@ -7,6 +7,7 @@
 #pragma once
 
 #include "FX.h"
+#include "g_Message.h"
 #include "q_shared.h"
 #include "q_Typedef.h"
 

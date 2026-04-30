@@ -6,10 +6,14 @@
 
 #pragma once
 
-#ifdef PLAYER_DLL
-	#define PLAYER_API __declspec(dllexport)
+#ifdef _WIN32
+	#ifdef PLAYER_DLL
+		#define PLAYER_API __declspec(dllexport)
+	#else
+		#define PLAYER_API __declspec(dllimport)
+	#endif
 #else
-	#define PLAYER_API __declspec(dllimport)
+	#define PLAYER_API __attribute__((visibility("default")))
 #endif
 
 #include "p_types.h"

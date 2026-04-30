@@ -24,18 +24,24 @@
 #define GAME_NAME			"Heretic 2 Remastered" //mxd
 #define GAME_FULLNAME		GAME_NAME" "VERSIONDISP //mxd
 
-#ifdef _WIN32
-	#ifdef NDEBUG
-		#define BUILDSTRING "RELEASE"
-	#else
-		#define BUILDSTRING "DEBUG"
-	#endif
+#ifdef NDEBUG
+	#define BUILDSTRING "RELEASE"
+#else
+	#define BUILDSTRING "DEBUG"
+#endif
 
+#ifdef _WIN32
 	#ifdef _WIN64
 		#define CPUSTRING	"x64"
 	#else
 		#define CPUSTRING	"x86"
 	#endif
+#elif defined(__aarch64__) || defined(__arm64__)
+	#define CPUSTRING	"arm64"
+#elif defined(__x86_64__)
+	#define CPUSTRING	"x64"
+#else
+	#define CPUSTRING	"unknown"
 #endif
 
 typedef struct sizebuf_s

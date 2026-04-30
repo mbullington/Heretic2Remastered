@@ -4,7 +4,9 @@
 // Copyright 1998 Raven Software
 //
 
+#ifdef _WIN32
 #include <windows.h>
+#endif
 #include "Hunk.h"
 #include "gl3_Local.h"
 
@@ -22,9 +24,15 @@ void* Hunk_Begin(const int maxsize)
 	hunkmaxsize = maxsize + sizeof(uint) + 32;
 	cursize = 0;
 
+#ifdef _WIN32
 	membase = VirtualAlloc(NULL, maxsize, MEM_RESERVE, PAGE_NOACCESS);
 	if (membase == NULL)
 		ri.Sys_Error(ERR_DROP, "VirtualAlloc reserve failed");
+#else
+	membase = malloc(hunkmaxsize);
+	if (membase == NULL)
+		ri.Sys_Error(ERR_DROP, "Hunk_Begin malloc failed");
+#endif
 
 	return membase;
 }
@@ -35,6 +43,7 @@ void* Hunk_Alloc(int size)
 	// Round to cacheline.
 	size = (size + 31) & ~31;
 
+#ifdef _WIN32
 	// Commit pages as needed.
 	void* buf = VirtualAlloc(membase, cursize + size, MEM_COMMIT, PAGE_READWRITE);
 
@@ -43,6 +52,7 @@ void* Hunk_Alloc(int size)
 		FormatMessage(FORMAT_MESSAGE_ALLOCATE_BUFFER | FORMAT_MESSAGE_FROM_SYSTEM, NULL, GetLastError(), MAKELANGID(LANG_NEUTRAL, SUBLANG_DEFAULT), (LPTSTR)&buf, 0, NULL);
 		ri.Sys_Error(ERR_DROP, "VirtualAlloc commit failed.\n%s", buf);
 	}
+#endif
 
 	cursize += size;
 
@@ -63,7 +73,13 @@ int Hunk_End(void)
 void Hunk_Free(void* buf)
 {
 	if (buf != NULL)
+	{
+#ifdef _WIN32
 		VirtualFree(buf, 0, MEM_RELEASE);
+#else
+		free(buf);
+#endif
+	}
 
 	hunkcount--;
 }
