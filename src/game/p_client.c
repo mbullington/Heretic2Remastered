@@ -2558,7 +2558,7 @@ void ClientThink(edict_t* ent, usercmd_t* ucmd)
 		const vec3_t los_origin = VEC3_INITA(ent->s.origin, 0.0f, 0.0f, (float)ent->viewheight);
 
 		//mxd. Use increased FOVs when we already have autotarget. Fixes frequent switching between auto-targeting and not when enemy is moving near the edge of FOVs.
-		const float autoaim_scaler = (cl_autoaim->value > 0.0f ? cl_autoaim->value : 1.0f); // Handle case when "Autoaim" button is pressed while cl_autoaim is 0...
+		const float autoaim_scaler = (game_cl_autoaim->value > 0.0f ? game_cl_autoaim->value : 1.0f); // Handle case when "Autoaim" button is pressed while cl_autoaim is 0...
 		const float h_fov = (have_autotarget ? ANGLE_60 : ANGLE_35) * autoaim_scaler;
 		const float v_fov = (have_autotarget ? ANGLE_40 : ANGLE_30) * autoaim_scaler;
 

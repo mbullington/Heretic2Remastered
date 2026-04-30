@@ -6,7 +6,9 @@
 
 #pragma once
 
-#ifdef _WIN32
+#if defined(H2_STATIC_GAME)
+	#define Q2DLL_DECLSPEC
+#elif defined(_WIN32)
 	#ifdef QUAKE2_DLL
 		#define Q2DLL_DECLSPEC __declspec(dllexport)
 	#else 

@@ -228,7 +228,7 @@ cmake -S . -B cmake-build-macos -G Ninja
 cmake --build cmake-build-macos
 ```
 
-The executable and plugins are written to `build/`: `Heretic2R`, `ref_gl3.dylib`, `snd_sdl3.dylib`, `gamex86.dylib`, `Player.dylib`, `Client Effects.dylib`, and `H2Common.dylib`. The native renderer requests an OpenGL 3.3+ core profile and uses OpenGL 4.1 on macOS.
+By default, the game, renderer, sound backend, player code, client effects, and common support code are linked into a single `build/Heretic2R` executable, so the build does not emit the old internal plugin `.dylib` files. To build the legacy plugin layout instead, configure with `-DH2_STATIC_GAME=OFF`. The native renderer requests an OpenGL 3.3+ core profile and uses OpenGL 4.1 on macOS.
 
 ## Technical notes
 

@@ -7,6 +7,11 @@
 #include "clfx_dll.h"
 #include "dll_io.h"
 
+#if defined(H2_STATIC_GAME) && defined(_WIN32)
+#undef GetProcAddress
+#define GetProcAddress(library, symbol) H2R_GetProcAddress((void*)(library), (symbol))
+#endif
+
 client_fx_import_t fxi;
 client_fx_export_t fxe;
 GetfxAPI_t GetfxAPI;

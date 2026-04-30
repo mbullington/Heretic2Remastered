@@ -119,8 +119,8 @@ void SetupPlayerinfo(edict_t* ent)
 
 	// Server variables.
 	ent->client->playerinfo.sv_gravity = sv_gravity->value;
-	ent->client->playerinfo.sv_cinematicfreeze = sv_cinematicfreeze->value;
-	ent->client->playerinfo.sv_jumpcinematic = sv_jumpcinematic->value;
+	ent->client->playerinfo.sv_cinematicfreeze = game_sv_cinematicfreeze->value;
+	ent->client->playerinfo.sv_jumpcinematic = game_sv_jumpcinematic->value;
 
 	// From edict_t.
 	ent->client->playerinfo.ideal_yaw = ent->ideal_yaw;

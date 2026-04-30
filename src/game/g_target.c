@@ -293,7 +293,7 @@ void SP_target_lightramp(edict_t* self)
 
 void TargetEarthquakeThink(edict_t* self) //mxd. Named 'target_earthquake_think' in original logic.
 {
-	if ((int)sv_jumpcinematic->value) // Don't do this if jumping a cinematic
+	if ((int)game_sv_jumpcinematic->value) // Don't do this if jumping a cinematic
 	{
 		self->think = NULL; //BUGFIX: mxd. Avoid triggering assert in EntityThink()...
 		return;
@@ -324,7 +324,7 @@ void TargetEarthquakeThink(edict_t* self) //mxd. Named 'target_earthquake_think'
 
 void TargetEarthquakeUse(edict_t* self, edict_t* other, edict_t* activator) //mxd. Named 'target_earthquake_use' in original logic.
 {
-	if ((int)sv_jumpcinematic->value) // Don't do this if jumping a cinematic.
+	if ((int)game_sv_jumpcinematic->value) // Don't do this if jumping a cinematic.
 		return;
 
 	self->activator = activator;

@@ -13,6 +13,15 @@
 #include "clfx_dll.h"
 #include "cd_audio.h"
 
+#if defined(H2_STATIC_GAME) && defined(_WIN32)
+#undef LoadLibrary
+#undef GetProcAddress
+#undef FreeLibrary
+#define LoadLibrary(name) ((HINSTANCE)H2R_LoadLibrary((name)))
+#define GetProcAddress(library, symbol) H2R_GetProcAddress((void*)(library), (symbol))
+#define FreeLibrary(library) H2R_FreeLibrary((void*)(library))
+#endif
+
 #ifdef _WIN32
 	#define SND_LIB_EXT ".dll"
 #elif defined(__APPLE__)
@@ -143,6 +152,13 @@ static qboolean SND_StoreSndlibInfo(const char* snd_path) //mxd
 static void SND_InitSndlibInfos(void) //mxd
 {
 	num_sndlib_infos = 0;
+
+#ifdef H2_STATIC_GAME
+	strcpy_s(sndlib_infos[0].title, sizeof(sndlib_infos[0].title), "SDL3 Aureal 3D");
+	strcpy_s(sndlib_infos[0].id, sizeof(sndlib_infos[0].id), DEFAULT_SOUND_LIBRARY_NAME);
+	num_sndlib_infos = 1;
+	return;
+#endif
 
 	// Find all compatible snd_xxx.dll libraries.
 	char mask[MAX_QPATH];

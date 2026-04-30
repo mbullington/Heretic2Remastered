@@ -11,6 +11,15 @@
 #include "clfx_dll.h"
 #include "glimp_sdl3.h" // YQ2
 
+#if defined(H2_STATIC_GAME) && defined(_WIN32)
+#undef LoadLibrary
+#undef GetProcAddress
+#undef FreeLibrary
+#define LoadLibrary(name) ((HINSTANCE)H2R_LoadLibrary((name)))
+#define GetProcAddress(library, symbol) H2R_GetProcAddress((void*)(library), (symbol))
+#define FreeLibrary(library) H2R_FreeLibrary((void*)(library))
+#endif
+
 #define FALLBACK_REFLIB	"gl3" //mxd. GL3 is the only supported renderer.
 #ifdef _WIN32
 	#define REF_LIB_EXT ".dll"
@@ -307,6 +316,13 @@ static qboolean VID_StroreReflibInfo(const char* ref_path) //mxd
 static void VID_InitReflibInfos(void) //mxd
 {
 	num_reflib_infos = 0;
+
+#ifdef H2_STATIC_GAME
+	strcpy_s(reflib_infos[0].title, sizeof(reflib_infos[0].title), "OpenGL 3.3+");
+	strcpy_s(reflib_infos[0].id, sizeof(reflib_infos[0].id), FALLBACK_REFLIB);
+	num_reflib_infos = 1;
+	return;
+#endif
 
 	// Find all compatible ref_xxx.dll libraries.
 	char mask[MAX_QPATH];

@@ -15,6 +15,53 @@
 #endif
 #include "qcommon.h"
 
+#ifdef H2_STATIC_GAME
+extern player_export_t GetPlayerAPI(void);
+extern void H2R_Player_P_Init(void);
+extern void H2R_Player_P_Shutdown(void);
+extern void PlayerReleaseRope(playerinfo_t* playerinfo);
+extern void KnockDownPlayer(playerinfo_t* playerinfo);
+extern void PlayFly(playerinfo_t* playerinfo, float dist);
+extern void PlaySlap(playerinfo_t* playerinfo, float dist);
+extern void PlayScratch(playerinfo_t* playerinfo, float dist);
+extern void PlaySigh(playerinfo_t* playerinfo, float dist);
+extern void SpawnDustPuff(playerinfo_t* playerinfo, float dist);
+extern void PlayerInterruptAction(playerinfo_t* playerinfo);
+extern qboolean BranchCheckDismemberAction(playerinfo_t* playerinfo, int weapon);
+extern void TurnOffPlayerEffects(playerinfo_t* playerinfo);
+extern void AnimUpdateFrame(playerinfo_t* playerinfo);
+extern void PlayerFallingDamage(playerinfo_t* playerinfo);
+extern void PlayerBasicAnimReset(playerinfo_t* playerinfo);
+extern void PlayerAnimReset(playerinfo_t* playerinfo);
+extern void PlayerAnimSetLowerSeq(playerinfo_t* playerinfo, int seq);
+extern void PlayerAnimSetUpperSeq(playerinfo_t* playerinfo, int seq);
+extern void PlayerAnimUpperIdle(playerinfo_t* playerinfo);
+extern void PlayerAnimLowerIdle(playerinfo_t* playerinfo);
+extern void PlayerAnimUpperUpdate(playerinfo_t* playerinfo);
+extern void PlayerAnimLowerUpdate(playerinfo_t* playerinfo);
+extern void PlayerAnimSetVault(playerinfo_t* playerinfo, int seq);
+extern void PlayerPlayPain(playerinfo_t* playerinfo, int type);
+extern void PlayerIntLand(playerinfo_t* playerinfo, float landspeed);
+extern void PlayerInit(playerinfo_t* playerinfo, int complete_reset);
+extern void PlayerClearEffects(const playerinfo_t* playerinfo);
+extern void PlayerUpdate(playerinfo_t* playerinfo);
+extern void PlayerUpdateCmdFlags(playerinfo_t* playerinfo);
+extern void PlayerUpdateModelAttributes(playerinfo_t* playerinfo);
+extern void Weapon_Ready(playerinfo_t* playerinfo, gitem_t* weapon);
+extern void Weapon_EquipSpell(playerinfo_t* playerinfo, gitem_t* weapon);
+extern void Weapon_EquipSwordStaff(playerinfo_t* playerinfo, gitem_t* weapon);
+extern void Weapon_EquipHellStaff(playerinfo_t* playerinfo, gitem_t* weapon);
+extern void Weapon_EquipBow(playerinfo_t* playerinfo, gitem_t* weapon);
+extern void Weapon_EquipArmor(playerinfo_t* playerinfo, gitem_t* weapon);
+extern int Weapon_CurrentShotsLeft(playerinfo_t* playerinfo);
+extern int Defence_CurrentShotsLeft(playerinfo_t* playerinfo, int intent);
+extern int GetItemIndex(const gitem_t* item);
+extern gitem_t* GetItemByIndex(int index);
+extern gitem_t* FindItemByClassname(const char* classname);
+extern gitem_t* FindItem(const char* pickup_name);
+extern void InitItems(void);
+#endif
+
 // Structure containing functions and data pointers exported from the player DLL.
 player_export_t	playerExport;
 
@@ -80,19 +127,85 @@ void P_Freelib(void)
 	{
 		P_Shutdown();
 
+#ifndef H2_STATIC_GAME
 #ifdef GAME_DLL
 		gi.Sys_UnloadGameDll("Player", &player_library);
 #else
 		Sys_UnloadGameDll("Player", &player_library);
+#endif
 #endif
 
 		player_library = NULL;
 	}
 }
 
+#ifdef H2_STATIC_GAME
+static uint P_LoadStatic(char* name)
+{
+	P_Freelib();
+
+	Com_ColourPrintf(P_HEADER, "---------- Loading %s (static) ----------\n", name);
+
+	player_library = (HINSTANCE)&player_library;
+	P_Init = H2R_Player_P_Init;
+	P_Shutdown = H2R_Player_P_Shutdown;
+	P_PlayerReleaseRope = PlayerReleaseRope;
+	P_KnockDownPlayer = KnockDownPlayer;
+	P_PlayFly = (void (*)(playerinfo_t*, float))PlayFly;
+	P_PlaySlap = (void (*)(playerinfo_t*, float))PlaySlap;
+	P_PlayScratch = (void (*)(playerinfo_t*, float))PlayScratch;
+	P_PlaySigh = (void (*)(playerinfo_t*, float))PlaySigh;
+	P_SpawnDustPuff = SpawnDustPuff;
+	P_PlayerInterruptAction = PlayerInterruptAction;
+	P_BranchCheckDismemberAction = (qboolean (*)(playerinfo_t*, int))BranchCheckDismemberAction;
+	P_TurnOffPlayerEffects = TurnOffPlayerEffects;
+	P_AnimUpdateFrame = AnimUpdateFrame;
+	P_PlayerFallingDamage = PlayerFallingDamage;
+	P_PlayerBasicAnimReset = PlayerBasicAnimReset;
+	P_PlayerAnimReset = PlayerAnimReset;
+	P_PlayerAnimSetLowerSeq = PlayerAnimSetLowerSeq;
+	P_PlayerAnimSetUpperSeq = PlayerAnimSetUpperSeq;
+	P_PlayerAnimUpperIdle = PlayerAnimUpperIdle;
+	P_PlayerAnimLowerIdle = PlayerAnimLowerIdle;
+	P_PlayerAnimUpperUpdate = PlayerAnimUpperUpdate;
+	P_PlayerAnimLowerUpdate = PlayerAnimLowerUpdate;
+	P_PlayerAnimSetVault = PlayerAnimSetVault;
+	P_PlayerPlayPain = (void (*)(playerinfo_t*, int))PlayerPlayPain;
+	P_PlayerIntLand = PlayerIntLand;
+	P_PlayerInit = PlayerInit;
+	P_PlayerClearEffects = PlayerClearEffects;
+	P_PlayerUpdate = PlayerUpdate;
+	P_PlayerUpdateCmdFlags = PlayerUpdateCmdFlags;
+	P_PlayerUpdateModelAttributes = PlayerUpdateModelAttributes;
+	P_Weapon_Ready = Weapon_Ready;
+	P_Weapon_EquipSpell = Weapon_EquipSpell;
+	P_Weapon_EquipSwordStaff = Weapon_EquipSwordStaff;
+	P_Weapon_EquipHellStaff = Weapon_EquipHellStaff;
+	P_Weapon_EquipBow = Weapon_EquipBow;
+	P_Weapon_EquipArmor = Weapon_EquipArmor;
+	P_Weapon_CurrentShotsLeft = (int (*)(playerinfo_t*))Weapon_CurrentShotsLeft;
+	P_Defence_CurrentShotsLeft = (int (*)(playerinfo_t*, int))Defence_CurrentShotsLeft;
+	P_GetItemIndex = GetItemIndex;
+	P_GetItemByIndex = GetItemByIndex;
+	P_FindItemByClassname = FindItemByClassname;
+	P_FindItem = FindItem;
+	P_InitItems = InitItems;
+
+	P_Init();
+	playerExport = GetPlayerAPI();
+
+	Com_ColourPrintf(P_HEADER, "------------------------------------\n");
+	return 0;
+}
+#endif
+
 uint P_Load(char *name)
 {
 	DWORD playerdll_chksum;
+
+#ifdef H2_STATIC_GAME
+	return P_LoadStatic(name);
+#endif
 
 	P_Freelib();
 

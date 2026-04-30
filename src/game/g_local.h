@@ -557,14 +557,14 @@ extern int sm_meat_index; //TODO: mxd. Never set -> always 0!
 extern cvar_t* maxentities;
 extern cvar_t* deathmatch;
 extern cvar_t* coop;
-extern cvar_t* dmflags;
+extern cvar_t* game_dmflags;
 extern cvar_t* advancedstaff;
-extern cvar_t* cl_autoaim; //mxd
+extern cvar_t* game_cl_autoaim; //mxd
 extern cvar_t* skill;
 extern cvar_t* fraglimit;
 extern cvar_t* timelimit;
 extern cvar_t* password;
-extern cvar_t* dedicated;
+extern cvar_t* game_dedicated;
 extern cvar_t* filterban;
 
 extern cvar_t* sv_gravity;
@@ -595,22 +595,22 @@ extern cvar_t* log_file_line_header;
 extern "C"
 {
 #endif
-	extern cvar_t* sv_cinematicfreeze;
-	extern cvar_t* sv_jumpcinematic;
+	extern cvar_t* game_sv_cinematicfreeze;
+	extern cvar_t* game_sv_jumpcinematic;
 #ifdef __cplusplus
 }
 #endif
 
 extern cvar_t* sv_freezemonsters;
 
-extern cvar_t* maxclients;
+extern cvar_t* game_maxclients;
 extern cvar_t* sv_maplist;
 
 extern cvar_t* allowillegalskins;
 
 extern cvar_t* dm_no_bodies;
 
-extern cvar_t* player_dll;
+extern cvar_t* game_player_dll;
 
 extern cvar_t* flood_msgs;
 extern cvar_t* flood_persecond;
@@ -620,14 +620,14 @@ extern cvar_t* flood_killdelay;
 //mxd. For simplicity of use...
 #define FLOOD_MSGS			((int)flood_msgs->value)
 #define BLOOD_LEVEL			((int)blood_level->value)
-#define MAXCLIENTS			((int)maxclients->value)
+#define MAXCLIENTS			((int)game_maxclients->value)
 #define COOP				((int)coop->value)
 #define DEATHMATCH			((int)deathmatch->value)
-#define DMFLAGS				((int)dmflags->value)
+#define DMFLAGS				((int)game_dmflags->value)
 #define FRAGLIMIT			((int)fraglimit->value)
 #define SKILL				((int)skill->value)
-#define DEDICATED			((int)dedicated->value)
-#define SV_CINEMATICFREEZE	((int)sv_cinematicfreeze->value)
+#define DEDICATED			((int)game_dedicated->value)
+#define SV_CINEMATICFREEZE	((int)game_sv_cinematicfreeze->value)
 #define SV_FREEZEMONSTERS	((int)sv_freezemonsters->value)
 #define SV_CHEATS			((int)sv_cheats->value)
 

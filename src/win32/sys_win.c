@@ -68,6 +68,18 @@ H2R_NORETURN void Sys_Quit(void)
 
 void Sys_LoadGameDll(const char* dll_name, HINSTANCE* hinst, DWORD* checksum)
 {
+#ifdef H2_STATIC_GAME
+	*hinst = (HINSTANCE)H2R_LoadLibrary(dll_name);
+	if (checksum != NULL)
+		*checksum = 0;
+
+	if (*hinst == NULL)
+		Sys_Error("Failed to load %s", dll_name);
+
+	Com_DDPrintf(2, "LoadLibrary (%s) [static]\n", dll_name);
+	return;
+#endif
+
 	IMAGE_DOS_HEADER dos_header;
 	IMAGE_OPTIONAL_HEADER win_header;
 	char name[MAX_OSPATH];
@@ -114,8 +126,13 @@ void Sys_LoadGameDll(const char* dll_name, HINSTANCE* hinst, DWORD* checksum)
 
 void Sys_UnloadGameDll(const char* name, HINSTANCE* hinst)
 {
+#ifdef H2_STATIC_GAME
+	if (!H2R_FreeLibrary(*hinst))
+		Sys_Error("Failed to unload %s", name);
+#else
 	if (!FreeLibrary(*hinst))
 		Sys_Error("Failed to unload %s", name);
+#endif
 
 	*hinst = NULL;
 }

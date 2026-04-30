@@ -8,6 +8,20 @@
 
 #include "Client Entities.h"
 
+#ifdef H2_STATIC_GAME
+#define fxi cfx_fxi
+#define r_farclipdist cfx_r_farclipdist
+#define r_nearclipdist cfx_r_nearclipdist
+#define r_detail cfx_r_detail
+#define clfx_gravity cfx_clfx_gravity
+#define cl_camera_under_surface cfx_cl_camera_under_surface
+#define vid_ref cfx_vid_ref
+#define cl_timedemo cfx_cl_timedemo
+#define ref_soft cfx_ref_soft
+#define numprocessedparticles cfx_numprocessedparticles
+#define numrenderedparticles cfx_numrenderedparticles
+#endif
+
 #define MIN_UPDATE_TIME	17 //mxd
 
 extern const paletteRGBA_t color_white; //mxd
@@ -20,6 +34,9 @@ extern cvar_t* r_farclipdist;
 extern cvar_t* r_nearclipdist;
 extern cvar_t* r_detail;
 extern cvar_t* clfx_gravity;
+extern cvar_t* cl_camera_under_surface;
+extern cvar_t* vid_ref;
+extern cvar_t* cl_timedemo;
 
 #define R_DETAIL	((int)r_detail->value) //mxd
 

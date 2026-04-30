@@ -391,7 +391,8 @@ static inline int _findclose(intptr_t handle)
 	return 0;
 }
 
-// Dynamic-library helpers implemented in src/unix/sys_unix.c.
+#ifndef H2_STATIC_GAME
+// Dynamic-library helpers implemented in src/unix/dlopen_unix.c.
 void* H2R_LoadLibrary(const char* name);
 void* H2R_GetProcAddress(void* library, const char* symbol);
 int H2R_FreeLibrary(void* library);
@@ -399,6 +400,7 @@ int H2R_FreeLibrary(void* library);
 #define LoadLibrary(name) H2R_LoadLibrary((name))
 #define GetProcAddress(library, symbol) H2R_GetProcAddress((library), (symbol))
 #define FreeLibrary(library) H2R_FreeLibrary((library))
+#endif
 
 #ifdef __cplusplus
 }
@@ -505,3 +507,24 @@ static inline int vsprintf_s(char (&dst)[N], const char* fmt, va_list args)
 #endif
 
 #endif // _WIN32
+
+#ifdef H2_STATIC_GAME
+#ifdef __cplusplus
+extern "C" {
+#endif
+void* H2R_LoadLibrary(const char* name);
+void* H2R_GetProcAddress(void* library, const char* symbol);
+int H2R_FreeLibrary(void* library);
+#ifdef __cplusplus
+}
+#endif
+
+#ifndef _WIN32
+#undef LoadLibrary
+#undef GetProcAddress
+#undef FreeLibrary
+#define LoadLibrary(name) H2R_LoadLibrary((name))
+#define GetProcAddress(library, symbol) H2R_GetProcAddress((void*)(library), (symbol))
+#define FreeLibrary(library) H2R_FreeLibrary((void*)(library))
+#endif
+#endif

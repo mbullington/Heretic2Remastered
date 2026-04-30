@@ -44,18 +44,18 @@ edict_t* g_edicts;
 
 cvar_t* deathmatch;
 cvar_t* coop;
-cvar_t* dmflags;
+cvar_t* game_dmflags;
 cvar_t* advancedstaff;
-cvar_t* cl_autoaim; //mxd
+cvar_t* game_cl_autoaim; //mxd
 cvar_t* skill;
 cvar_t* fraglimit;
 cvar_t* timelimit;
 cvar_t* password;
-cvar_t* maxclients;
+cvar_t* game_maxclients;
 cvar_t* maxentities;
 cvar_t* sv_maplist;
 
-cvar_t* dedicated;
+cvar_t* game_dedicated;
 cvar_t* filterban;
 
 cvar_t* sv_maxvelocity; //TODO: turn into define? Missile SFX becomes desynched with missile ent when sv_maxvelocity < missile velocity.
@@ -88,10 +88,10 @@ cvar_t* no_teleport;
 
 cvar_t* dm_no_bodies;
 
-cvar_t* player_dll;
+cvar_t* game_player_dll;
 
-cvar_t* sv_cinematicfreeze;
-cvar_t* sv_jumpcinematic;
+cvar_t* game_sv_cinematicfreeze;
+cvar_t* game_sv_jumpcinematic;
 cvar_t* blood_level;
 cvar_t* log_file_name;
 cvar_t* log_file_header;
@@ -179,14 +179,14 @@ void InitGame(void)
 	//sv_friction = gi.cvar("sv_friction", FRICTION_STRING, 0); //mxd. Inited again in SP_worldspawn().
 
 	// Noset vars.
-	dedicated = gi.cvar("dedicated", "0", CVAR_NOSET);
+	game_dedicated = gi.cvar("dedicated", "0", CVAR_NOSET);
 
 	// Latched vars.
 	sv_cheats = gi.cvar("cheats", "0", CVAR_SERVERINFO | CVAR_LATCH);
 	gi.cvar("gamename", GAMEVERSION, CVAR_SERVERINFO | CVAR_LATCH);
 	gi.cvar("gamedate", __DATE__, CVAR_SERVERINFO | CVAR_LATCH);
 
-	maxclients = gi.cvar("maxclients", "4", CVAR_SERVERINFO | CVAR_LATCH);
+	game_maxclients = gi.cvar("maxclients", "4", CVAR_SERVERINFO | CVAR_LATCH);
 	deathmatch = gi.cvar("deathmatch", "0", CVAR_LATCH);
 	coop = gi.cvar("coop", "0", CVAR_LATCH);
 
@@ -197,9 +197,9 @@ void InitGame(void)
 	sv_freezemonsters = gi.cvar("freezemonsters", "0", 0);
 
 	// Change anytime vars.
-	dmflags = gi.cvar("dmflags", "0", CVAR_SERVERINFO);
+	game_dmflags = gi.cvar("dmflags", "0", CVAR_SERVERINFO);
 	advancedstaff = gi.cvar("advancedstaff", "1", CVAR_SERVERINFO);
-	cl_autoaim = Cvar_Get("cl_autoaim", "0.8", CVAR_ARCHIVE); //mxd
+	game_cl_autoaim = Cvar_Get("cl_autoaim", "0.8", CVAR_ARCHIVE); //mxd
 
 	fraglimit = gi.cvar("fraglimit", "0", CVAR_SERVERINFO);
 	timelimit = gi.cvar("timelimit", "0", CVAR_SERVERINFO);
@@ -227,10 +227,10 @@ void InitGame(void)
 	flood_killdelay = gi.cvar("flood_killdelay", "10", 0);
 	sv_maplist = gi.cvar("sv_maplist", "", 0);
 
-	player_dll = Cvar_Get("player_dll", DEFAULT_PLAYER_LIB, 0);
+	game_player_dll = Cvar_Get("player_dll", DEFAULT_PLAYER_LIB, 0);
 
-	sv_cinematicfreeze = gi.cvar("sv_cinematicfreeze", "0", 0);
-	sv_jumpcinematic = gi.cvar("sv_jumpcinematic", "0", 0);
+	game_sv_cinematicfreeze = gi.cvar("sv_cinematicfreeze", "0", 0);
+	game_sv_jumpcinematic = gi.cvar("sv_jumpcinematic", "0", 0);
 	log_file_name = gi.cvar("log_file_name", "", CVAR_ARCHIVE);
 	log_file_footer = gi.cvar("log_file_footer", "", CVAR_ARCHIVE);
 	log_file_header = gi.cvar("log_file_header", "", CVAR_ARCHIVE);
@@ -241,7 +241,7 @@ void InitGame(void)
 
 	gi.cvar("flash_screen", "1", 0);
 
-	P_Load(player_dll->string);
+	P_Load(game_player_dll->string);
 
 	// Initialise the inventory items.
 	G_InitItems(); // Server-side only elements.

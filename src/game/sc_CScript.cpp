@@ -1042,7 +1042,7 @@ void CScript::HandlePrint()
 		ent = ent_var->GetEdictValue();
 	}
 
-	if (!static_cast<int>(sv_jumpcinematic->value) || !static_cast<int>(sv_cinematicfreeze->value))
+	if (!static_cast<int>(game_sv_jumpcinematic->value) || !static_cast<int>(game_sv_cinematicfreeze->value))
 	{
 		if ((flags & PRINT_CAPTIONED) && text_index > 0) //mxd. Add text_index check.
 		{
@@ -1152,7 +1152,7 @@ void CScript::HandlePlaySound()
 	}
 
 	// In cinematic freezes, all sounds should be at full volume.
-	if (static_cast<int>(sv_cinematicfreeze->value))
+	if (static_cast<int>(game_sv_cinematicfreeze->value))
 	{
 		attenuation = ATTN_NONE;
 		cinematic_sounds[cinematic_sounds_count].ent = ent;
@@ -1162,7 +1162,7 @@ void CScript::HandlePlaySound()
 			cinematic_sounds_count++;
 	}
 
-	if (!static_cast<int>(sv_jumpcinematic->value) || !static_cast<int>(sv_cinematicfreeze->value))
+	if (!static_cast<int>(game_sv_jumpcinematic->value) || !static_cast<int>(game_sv_cinematicfreeze->value))
 	{
 		//mxd. Fix sound?..
 		const auto k = snd_remap.find(sound_name);
@@ -1199,7 +1199,7 @@ void CScript::HandleFeature(const bool enable)
 			}
 			else
 			{
-				if (sv_jumpcinematic->value == 2.0f) // Jump sent from client.
+				if (game_sv_jumpcinematic->value == 2.0f) // Jump sent from client.
 				{
 					Cvar_Set("sv_jumpcinematic", "0");
 					const int null_snd = gi.soundindex("misc/null.wav");
@@ -1229,7 +1229,7 @@ void CScript::HandleCacheSound()
 	if (sound_name_var == nullptr)
 		Error("Invalid stack for HandleChacheSound");
 
-	if (!static_cast<int>(sv_jumpcinematic->value) || !static_cast<int>(sv_cinematicfreeze->value))
+	if (!static_cast<int>(game_sv_jumpcinematic->value) || !static_cast<int>(game_sv_cinematicfreeze->value))
 		gi.soundindex(sound_name_var->GetStringValue());
 
 	delete sound_name_var;

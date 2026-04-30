@@ -10,7 +10,9 @@
 	#include "platform_compat.h"
 #endif
 
-#ifdef _WIN32
+#if defined(H2_STATIC_GAME)
+	#define H2COMMON_API
+#elif defined(_WIN32)
 	#ifdef H2COMMON
 		#define H2COMMON_API __declspec(dllexport)
 	#else

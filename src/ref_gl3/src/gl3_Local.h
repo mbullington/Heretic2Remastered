@@ -11,6 +11,56 @@
 
 #define REF_TITLE			"OpenGL 3.3+"
 
+#ifdef H2_STATIC_GAME
+#define viddef gl3_viddef
+#define r_norefresh gl3_r_norefresh
+#define r_fullbright gl3_r_fullbright
+#define r_drawentities gl3_r_drawentities
+#define r_drawworld gl3_r_drawworld
+#define r_novis gl3_r_novis
+#define r_nocull gl3_r_nocull
+#define r_lerpmodels gl3_r_lerpmodels
+#define r_vsync gl3_r_vsync
+#define r_lightlevel gl3_r_lightlevel
+#define r_farclipdist gl3_r_farclipdist
+#define r_fog gl3_r_fog
+#define r_fog_mode gl3_r_fog_mode
+#define r_fog_density gl3_r_fog_density
+#define r_fog_startdist gl3_r_fog_startdist
+#define r_fog_lightmap_adjust gl3_r_fog_lightmap_adjust
+#define r_fog_underwater gl3_r_fog_underwater
+#define r_fog_underwater_lightmap_adjust gl3_r_fog_underwater_lightmap_adjust
+#define r_frameswap gl3_r_frameswap
+#define r_references gl3_r_references
+#define r_reflections gl3_r_reflections
+#define r_hd_textures gl3_r_hd_textures
+#define r_antialiasing gl3_r_antialiasing
+#define gl_noartifacts gl3_gl_noartifacts
+#define gl_modulate gl3_gl_modulate
+#define gl_lightmap gl3_gl_lightmap
+#define gl_dynamic gl3_gl_dynamic
+#define gl_nobind gl3_gl_nobind
+#define gl_showtris gl3_gl_showtris
+#define gl_flashblend gl3_gl_flashblend
+#define gl_texturemode gl3_gl_texturemode
+#define gl_lockpvs gl3_gl_lockpvs
+#define gl_minlight gl3_gl_minlight
+#define gl_drawflat gl3_gl_drawflat
+#define gl_trans33 gl3_gl_trans33
+#define gl_trans66 gl3_gl_trans66
+#define gl_bookalpha gl3_gl_bookalpha
+#define gl_drawbuffer gl3_gl_drawbuffer
+#define gl_saturatelighting gl3_gl_saturatelighting
+#define vid_gamma gl3_vid_gamma
+#define vid_brightness gl3_vid_brightness
+#define vid_contrast gl3_vid_contrast
+#define vid_ref gl3_vid_ref
+#define vid_mode gl3_vid_mode
+#define menus_active gl3_menus_active
+#define cl_camera_under_surface gl3_cl_camera_under_surface
+#define quake_amount gl3_quake_amount
+#endif
+
 #define MAX_TEXTURE_UNITS	2
 
 #define GL3_MAX_DLIGHTS		8		// Max per-pixel dynamic lights per draw call.
