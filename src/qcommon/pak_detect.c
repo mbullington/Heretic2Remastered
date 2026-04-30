@@ -216,9 +216,354 @@ qboolean CD_SearchAndCopyPaks(const char* base_dir)
 
 #include "qcommon.h"
 
+#include <dirent.h>
+#include <stdlib.h>
+#include <sys/stat.h>
+#include <unistd.h>
+
+#ifdef __APPLE__
+#include <mach-o/dyld.h>
+#endif
+
+#pragma region ========================== POSIX/macOS Helpers ==========================
+
+static const char* data_files[] =
+{
+	"base.pak",
+	"Htic2-0.pak",
+	"Htic2-1.pak",
+	"Htic2-2.pak",
+	"Htic2-3.pak",
+	"Htic2-4.pak",
+	"Htic2-5.pak",
+	"Htic2-6.pak",
+	"Htic2-7.pak",
+	"Htic2-8.pak",
+	"Htic2-9.pak",
+	NULL
+};
+
+static qboolean FileExists(const char* path)
+{
+	return Sys_IsFile(path);
+}
+
+static qboolean DirectoryExists(const char* path)
+{
+	return Sys_IsDir(path);
+}
+
+static void EnsureDirectory(const char* dir)
+{
+	char path[MAX_OSPATH];
+	Com_sprintf(path, sizeof(path), "%s/.keep", dir);
+	FS_CreatePath(path);
+	Sys_Mkdir(dir);
+}
+
+static qboolean SamePath(const char* a, const char* b)
+{
+	char real_a[MAX_OSPATH];
+	char real_b[MAX_OSPATH];
+
+	if (realpath(a, real_a) == NULL || realpath(b, real_b) == NULL)
+		return false;
+
+	return strcmp(real_a, real_b) == 0;
+}
+
+static qboolean FindFileCaseInsensitive(const char* dir, const char* filename, char* out, const size_t out_size)
+{
+	DIR* d = opendir(dir);
+	if (d == NULL)
+		return false;
+
+	struct dirent* ent;
+	while ((ent = readdir(d)) != NULL)
+	{
+		if (_stricmp(ent->d_name, filename) != 0)
+			continue;
+
+		Com_sprintf(out, out_size, "%s/%s", dir, ent->d_name);
+		closedir(d);
+		return FileExists(out);
+	}
+
+	closedir(d);
+	return false;
+}
+
+static qboolean CopyDataFile(const char* src_dir, const char* base_dir, const char* filename)
+{
+	char src[MAX_OSPATH];
+	if (!FindFileCaseInsensitive(src_dir, filename, src, sizeof(src)))
+		return false;
+
+	char dst[MAX_OSPATH];
+	Com_sprintf(dst, sizeof(dst), "%s/%s", base_dir, filename);
+
+	if (FileExists(dst))
+		return true;
+
+	if (SamePath(src, dst))
+		return true;
+
+	EnsureDirectory(base_dir);
+
+	if (!FS_CopyFile(src, dst))
+	{
+		Com_Printf("Warning: Failed to copy game data from %s to %s\n", src, dst);
+		return false;
+	}
+
+	Com_Printf("Copied game data from %s to %s\n", src, dst);
+	return true;
+}
+
+static qboolean SearchAndCopyDataFromDir(const char* game_dir, const char* base_dir)
+{
+	if (!DirectoryExists(game_dir))
+		return false;
+
+	qboolean copied_any = false;
+	qboolean found_pak0 = false;
+	qboolean found_pak1 = false;
+
+	for (int i = 0; data_files[i] != NULL; i++)
+	{
+		const char* filename = data_files[i];
+		const qboolean copied = CopyDataFile(game_dir, base_dir, filename);
+		copied_any = copied_any || copied;
+
+		if (_stricmp(filename, "Htic2-0.pak") == 0 && copied)
+			found_pak0 = true;
+		else if (_stricmp(filename, "Htic2-1.pak") == 0 && copied)
+			found_pak1 = true;
+	}
+
+	if (copied_any)
+		Com_Printf("  Found Heretic II game data in: %s\n", game_dir);
+
+	return found_pak0 && found_pak1;
+}
+
+static qboolean SearchCandidateRoot(const char* root, const char* base_dir)
+{
+	if (root == NULL || root[0] == '\0')
+		return false;
+
+	if (SearchAndCopyDataFromDir(root, base_dir))
+		return true;
+
+	char path[MAX_OSPATH];
+	Com_sprintf(path, sizeof(path), "%s/base", root);
+	if (SearchAndCopyDataFromDir(path, base_dir))
+		return true;
+
+	Com_sprintf(path, sizeof(path), "%s/Base", root);
+	if (SearchAndCopyDataFromDir(path, base_dir))
+		return true;
+
+	return false;
+}
+
+static qboolean SearchHomeLocations(const char* base_dir)
+{
+	const char* home = getenv("HOME");
+	if (home == NULL || home[0] == '\0')
+		return false;
+
+	static const char* home_suffixes[] =
+	{
+		"Library/Application Support/Heretic2R",
+		"Library/Application Support/Heretic 2 Remastered",
+		"Library/Application Support/Heretic II",
+		"Library/Application Support/Steam/steamapps/common/Heretic 2",
+		"Library/Application Support/Steam/steamapps/common/Heretic II",
+		"GOG Games/Heretic II",
+		"Games/Heretic II",
+		"Games/Heretic 2",
+		NULL
+	};
+
+	for (int i = 0; home_suffixes[i] != NULL; i++)
+	{
+		char path[MAX_OSPATH];
+		Com_sprintf(path, sizeof(path), "%s/%s", home, home_suffixes[i]);
+		if (SearchCandidateRoot(path, base_dir))
+			return true;
+	}
+
+	return false;
+}
+
+#ifdef __APPLE__
+static qboolean SearchAppBundleResources(const char* base_dir)
+{
+	char exe_path[MAX_OSPATH];
+	uint32_t size = sizeof(exe_path);
+
+	if (_NSGetExecutablePath(exe_path, &size) != 0)
+		return false;
+
+	char resolved[MAX_OSPATH];
+	if (realpath(exe_path, resolved) == NULL)
+		strcpy_s(resolved, sizeof(resolved), exe_path);
+
+	char* marker = strstr(resolved, ".app/Contents/MacOS/");
+	if (marker == NULL)
+		return false;
+
+	marker += strlen(".app");
+	*marker = '\0';
+
+	char resources[MAX_OSPATH];
+	Com_sprintf(resources, sizeof(resources), "%s/Contents/Resources", resolved);
+
+	if (SearchCandidateRoot(resources, base_dir))
+		return true;
+
+	char path[MAX_OSPATH];
+	Com_sprintf(path, sizeof(path), "%s/Heretic2R", resources);
+	if (SearchCandidateRoot(path, base_dir))
+		return true;
+
+	Com_sprintf(path, sizeof(path), "%s/Heretic II", resources);
+	return SearchCandidateRoot(path, base_dir);
+}
+#endif
+
+static qboolean SearchApplications(const char* base_dir)
+{
+	static const char* app_paths[] =
+	{
+		"/Applications/Heretic2R",
+		"/Applications/Heretic 2 Remastered",
+		"/Applications/Heretic II",
+		"/Applications/Heretic II.app/Contents/Resources",
+		"/Applications/Heretic 2.app/Contents/Resources",
+		"/Applications/Heretic2R.app/Contents/Resources",
+		NULL
+	};
+
+	for (int i = 0; app_paths[i] != NULL; i++)
+		if (SearchCandidateRoot(app_paths[i], base_dir))
+			return true;
+
+	return false;
+}
+
+static qboolean StringContainsNoCase(const char* haystack, const char* needle)
+{
+	const size_t needle_len = strlen(needle);
+	if (needle_len == 0)
+		return true;
+
+	for (const char* p = haystack; *p != '\0'; p++)
+		if (_strnicmp(p, needle, needle_len) == 0)
+			return true;
+
+	return false;
+}
+
+static qboolean DirNameLooksPromising(const char* name)
+{
+	return (_stricmp(name, "base") == 0 ||
+		_stricmp(name, "Data") == 0 ||
+		_stricmp(name, "GameData") == 0 ||
+		StringContainsNoCase(name, "Heretic") ||
+		StringContainsNoCase(name, "Htic"));
+}
+
+static qboolean SearchMountedVolumeDir(const char* dir, const char* base_dir, const int depth)
+{
+	if (SearchCandidateRoot(dir, base_dir))
+		return true;
+
+	if (depth <= 0)
+		return false;
+
+	DIR* d = opendir(dir);
+	if (d == NULL)
+		return false;
+
+	struct dirent* ent;
+	while ((ent = readdir(d)) != NULL)
+	{
+		if (ent->d_name[0] == '.')
+			continue;
+		if (!DirNameLooksPromising(ent->d_name) && depth < 3)
+			continue;
+
+		char child[MAX_OSPATH];
+		Com_sprintf(child, sizeof(child), "%s/%s", dir, ent->d_name);
+		if (!DirectoryExists(child))
+			continue;
+
+		if (SearchMountedVolumeDir(child, base_dir, depth - 1))
+		{
+			closedir(d);
+			return true;
+		}
+	}
+
+	closedir(d);
+	return false;
+}
+
+static qboolean SearchMountedVolumes(const char* base_dir)
+{
+	DIR* volumes = opendir("/Volumes");
+	if (volumes == NULL)
+		return false;
+
+	qboolean found = false;
+	struct dirent* ent;
+	while ((ent = readdir(volumes)) != NULL)
+	{
+		if (ent->d_name[0] == '.')
+			continue;
+
+		char volume[MAX_OSPATH];
+		Com_sprintf(volume, sizeof(volume), "/Volumes/%s", ent->d_name);
+		if (!DirectoryExists(volume))
+			continue;
+
+		if (SearchMountedVolumeDir(volume, base_dir, 3))
+		{
+			found = true;
+			break;
+		}
+	}
+
+	closedir(volumes);
+	return found;
+}
+
+#pragma endregion
+
 qboolean CD_SearchAndCopyPaks(const char* base_dir)
 {
-	(void)base_dir;
+	Com_Printf("Searching for Heretic II game data...\n");
+
+#ifdef __APPLE__
+	if (SearchAppBundleResources(base_dir))
+		return true;
+#endif
+
+	if (SearchCandidateRoot(base_dir, base_dir))
+		return true;
+
+	if (SearchHomeLocations(base_dir))
+		return true;
+
+	if (SearchApplications(base_dir))
+		return true;
+
+	if (SearchMountedVolumes(base_dir))
+		return true;
+
+	Com_Printf("No Heretic II game data found in common locations.\n");
 	return false;
 }
 

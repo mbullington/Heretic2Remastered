@@ -190,7 +190,7 @@ void SCR_PlayCinematic(const char* name)
 				}
 		}
 
-		// Try loading from PAK filesystem (extract to temp file for WMF).
+		// Try loading from PAK filesystem (extract to temp file for the platform video backend).
 		void* data;
 		const int data_len = FS_LoadFile(hd_relpath, &data);
 
@@ -229,7 +229,7 @@ void SCR_PlayCinematic(const char* name)
 		}
 	}
 
-	// No HD video found; skip this cinematic.
+	// No HD video found or supported by the current platform backend; skip this cinematic.
 	Com_Printf("No HD video found for '%s', skipping cinematic.\n", name);
 	SCR_FinishCinematic();
 }
@@ -249,11 +249,11 @@ void SCR_RunCinematic(void) // Called every rendered frame.
 	if (cl.cinematictime < 1)
 		return;
 
-	// Background thread still loading — keep the frame loop alive but don't advance.
+	// Background thread still loading - keep the frame loop alive but don't advance.
 	if (MP4_IsLoading())
 		return;
 
-	// Background load finished — finalize on the main thread (GPU resources).
+	// Background load finished - finalize on the main thread (GPU resources).
 	if (!MP4_IsOpen())
 	{
 		if (!MP4_FinishOpen())
@@ -298,7 +298,7 @@ void SCR_RunCinematic(void) // Called every rendered frame.
 void SCR_StopCinematic(void)
 {
 	cl.cinematictime = 0; // Done
-	if (MP4_IsOpen() || MP4_IsLoading())
+	if (MP4_IsOpen() || MP4_IsLoading() || MP4_GetVideoFrame() != NULL)
 		MP4_Shutdown();
 
 	// Clean up temp file extracted from PAK.

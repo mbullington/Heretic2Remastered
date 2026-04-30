@@ -5,6 +5,9 @@
 #include <SDL3/SDL.h>
 #include <dlfcn.h>
 #include <errno.h>
+#ifdef __APPLE__
+#include <mach-o/dyld.h>
+#endif
 #include <sys/select.h>
 #include <sys/time.h>
 
@@ -134,8 +137,49 @@ void Sys_FindClose(void)
 	findhandle = 0;
 }
 
+#ifdef __APPLE__
+static qboolean Sys_GetAppBundleResourcesDir(char* buffer, const size_t len)
+{
+	char exe_path[MAX_OSPATH];
+	uint32_t size = sizeof(exe_path);
+	if (_NSGetExecutablePath(exe_path, &size) != 0)
+		return false;
+
+	char resolved[MAX_OSPATH];
+	if (realpath(exe_path, resolved) == NULL)
+		strcpy_s(resolved, sizeof(resolved), exe_path);
+
+	char* marker = strstr(resolved, ".app/Contents/MacOS/");
+	if (marker == NULL)
+		return false;
+
+	marker += strlen(".app");
+	*marker = '\0';
+
+	char resources[MAX_OSPATH];
+	Com_sprintf(resources, sizeof(resources), "%s/Contents/Resources", resolved);
+
+	char data_file[MAX_OSPATH];
+	Com_sprintf(data_file, sizeof(data_file), "%s/base/Htic2-0.pak", resources);
+	if (!Sys_IsFile(data_file))
+	{
+		Com_sprintf(data_file, sizeof(data_file), "%s/base/base.pak", resources);
+		if (!Sys_IsFile(data_file))
+			return false;
+	}
+
+	strcpy_s(buffer, len, resources);
+	return true;
+}
+#endif
+
 qboolean Sys_GetWorkingDir(char* buffer, const size_t len)
 {
+#ifdef __APPLE__
+	if (Sys_GetAppBundleResourcesDir(buffer, len))
+		return true;
+#endif
+
 	if (getcwd(buffer, len) != NULL)
 		return true;
 

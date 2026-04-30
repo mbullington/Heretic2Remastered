@@ -15,9 +15,53 @@ if(NOT CMAKE_BUILD_TYPE AND NOT CMAKE_CONFIGURATION_TYPES)
 endif()
 
 set(H2_OUTPUT_DIR "${CMAKE_SOURCE_DIR}/build")
+if(APPLE)
+	set(H2_DYLIB_SUFFIX ".dylib")
+elseif(WIN32)
+	set(H2_DYLIB_SUFFIX ".dll")
+else()
+	set(H2_DYLIB_SUFFIX ".so")
+endif()
 file(MAKE_DIRECTORY "${H2_OUTPUT_DIR}" "${H2_OUTPUT_DIR}/base")
 
 find_package(OpenGL REQUIRED)
+
+option(H2_ENABLE_FFMPEG "Use FFmpeg/libavcodec for MP4/MKV cinematics on non-Apple Unix platforms when available" ON)
+
+set(H2_MP4_SOURCE "${CMAKE_SOURCE_DIR}/src/unix/cl_mp4_stub.c")
+set(H2_MP4_LIBS)
+if(APPLE)
+	enable_language(OBJC)
+	set(CMAKE_OBJC_STANDARD 11)
+	set(CMAKE_OBJC_STANDARD_REQUIRED ON)
+	set(CMAKE_OBJC_EXTENSIONS ON)
+
+	find_library(H2_AVFOUNDATION_FRAMEWORK AVFoundation REQUIRED)
+	find_library(H2_AUDIOTOOLBOX_FRAMEWORK AudioToolbox REQUIRED)
+	find_library(H2_COREMEDIA_FRAMEWORK CoreMedia REQUIRED)
+	find_library(H2_COREVIDEO_FRAMEWORK CoreVideo REQUIRED)
+	find_library(H2_FOUNDATION_FRAMEWORK Foundation REQUIRED)
+	set(H2_MP4_SOURCE "${CMAKE_SOURCE_DIR}/src/unix/cl_mp4_avfoundation.m")
+	list(APPEND H2_MP4_LIBS
+		"${H2_AVFOUNDATION_FRAMEWORK}"
+		"${H2_AUDIOTOOLBOX_FRAMEWORK}"
+		"${H2_COREMEDIA_FRAMEWORK}"
+		"${H2_COREVIDEO_FRAMEWORK}"
+		"${H2_FOUNDATION_FRAMEWORK}")
+elseif(H2_ENABLE_FFMPEG)
+	find_package(PkgConfig QUIET)
+	if(PkgConfig_FOUND)
+		pkg_check_modules(H2_FFMPEG QUIET IMPORTED_TARGET
+			libavformat
+			libavcodec
+			libavutil
+			libswscale)
+		if(H2_FFMPEG_FOUND)
+			set(H2_MP4_SOURCE "${CMAKE_SOURCE_DIR}/src/unix/cl_mp4_ffmpeg.c")
+			list(APPEND H2_MP4_LIBS PkgConfig::H2_FFMPEG)
+		endif()
+	endif()
+endif()
 
 find_package(SDL3 CONFIG QUIET)
 if(TARGET SDL3::SDL3)
@@ -96,7 +140,7 @@ endfunction()
 function(h2_plugin_target target output_name)
 	set_target_properties(${target} PROPERTIES
 		PREFIX ""
-		SUFFIX ".dylib"
+		SUFFIX "${H2_DYLIB_SUFFIX}"
 		OUTPUT_NAME "${output_name}"
 		LIBRARY_OUTPUT_DIRECTORY "${H2_OUTPUT_DIR}"
 		RUNTIME_OUTPUT_DIRECTORY "${H2_OUTPUT_DIR}"
@@ -117,7 +161,7 @@ h2_common_target(H2Common)
 target_compile_definitions(H2Common PRIVATE H2COMMON)
 set_target_properties(H2Common PROPERTIES
 	PREFIX ""
-	SUFFIX ".dylib"
+	SUFFIX "${H2_DYLIB_SUFFIX}"
 	LIBRARY_OUTPUT_DIRECTORY "${H2_OUTPUT_DIR}"
 	RUNTIME_OUTPUT_DIRECTORY "${H2_OUTPUT_DIR}"
 	BUILD_WITH_INSTALL_RPATH ON
@@ -195,7 +239,7 @@ file(GLOB SERVER_SOURCES CONFIGURE_DEPENDS "${CMAKE_SOURCE_DIR}/src/server/*.c")
 add_executable(Heretic2R
 	"${CMAKE_SOURCE_DIR}/include/libsmacker/smacker.c"
 	${CLIENT_SOURCES}
-	"${CMAKE_SOURCE_DIR}/src/unix/cl_mp4_stub.c"
+	${H2_MP4_SOURCE}
 	"${CMAKE_SOURCE_DIR}/src/game/q_shared.c"
 	${QCOMMON_SOURCES}
 	${SERVER_SOURCES}
@@ -209,7 +253,7 @@ add_executable(Heretic2R
 	"${CMAKE_SOURCE_DIR}/src/unix/sys_unix.c")
 h2_common_target(Heretic2R)
 target_compile_definitions(Heretic2R PRIVATE QUAKE2_DLL)
-target_link_libraries(Heretic2R PRIVATE H2Common ${H2_SDL3_TARGET} OpenGL::GL)
+target_link_libraries(Heretic2R PRIVATE H2Common ${H2_SDL3_TARGET} OpenGL::GL ${H2_MP4_LIBS})
 set_target_properties(Heretic2R PROPERTIES
 	ENABLE_EXPORTS ON
 	RUNTIME_OUTPUT_DIRECTORY "${H2_OUTPUT_DIR}"

@@ -650,7 +650,7 @@ extern qboolean FS_IsValidDirName(const char* dir); //mxd
 extern char* FS_NextPath(const char* prevpath);
 extern void FS_ExecAutoexec(void);
 
-// PAK file detection from Steam/GOG/Program Files
+// PAK/game-data discovery from common platform locations.
 extern qboolean CD_SearchAndCopyPaks(const char* base_dir);
 
 Q2DLL_DECLSPEC extern int FS_FOpenFile(const char* filename, FILE** file);

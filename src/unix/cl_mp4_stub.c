@@ -1,4 +1,4 @@
-// cl_mp4_stub.c -- MP4/WMF cinematic backend is Windows-only for now.
+// cl_mp4_stub.c -- fallback when no platform MP4/MKV cinematic backend is available.
 
 #include "cl_mp4.h"
 

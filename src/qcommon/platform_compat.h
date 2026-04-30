@@ -33,7 +33,9 @@ extern "C" {
 typedef uint32_t DWORD;
 typedef long LONG;
 typedef unsigned long DWORD_PTR;
+#ifndef __OBJC__
 typedef int BOOL;
+#endif
 typedef void* HINSTANCE;
 typedef void* HMODULE;
 typedef void* HWND;

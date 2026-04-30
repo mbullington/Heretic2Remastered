@@ -14,8 +14,10 @@
 #define FALLBACK_REFLIB	"gl3" //mxd. GL3 is the only supported renderer.
 #ifdef _WIN32
 	#define REF_LIB_EXT ".dll"
-#else
+#elif defined(__APPLE__)
 	#define REF_LIB_EXT ".dylib"
+#else
+	#define REF_LIB_EXT ".so"
 #endif
 
 // Structure containing functions exported from refresh DLL.

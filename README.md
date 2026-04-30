@@ -36,7 +36,7 @@ Heretic II Remastered is a reverse-engineered source port of Heretic II (1998, R
 * **Improved water rendering** — animated water surfaces with reflections and refractions.
 * **SAO (Screen Space Ambient Occlusion)** — ambient occlusion effect for better depth perception and contact shadows.
 * **HD texture replacement** — drop-in PNG replacements for original `.m8`/`.m32` textures via the `HDTextures` folder.
-* **HD video playback** — MP4/MKV cinematics via Windows Media Foundation.
+* **HD video playback** — MP4/MKV cinematics via Windows Media Foundation on Windows, AVFoundation on macOS, or FFmpeg/libavcodec on Unix when available.
 * **PAK2 archive format** — extended PAK format supporting filenames up to 128 characters (see below).
 * **`base.pak` support** — all game data (textures, models, sounds, music, HD textures, HD videos) can be distributed as a single `base.pak` archive.
 * **Automatic CD detection** — if a Heretic II CD is in any CD/DVD drive, the engine automatically extracts the required PAK files (no manual copying needed).
@@ -49,6 +49,7 @@ Heretic II Remastered requires Heretic II game data in order to run.
 
 **Automatic Installation**
 Since R7 release, Heretic 2 Remastered can automatically find and copy the required PAK files from any copy installed on your PC through Steam, GOG or original CD installation.
+On macOS it also searches app bundle resources, `~/Library/Application Support/Heretic2R`, common Steam/GOG-style locations, `/Applications`, and mounted volumes under `/Volumes`.
 If it finds the required data, it will copy in the background and start as soon as it's ready. No setup needed.
 In the event that it cannot find your installed copy, proceed to manual installation.
 
@@ -64,7 +65,7 @@ Place PNG replacement textures in "**base\HDTextures**", mirroring the original 
 HD textures can also be loaded from `base.pak`.
 
 **HD videos:**  
-Place MP4 or MKV cinematics in "**base\video**". The game will play them in place of the original `.cin`/`.smk` files.  
+Place MP4 or MKV cinematics in "**base\HDVideos**". The game will play them in place of the original `.cin`/`.smk` files.  
 HD videos can also be loaded from `base.pak`.
 
 ## Performance Improvements (R7 v2.0.7)
@@ -216,11 +217,11 @@ The engine loads content from `base.pak`, `Htic2-0.pak` through `Htic2-9.pak`, a
 
 - **HD textures** — the GL3 renderer tries `FS_LoadFile` (which searches PAK files and loose directories) before falling back to direct `fopen`.
 - **Music (OGG)** — the sound backend tries `FS_LoadFile` with `stb_vorbis_open_memory`, falling back to `stb_vorbis_open_filename` for loose files.
-- **HD videos (MP4/MKV)** — the client tries loose files first, then extracts from PAK to a temporary file for Windows Media Foundation playback (which requires a file path).
+- **HD videos (MP4/MKV)** — the client tries loose files first, then extracts from PAK to a temporary file for the platform video backend (WMF on Windows, AVFoundation on macOS, FFmpeg/libavcodec on Unix when available).
 
 ## Building on macOS
 
-A native macOS CMake/Ninja build is available. Install CMake, Ninja, SDL3, and OpenAL/openal-soft, then run:
+A native macOS CMake/Ninja build is available. Install CMake, Ninja, SDL3, and OpenAL/openal-soft. MP4/MKV cinematics use the system AVFoundation frameworks. Then run:
 
 ```sh
 cmake -S . -B cmake-build-macos -G Ninja
@@ -246,6 +247,8 @@ The executable and plugins are written to `build/`: `Heretic2R`, `ref_gl3.dylib`
 * [libsmacker](https://github.com/JonnyH/libsmacker)
 * [SDL3](https://www.libsdl.org)
 * [stb](https://github.com/nothings/stb) (specifically, stb_image, stb_image_write, and stb_vorbis)
+* AVFoundation on macOS for MP4/MKV cinematics
+* FFmpeg/libavcodec on Unix platforms when available for MP4/MKV cinematics
 
 ## Licensing and provenance
 

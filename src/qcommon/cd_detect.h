@@ -16,8 +16,10 @@ qboolean CD_DetectAndExtract(const char* base_dir);
 // Returns the detected CD drive path (e.g., "D:\"), or NULL if no CD was detected.
 const char* CD_GetDrivePath(void);
 
-// Search for Heretic II in common installation locations (Steam, GOG, Program Files).
-// If found, copies Htic2-0.pak and Htic2-1.pak to base_dir (if not already present).
-// Returns true if PAK files were found and copied (or already present), false if not found.
+// Search for Heretic II in common installation locations.
+// Windows checks Steam/GOG/Program Files; macOS also checks app resources,
+// Application Support, /Applications, and mounted volumes.
+// If found, copies known PAK files to base_dir (if not already present).
+// Returns true if the required original PAK files were found, false if not found.
 qboolean CD_SearchAndCopyPaks(const char* base_dir);
 

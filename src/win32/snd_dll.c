@@ -15,8 +15,10 @@
 
 #ifdef _WIN32
 	#define SND_LIB_EXT ".dll"
-#else
+#elif defined(__APPLE__)
 	#define SND_LIB_EXT ".dylib"
+#else
+	#define SND_LIB_EXT ".so"
 #endif
 
 snd_export_t se; //mxd
