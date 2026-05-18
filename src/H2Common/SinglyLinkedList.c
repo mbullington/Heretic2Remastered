@@ -15,8 +15,22 @@ typedef struct SinglyLinkedListNode_s
 
 ResourceManager_t sllist_nodes_mgr;
 
+H2COMMON_API void SLList_Init(void)
+{
+	if (sllist_nodes_mgr.free == NULL)
+		ResMngr_Con(&sllist_nodes_mgr, SLL_NODE_SIZE, SLL_NODE_BLOCK_SIZE);
+}
+
+H2COMMON_API void SLList_Shutdown(void)
+{
+	if (sllist_nodes_mgr.free != NULL)
+		ResMngr_Des(&sllist_nodes_mgr);
+}
+
 H2COMMON_API void SLList_DefaultCon(SinglyLinkedList_t* this_ptr)
 {
+	SLList_Init();
+
 	SinglyLinkedListNode_t* node = ResMngr_AllocateResource(&sllist_nodes_mgr, SLL_NODE_SIZE);
 	node->next = NULL;
 
@@ -41,6 +55,10 @@ H2COMMON_API void SLList_Des(SinglyLinkedList_t* this_ptr)
 
 	this_ptr->current = this_ptr->rearSentinel;
 	ResMngr_DeallocateResource(&sllist_nodes_mgr, this_ptr->rearSentinel, SLL_NODE_SIZE);
+
+	this_ptr->rearSentinel = NULL;
+	this_ptr->front = NULL;
+	this_ptr->current = NULL;
 }
 
 H2COMMON_API qboolean SLList_AtEnd(const SinglyLinkedList_t* this_ptr)

@@ -692,11 +692,11 @@ static void R_RenderLightmappedPoly(const entity_t* ent, msurface_t* surf) //mxd
 	R_MBind(GL_TEXTURE1, gl_state.lightmap_textures + lmtex);
 
 	// Missing: SURF_FLOWING logic.
-	for (glpoly_t* p = surf->polys; p != NULL; p = p->chain)
+	for (glpoly_t* p = surf->polys; p != NULL; p = p->next)
 	{
 		float* v = p->verts[0];
 		glBegin(GL_POLYGON);
-		for (int i = 0; i < surf->polys->numverts; i++, v += VERTEXSIZE)
+		for (int i = 0; i < p->numverts; i++, v += VERTEXSIZE)
 		{
 			glMultiTexCoord2f(GL_TEXTURE0, v[3], v[4]);
 			glMultiTexCoord2f(GL_TEXTURE1, v[5], v[6]);

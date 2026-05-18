@@ -241,7 +241,9 @@ void ConstructEntities(void)
 	edict_t* ent = &g_edicts[0];
 	for (int i = 0; i < (int)maxentities->value; i++, ent++)
 	{
-		SLList_DefaultCon(&ent->msgQ.msgs);
+		if (ent->msgQ.msgs.rearSentinel == NULL)
+			SLList_DefaultCon(&ent->msgQ.msgs);
+
 		ent->s.skeletalType = SKEL_NULL;
 	}
 

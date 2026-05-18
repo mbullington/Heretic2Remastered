@@ -346,7 +346,7 @@ static void R_RenderLightmappedPoly(const entity_t* ent, msurface_t* surf)
 
 	// Draw with shader3DLightmap.
 	GL3_SetLMColor(1.0f, 1.0f, 1.0f, 1.0f);
-	for (glpoly_t* p = surf->polys; p != NULL; p = p->chain)
+	for (glpoly_t* p = surf->polys; p != NULL; p = p->next)
 		GL3_DrawLMPoly(p->verts[0], p->numverts);
 
 	// Restore TMU0 as the active texture unit so subsequent single-texture
@@ -443,6 +443,18 @@ static void R_RenderBrushPoly(const entity_t* ent, msurface_t* fa)
 	else
 	{
 		ri.Con_Printf(PRINT_ALL, "WARNING: too many tall wall surfaces!");
+	}
+}
+
+static void R_ClearTextureChains(void)
+{
+	r_alpha_surfaces = NULL;
+
+	image_t* image = &gltextures[0];
+	for (int i = 0; i < numgltextures; i++, image++)
+	{
+		image->texturechain = NULL;
+		image->multitexturechain = NULL;
 	}
 }
 
@@ -768,6 +780,8 @@ void R_DrawWorld(void)
 
 	gl_state.currenttextures[0] = -1;
 	gl_state.currenttextures[1] = -1;
+
+	R_ClearTextureChains();
 
 	memset((void*)gl_lms.lightmap_surfaces, 0, sizeof(gl_lms.lightmap_surfaces));
 	gl_lms.tallwall_lightmaptexturenum = 0;

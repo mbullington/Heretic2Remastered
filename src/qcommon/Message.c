@@ -8,6 +8,9 @@
 
 void MSG_Queue(MsgQueue_t* self, void* msg) //mxd. Named 'QueueMessage' in original logic.
 {
+	if (self->msgs.rearSentinel == NULL)
+		SLList_DefaultCon(&self->msgs);
+
 	const GenericUnion4_t temp = { .t_void_p = msg };
 	SLList_Push(&self->msgs, temp);
 }

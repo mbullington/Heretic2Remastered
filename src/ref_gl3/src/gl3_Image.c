@@ -753,11 +753,20 @@ static qboolean R_GetOriginalTextureDims(const char* name, int* orig_w, int* ori
 // Constructs a relative HD texture path: "HDTextures/<name_without_extension>.png"
 static void R_MakeHDRelPath(const char* name, char* out, const int out_size)
 {
-	// Strip extension from original name.
-	const char* dot = strrchr(name, '.');
-	const int base_len = dot ? (int)(dot - name) : (int)strlen(name);
+	// WidescreenBook is distributed as a standalone PNG in the remastered data,
+	// not as an HDTextures replacement for an original M32.
+	if (_stricmp(name, "book/Back/WidescreenBook.m32") == 0)
+	{
+		strcpy_s(out, out_size, "Art/WidescreenBook.png");
+		return;
+	}
 
-	sprintf_s(out, out_size, "%s/%.*s.png", HD_TEXTURES_DIR, base_len, name);
+	// Strip extension from original name.
+	const char* source_name = (name[0] == '/' || name[0] == '\\') ? name + 1 : name;
+	const char* dot = strrchr(source_name, '.');
+	const int base_len = dot ? (int)(dot - source_name) : (int)strlen(source_name);
+
+	sprintf_s(out, out_size, "%s/%.*s.png", HD_TEXTURES_DIR, base_len, source_name);
 
 	// Normalize separators.
 	for (char* p = out; *p; p++)

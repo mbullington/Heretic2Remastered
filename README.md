@@ -13,6 +13,7 @@ Heretic II Remastered is a reverse-engineered source port of Heretic II (1998, R
 
 * Widescreen support (with automatic HUD scaling).
 * Rendering framerate decoupled from network packets sending rate (with theoretical maximum of 1000 FPS).
+* Multiplayer menus restored for joining and hosting games. Multiplayer should be considered experimental until more cross-platform testing is completed.
 * OGG music playback.
 * Most of special effects are updated at rendering framerate (instead of 20 FPS).
 * Improved map loading times.
@@ -233,7 +234,7 @@ By default, the game, renderer, sound backend, player code, client effects, and 
 ## Technical notes
 
 * Savegames/configs/screenshots/logs are stored in "**%USERPROFILE%\Saved Games\Heretic2R**".
-* This version of the game does not include Multiplayer, and is not a planned feature.
+* Multiplayer is available from the main menu for joining and hosting games, but should be considered experimental on the native Linux/macOS ports until more cross-platform testing is completed.
 * Savegames are **NOT** compatible with original H2 savegames nor prior 32bit builds.
 * Framerates above 60 FPS are supported.
 

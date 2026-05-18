@@ -38,14 +38,8 @@ typedef struct SMKPlaybackInfo_s
 
 static SMKPlaybackInfo_t spi;
 
-static qboolean SMK_Open(const char* name)
+static qboolean SMK_InitOpened(void)
 {
-	spi.frame = 0; // Reset frame counter.
-
-	spi.smk_obj = smk_open_file(name, SMK_MODE_DISK);
-	if (spi.smk_obj == NULL)
-		return false;
-
 	smk_enable_all(spi.smk_obj, SMK_VIDEO_TRACK | SMK_AUDIO_TRACK_0);
 
 	ulong frame_count;
@@ -55,7 +49,11 @@ static qboolean SMK_Open(const char* name)
 	spi.total_frames = (int)frame_count;
 	spi.fps = floorf(1000000.0f / (float)usf);
 
-	smk_info_video(spi.smk_obj, &spi.vid_width, &spi.vid_height, NULL);
+	ulong vid_width;
+	ulong vid_height;
+	smk_info_video(spi.smk_obj, &vid_width, &vid_height, NULL);
+	spi.vid_width = (int)vid_width;
+	spi.vid_height = (int)vid_height;
 
 	byte s_channels[7];
 	byte s_bitdepth[7];
@@ -80,6 +78,28 @@ static qboolean SMK_Open(const char* name)
 	re.DrawInitCinematic(spi.vid_width, spi.vid_height);
 
 	return true;
+}
+
+static qboolean SMK_OpenFile(const char* name)
+{
+	spi.frame = 0; // Reset frame counter.
+
+	spi.smk_obj = smk_open_file(name, SMK_MODE_DISK);
+	if (spi.smk_obj == NULL)
+		return false;
+
+	return SMK_InitOpened();
+}
+
+static qboolean SMK_OpenMemory(const char* name, const void* data, const int data_len)
+{
+	spi.frame = 0; // Reset frame counter.
+
+	spi.smk_obj = smk_open_memory(data, data_len);
+	if (spi.smk_obj == NULL)
+		return false;
+
+	return SMK_InitOpened();
 }
 
 void SMK_Shutdown(void)
@@ -147,6 +167,69 @@ static void SCR_DoCinematicFrame(void) // Called when it's time to render next c
 	spi.frame++;
 }
 
+static void SCR_StartCinematicPlayback(void)
+{
+	Cvar_SetValue("paused", 0);
+	cls.state = ca_connected;
+	SCR_EndLoadingPlaque();
+	In_FlushQueue();
+	cls.key_dest = key_game;
+}
+
+static qboolean SCR_TrySMKCinematic(const char* name)
+{
+	char smk_relpath[MAX_OSPATH];
+	sprintf_s(smk_relpath, sizeof(smk_relpath), "video/%s", name);
+
+	// First try a loose SMK file.
+	const char* path = FS_GetPath(smk_relpath);
+	if (path != NULL)
+	{
+		char smk_filepath[MAX_OSPATH];
+		sprintf_s(smk_filepath, sizeof(smk_filepath), "%s/video/%s", path, name);
+		Com_Printf("Opening original cinematic: '%s'...\n", smk_filepath);
+
+		if (SMK_OpenFile(smk_filepath))
+		{
+			cl.cinematictime = (int)((float)cls.realtime - 2000.0f / spi.fps);
+			cl.cinematictime = max(1, cl.cinematictime);
+			SCR_DoCinematicFrame();
+			SCR_StartCinematicPlayback();
+			return true;
+		}
+
+		Com_Printf("...Unable to open original cinematic file\n");
+	}
+
+	// Then try the PAK filesystem. libsmacker can open from memory, so no temp
+	// file is needed for the original 1998 cinematics.
+	void* data;
+	const int data_len = FS_LoadFile(smk_relpath, &data);
+	if (data != NULL && data_len > 0)
+	{
+		Com_Printf("Opening original cinematic from PAK: '%s'...\n", smk_relpath);
+		const qboolean opened = SMK_OpenMemory(smk_relpath, data, data_len);
+		FS_FreeFile(data);
+
+		if (opened)
+		{
+			cl.cinematictime = (int)((float)cls.realtime - 2000.0f / spi.fps);
+			cl.cinematictime = max(1, cl.cinematictime);
+			SCR_DoCinematicFrame();
+			SCR_StartCinematicPlayback();
+			return true;
+		}
+
+		Com_Printf("...Unable to open original cinematic from PAK\n");
+	}
+	else
+	{
+		Com_Printf("...Unable to find original cinematic '%s'\n", smk_relpath);
+	}
+
+	return false;
+}
+
 void SCR_PlayCinematic(const char* name)
 {
 	//mxd. SCR_BeginLoadingPlaque() in original logic.
@@ -177,17 +260,13 @@ void SCR_PlayCinematic(const char* name)
 			Com_Printf("Opening HD cinematic: '%s'...\n", hd_filepath);
 
 			if (MP4_Open(hd_filepath))
-				{
-					// Background thread is loading; enter cinematic state now.
-					// SCR_RunCinematic will call MP4_FinishOpen and prime the first frame.
-					cl.cinematictime = max(1, cls.realtime);
-					Cvar_SetValue("paused", 0);
-					cls.state = ca_connected;
-					SCR_EndLoadingPlaque();
-					In_FlushQueue();
-					cls.key_dest = key_game;
-					return;
-				}
+			{
+				// Background thread is loading; enter cinematic state now.
+				// SCR_RunCinematic will call MP4_FinishOpen and prime the first frame.
+				cl.cinematictime = max(1, cls.realtime);
+				SCR_StartCinematicPlayback();
+				return;
+			}
 		}
 
 		// Try loading from PAK filesystem (extract to temp file for the platform video backend).
@@ -208,17 +287,13 @@ void SCR_PlayCinematic(const char* name)
 				Com_Printf("Opening HD cinematic from PAK: '%s'...\n", hd_relpath);
 
 				if (MP4_Open(cin_temp_file))
-					{
-						FS_FreeFile(data);
-						// Background thread is loading; enter cinematic state now.
-						cl.cinematictime = max(1, cls.realtime);
-						Cvar_SetValue("paused", 0);
-						cls.state = ca_connected;
-						SCR_EndLoadingPlaque();
-						In_FlushQueue();
-						cls.key_dest = key_game;
-						return;
-					}
+				{
+					FS_FreeFile(data);
+					// Background thread is loading; enter cinematic state now.
+					cl.cinematictime = max(1, cls.realtime);
+					SCR_StartCinematicPlayback();
+					return;
+				}
 
 				// MP4_Open failed, clean up temp file.
 				remove(cin_temp_file);
@@ -229,8 +304,13 @@ void SCR_PlayCinematic(const char* name)
 		}
 	}
 
-	// No HD video found or supported by the current platform backend; skip this cinematic.
-	Com_Printf("No HD video found for '%s', skipping cinematic.\n", name);
+	// No HD video found or supported by the current platform backend; fall back
+	// to the original Smacker cinematic before skipping.
+	Com_Printf("No HD video found for '%s', trying original cinematic.\n", name);
+	if (SCR_TrySMKCinematic(name))
+		return;
+
+	Com_Printf("No playable cinematic found for '%s', skipping.\n", name);
 	SCR_FinishCinematic();
 }
 
@@ -241,6 +321,8 @@ void SCR_DrawCinematic(void) // Called every rendered frame.
 
 	if (MP4_IsOpen())
 		re.DrawCinematic(MP4_GetVideoFrame(), NULL); // NULL palette = BGRA MP4 frame
+	else if (spi.smk_obj != NULL)
+		re.DrawCinematic(spi.video_frame, (const paletteRGB_t*)spi.palette);
 	// While MP4_IsLoading(), we just show whatever the engine draws (black).
 }
 
@@ -252,6 +334,36 @@ void SCR_RunCinematic(void) // Called every rendered frame.
 	// Background thread still loading - keep the frame loop alive but don't advance.
 	if (MP4_IsLoading())
 		return;
+
+	if (spi.smk_obj != NULL)
+	{
+		// Pause if menu or console is up.
+		if (cls.key_dest != key_game)
+		{
+			cl.cinematictime = (int)((float)cls.realtime - (float)(spi.frame * 1000) / spi.fps);
+			return;
+		}
+
+		// Do before SCR_DoCinematicFrame() to allow the last SMK frame to render.
+		if (spi.frame >= spi.total_frames)
+		{
+			SCR_FinishCinematic();
+			return;
+		}
+
+		const int frame = (int)((float)(cls.realtime - cl.cinematictime) * spi.fps / 1000.0f);
+		if (frame <= spi.frame)
+			return;
+
+		if (frame > spi.frame + 1)
+		{
+			Com_Printf("Dropped frame: %i > %i\n", frame, spi.frame + 1);
+			cl.cinematictime = (int)((float)cls.realtime - (float)(spi.frame * 1000) / spi.fps);
+		}
+
+		SCR_DoCinematicFrame();
+		return;
+	}
 
 	// Background load finished - finalize on the main thread (GPU resources).
 	if (!MP4_IsOpen())
@@ -300,6 +412,8 @@ void SCR_StopCinematic(void)
 	cl.cinematictime = 0; // Done
 	if (MP4_IsOpen() || MP4_IsLoading() || MP4_GetVideoFrame() != NULL)
 		MP4_Shutdown();
+
+	SMK_Shutdown();
 
 	// Clean up temp file extracted from PAK.
 	if (cin_temp_file[0] != '\0')

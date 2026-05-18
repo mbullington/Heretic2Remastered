@@ -10,4 +10,3 @@
 
 extern cvar_t* m_banner_main;
 extern cvar_t* m_banner_updates;
-extern cvar_t* m_banner_online;

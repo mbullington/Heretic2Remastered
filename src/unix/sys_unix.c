@@ -295,8 +295,10 @@ char* Sys_ConsoleInput(void)
 
 void Sys_ConsoleOutput(const char* string)
 {
+	fputs(string, stdout);
+
 	if (dedicated != NULL && (int)dedicated->value)
-		fputs(string, stdout);
+		fflush(stdout);
 }
 
 int main(int argc, char** argv)

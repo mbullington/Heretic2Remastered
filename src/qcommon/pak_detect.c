@@ -240,6 +240,7 @@ static const char* data_files[] =
 	"Htic2-7.pak",
 	"Htic2-8.pak",
 	"Htic2-9.pak",
+	"Art/WidescreenBook.png",
 	NULL
 };
 
@@ -274,6 +275,23 @@ static qboolean SamePath(const char* a, const char* b)
 
 static qboolean FindFileCaseInsensitive(const char* dir, const char* filename, char* out, const size_t out_size)
 {
+	const char* slash = strchr(filename, '/');
+	char component[MAX_OSPATH];
+
+	if (slash != NULL)
+	{
+		const size_t component_len = slash - filename;
+		if (component_len == 0 || component_len >= sizeof(component))
+			return false;
+
+		memcpy(component, filename, component_len);
+		component[component_len] = '\0';
+	}
+	else
+	{
+		strcpy_s(component, sizeof(component), filename);
+	}
+
 	DIR* d = opendir(dir);
 	if (d == NULL)
 		return false;
@@ -281,11 +299,17 @@ static qboolean FindFileCaseInsensitive(const char* dir, const char* filename, c
 	struct dirent* ent;
 	while ((ent = readdir(d)) != NULL)
 	{
-		if (_stricmp(ent->d_name, filename) != 0)
+		if (_stricmp(ent->d_name, component) != 0)
 			continue;
 
-		Com_sprintf(out, out_size, "%s/%s", dir, ent->d_name);
+		char found[MAX_OSPATH];
+		Com_sprintf(found, sizeof(found), "%s/%s", dir, ent->d_name);
 		closedir(d);
+
+		if (slash != NULL)
+			return DirectoryExists(found) && FindFileCaseInsensitive(found, slash + 1, out, out_size);
+
+		strcpy_s(out, out_size, found);
 		return FileExists(out);
 	}
 
@@ -309,6 +333,7 @@ static qboolean CopyDataFile(const char* src_dir, const char* base_dir, const ch
 		return true;
 
 	EnsureDirectory(base_dir);
+	FS_CreatePath(dst);
 
 	if (!FS_CopyFile(src, dst))
 	{
@@ -546,21 +571,35 @@ qboolean CD_SearchAndCopyPaks(const char* base_dir)
 {
 	Com_Printf("Searching for Heretic II game data...\n");
 
+	char base_pak_path[MAX_OSPATH];
+	Com_sprintf(base_pak_path, sizeof(base_pak_path), "%s/base.pak", base_dir);
+
+	char widescreen_book_path[MAX_OSPATH];
+	Com_sprintf(widescreen_book_path, sizeof(widescreen_book_path), "%s/Art/WidescreenBook.png", base_dir);
+
 #ifdef __APPLE__
-	if (SearchAppBundleResources(base_dir))
+	if (SearchAppBundleResources(base_dir) && FileExists(base_pak_path) && FileExists(widescreen_book_path))
 		return true;
 #endif
 
-	if (SearchCandidateRoot(base_dir, base_dir))
+	const qboolean found_required_in_base = SearchCandidateRoot(base_dir, base_dir);
+	if (found_required_in_base && FileExists(base_pak_path) && FileExists(widescreen_book_path))
 		return true;
 
-	if (SearchHomeLocations(base_dir))
+	// The original PAKs are enough to start the game, but the remastered assets
+	// live in base.pak and a few loose support files. Don't stop at a partial
+	// base dir or macOS/Linux builds run with missing player skins, HUD art,
+	// menu art, music, etc.
+	if (SearchHomeLocations(base_dir) && FileExists(base_pak_path) && FileExists(widescreen_book_path))
 		return true;
 
-	if (SearchApplications(base_dir))
+	if (SearchApplications(base_dir) && FileExists(base_pak_path) && FileExists(widescreen_book_path))
 		return true;
 
-	if (SearchMountedVolumes(base_dir))
+	if (SearchMountedVolumes(base_dir) && FileExists(base_pak_path) && FileExists(widescreen_book_path))
+		return true;
+
+	if (found_required_in_base)
 		return true;
 
 	Com_Printf("No Heretic II game data found in common locations.\n");

@@ -82,6 +82,15 @@ H2COMMON_API void ResMngr_Des(ResourceManager_t* resource)
 		free(toDelete->start);
 		free(toDelete);
 	}
+
+	resource->free = NULL;
+	resource->resSize = 0;
+	resource->resPerBlock = 0;
+	resource->nodeSize = 0;
+
+#ifdef _DEBUG
+	resource->numResourcesAllocated = 0;
+#endif
 }
 
 H2COMMON_API void* ResMngr_AllocateResource(ResourceManager_t* resource, const uint size)

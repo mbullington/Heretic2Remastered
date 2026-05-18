@@ -19,6 +19,8 @@ typedef struct SinglyLinkedList_s
 	struct SinglyLinkedListNode_s* current;
 } SinglyLinkedList_t;
 
+H2COMMON_API void SLList_Init(void);
+H2COMMON_API void SLList_Shutdown(void);
 H2COMMON_API void SLList_DefaultCon(SinglyLinkedList_t* this_ptr);
 H2COMMON_API void SLList_Des(SinglyLinkedList_t* this_ptr);
 H2COMMON_API qboolean SLList_AtEnd(const SinglyLinkedList_t* this_ptr);
