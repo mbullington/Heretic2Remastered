@@ -240,9 +240,13 @@ static void CL_PMTrace(const vec3_t start, const vec3_t mins, const vec3_t maxs,
 	//mxd. Don't clip dead players against entities (to avoid monsters pushing player's body (client-side only) when walking over it).
 	if (!tr->startsolid && !tr->allsolid && cl.frame.playerstate.pmove.pm_type != PM_DEAD)
 	{
-		// Check all other solid models.
+		// Check all other solid models. Protocol 51 cannot describe H2's non-square entity boxes accurately,
+		// so only predict against BSP models there and leave regular entity collision to the server.
+		const qboolean old_trace_ignore_entities = trace_ignore_entities;
 		trace_ignore_player = true;
+		trace_ignore_entities = (cls.serverProtocol == PROTOCOL_VERSION ? true : old_trace_ignore_entities);
 		CL_ClipMoveToEntities(start, mins, maxs, end, tr);
+		trace_ignore_entities = old_trace_ignore_entities;
 		trace_ignore_player = false;
 
 		trace_check_water = false;

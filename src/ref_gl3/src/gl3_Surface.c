@@ -36,6 +36,7 @@ static int r_visframecount; // Bumped when going to a new PVS.
 static vec3_t modelorg; // Relative to viewpoint.
 
 static msurface_t* r_alpha_surfaces;
+static const model_t* r_warned_invalid_poly_model;
 
 // Reflection pass state.
 static qboolean r_reflection_pass = false;  // True while rendering the reflection FBO.
@@ -292,8 +293,27 @@ static void R_DrawGLPoly3D(const glpoly_t* p)
 	GL3_Draw3DPoly(GL_TRIANGLE_FAN, vbuf, p->numverts);
 }
 
+static qboolean R_IsValidSurfacePoly(const model_t* mdl, const glpoly_t* poly)
+{
+	if (mdl == NULL || mdl->extradata == NULL || poly == NULL)
+		return false;
+
+	const byte* hunk_start = (const byte*)mdl->extradata;
+	const byte* hunk_end = hunk_start + mdl->extradatasize;
+	const byte* ptr = (const byte*)poly;
+
+	if (ptr < hunk_start || ptr + offsetof(glpoly_t, verts) > hunk_end)
+		return false;
+
+	if (poly->numverts < 3 || poly->numverts > 1024)
+		return false;
+
+	const size_t poly_size = offsetof(glpoly_t, verts) + (size_t)poly->numverts * VERTEXSIZE * sizeof(float);
+	return (ptr + poly_size <= hunk_end);
+}
+
 // GL3: Single-pass lightmapped surface rendering using shader3DLightmap.
-static void R_RenderLightmappedPoly(const entity_t* ent, msurface_t* surf)
+static void R_RenderLightmappedPoly(const entity_t* ent, const model_t* mdl, msurface_t* surf)
 {
 	static uint lightmap_pixels[LM_BLOCK_WIDTH * LM_BLOCK_HEIGHT];
 
@@ -347,7 +367,19 @@ static void R_RenderLightmappedPoly(const entity_t* ent, msurface_t* surf)
 	// Draw with shader3DLightmap.
 	GL3_SetLMColor(1.0f, 1.0f, 1.0f, 1.0f);
 	for (glpoly_t* p = surf->polys; p != NULL; p = p->next)
+	{
+		if (!R_IsValidSurfacePoly(mdl, p))
+		{
+			if (r_warned_invalid_poly_model != mdl)
+			{
+				ri.Con_Printf(PRINT_DEVELOPER, "R_RenderLightmappedPoly: skipping invalid surface polygon in %s\n", (mdl != NULL ? mdl->name : "<unknown>"));
+				r_warned_invalid_poly_model = mdl;
+			}
+			break;
+		}
+
 		GL3_DrawLMPoly(p->verts[0], p->numverts);
+	}
 
 	// Restore TMU0 as the active texture unit so subsequent single-texture
 	// rendering (sky, models, HUD, etc.) binds diffuse textures to unit 0.
@@ -473,7 +505,7 @@ static void R_DrawTextureChains(const entity_t* ent)
 			c_visible_textures++;
 
 			for (msurface_t* s = image->multitexturechain; s != NULL; s = s->texturechain)
-				R_RenderLightmappedPoly(ent, s);
+				R_RenderLightmappedPoly(ent, r_worldmodel, s);
 
 			image->multitexturechain = NULL;
 		}
@@ -592,7 +624,7 @@ static void R_DrawInlineBModel(const entity_t* ent)
 			}
 			else if (!(psurf->flags & SURF_DRAWTURB) && !(int)r_fullbright->value && !(int)gl_drawflat->value)
 			{
-				R_RenderLightmappedPoly(ent, psurf);
+				R_RenderLightmappedPoly(ent, mdl, psurf);
 			}
 			else if (!r_reflection_pass || !(psurf->flags & SURF_DRAWTURB))
 			{
@@ -795,10 +827,37 @@ void R_DrawWorld(void)
 	R_DrawSkyBox();
 }
 
+static qboolean R_IsWorldNodeOrLeafPointer(const mnode_t* node)
+{
+	if (node == NULL || r_worldmodel == NULL)
+		return false;
+
+	const uintptr_t ptr = (uintptr_t)node;
+
+	if (r_worldmodel->nodes != NULL && r_worldmodel->numnodes > 0)
+	{
+		const uintptr_t start = (uintptr_t)r_worldmodel->nodes;
+		const uintptr_t end = start + (uintptr_t)r_worldmodel->numnodes * sizeof(mnode_t);
+		if (ptr >= start && ptr < end && (ptr - start) % sizeof(mnode_t) == 0)
+			return true;
+	}
+
+	if (r_worldmodel->leafs != NULL && r_worldmodel->numleafs > 0)
+	{
+		const uintptr_t start = (uintptr_t)r_worldmodel->leafs;
+		const uintptr_t end = start + (uintptr_t)r_worldmodel->numleafs * sizeof(mleaf_t);
+		if (ptr >= start && ptr < end && (ptr - start) % sizeof(mleaf_t) == 0)
+			return true;
+	}
+
+	return false;
+}
+
 // Mark the leaves and nodes that are in the PVS for the current cluster.
 void R_MarkLeaves(void)
 {
 	static byte fatvis[MAX_MAP_LEAFS / 8];
+	static qboolean warned_invalid_parent;
 
 	if (r_oldviewcluster == r_viewcluster && r_oldviewcluster2 == r_viewcluster2 && !(int)r_novis->value && r_viewcluster != -1)
 		return;
@@ -811,7 +870,11 @@ void R_MarkLeaves(void)
 	r_oldviewcluster = r_viewcluster;
 	r_oldviewcluster2 = r_viewcluster2;
 
-	if ((int)r_novis->value || r_viewcluster == -1 || r_worldmodel->vis == NULL)
+	if (r_worldmodel == NULL)
+		return;
+
+	const int numclusters = (r_worldmodel->vis != NULL ? r_worldmodel->vis->numclusters : 0);
+	if ((int)r_novis->value || r_viewcluster == -1 || r_worldmodel->vis == NULL || r_viewcluster >= numclusters)
 	{
 		// Mark everything.
 		for (int i = 0; i < r_worldmodel->numleafs; i++)
@@ -826,12 +889,12 @@ void R_MarkLeaves(void)
 	byte* vis = Mod_ClusterPVS(r_viewcluster, r_worldmodel);
 
 	// May have to combine two clusters because of solid water boundaries.
-	if (r_viewcluster2 != r_viewcluster)
+	if (r_viewcluster2 != r_viewcluster && r_viewcluster2 >= 0 && r_viewcluster2 < numclusters)
 	{
-		memcpy(fatvis, vis, (r_worldmodel->numleafs + 7) / 8);
+		memcpy(fatvis, vis, (numclusters + 7) / 8);
 		vis = Mod_ClusterPVS(r_viewcluster2, r_worldmodel);
 
-		const int c = (r_worldmodel->numleafs + 31) / 32;
+		const int c = (numclusters + 31) / 32;
 		for (int i = 0; i < c; i++)
 			((int*)fatvis)[i] |= ((int*)vis)[i];
 
@@ -842,20 +905,32 @@ void R_MarkLeaves(void)
 	for (int i = 0; i < r_worldmodel->numleafs; i++, leaf++)
 	{
 		const int cluster = leaf->cluster;
-		if (cluster == -1)
+		if (cluster < 0 || cluster >= numclusters)
 			continue;
 
 		if (vis[cluster >> 3] & 1 << (cluster & 7))
 		{
 			mnode_t* node = (mnode_t*)leaf;
-			do
+			while (R_IsWorldNodeOrLeafPointer(node))
 			{
 				if (node->visframe == r_visframecount)
 					break;
 
 				node->visframe = r_visframecount;
-				node = node->parent;
-			} while (node);
+
+				mnode_t* parent = node->parent;
+				if (parent != NULL && !R_IsWorldNodeOrLeafPointer(parent))
+				{
+					if (!warned_invalid_parent)
+					{
+						ri.Con_Printf(PRINT_DEVELOPER, "R_MarkLeaves: ignored invalid BSP parent pointer in '%s'\n", r_worldmodel->name);
+						warned_invalid_parent = true;
+					}
+					break;
+				}
+
+				node = parent;
+			}
 		}
 	}
 }

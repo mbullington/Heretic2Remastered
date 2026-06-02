@@ -965,6 +965,188 @@ static void Cmd_ShowCoords_f(const edict_t* ent)
 	Com_Printf("       pitch:    %2.2f\n", -ent->client->aimangles[PITCH]);
 }
 
+static FILE* stuckinfo_file;
+
+static void StuckInfo_Print(const edict_t* ent, const char* fmt, ...)
+{
+	char msg[1024];
+	va_list argptr;
+	va_start(argptr, fmt);
+	vsprintf_s(msg, sizeof(msg), fmt, argptr);
+	va_end(argptr);
+
+	gi.cprintf(ent, PRINT_HIGH, "%s", msg);
+	gi.dprintf("%s", msg);
+
+	if (stuckinfo_file != NULL)
+	{
+		fprintf(stuckinfo_file, "%s", msg);
+		fflush(stuckinfo_file);
+	}
+}
+
+static const char* StuckInfo_EntName(const edict_t* ent)
+{
+	if (ent == NULL)
+		return "<none>";
+
+	if (ent == &g_edicts[0])
+		return "worldspawn";
+
+	return (ent->classname != NULL ? ent->classname : "<no classname>");
+}
+
+static int StuckInfo_EntNum(const edict_t* ent)
+{
+	return (ent != NULL ? (int)(ent - g_edicts) : -1);
+}
+
+static void StuckInfo_PrintTrace(const edict_t* ent, const char* label, const vec3_t end)
+{
+	trace_t tr;
+	gi.trace(ent->s.origin, ent->mins, ent->maxs, end, ent, MASK_PLAYERSOLID, &tr);
+
+	StuckInfo_Print(ent,
+		"trace %-5s start=%i all=%i frac=%.3f end=(%.1f %.1f %.1f) ent=%i:%s solid=%i svflags=0x%x contents=0x%x\n",
+		label,
+		tr.startsolid,
+		tr.allsolid,
+		tr.fraction,
+		tr.endpos[0], tr.endpos[1], tr.endpos[2],
+		StuckInfo_EntNum(tr.ent),
+		StuckInfo_EntName(tr.ent),
+		(tr.ent != NULL ? tr.ent->solid : 0),
+		(tr.ent != NULL ? tr.ent->svflags : 0),
+		tr.contents);
+}
+
+static void Cmd_StuckInfo_f(const edict_t* ent)
+{
+	assert(ent->client);
+
+	const gclient_t* cl = ent->client;
+	const playerinfo_t* info = &cl->playerinfo;
+	const edict_t* ground = ent->groundentity;
+
+	char name[MAX_OSPATH];
+	Com_sprintf(name, sizeof(name), "%s/stuckinfo.txt", gi.FS_Userdir());
+	fopen_s(&stuckinfo_file, name, "a");
+	if (stuckinfo_file != NULL)
+		fprintf(stuckinfo_file, "\n");
+
+	StuckInfo_Print(ent, "stuckinfo log: %s\n", name);
+	StuckInfo_Print(ent, "--- stuckinfo frame=%i time=%.2f ent=%i:%s ---\n", level.framenum, level.time, StuckInfo_EntNum(ent), StuckInfo_EntName(ent));
+	StuckInfo_Print(ent, "origin=(%.1f %.1f %.1f) velocity=(%.1f %.1f %.1f) mins=(%.1f %.1f %.1f) maxs=(%.1f %.1f %.1f)\n",
+		ent->s.origin[0], ent->s.origin[1], ent->s.origin[2],
+		ent->velocity[0], ent->velocity[1], ent->velocity[2],
+		ent->mins[0], ent->mins[1], ent->mins[2],
+		ent->maxs[0], ent->maxs[1], ent->maxs[2]);
+	StuckInfo_Print(ent, "absmin=(%.1f %.1f %.1f) absmax=(%.1f %.1f %.1f) solid=%i clipmask=0x%x svflags=0x%x flags=0x%x movetype=%i dead=%i health=%i\n",
+		ent->absmin[0], ent->absmin[1], ent->absmin[2],
+		ent->absmax[0], ent->absmax[1], ent->absmax[2],
+		ent->solid, ent->clipmask, ent->svflags, ent->flags, ent->movetype, ent->dead_state, ent->health);
+	StuckInfo_Print(ent, "pmove type=%i flags=0x%x w_flags=0x%x time=%i origin=(%i %i %i) velocity=(%i %i %i) ground=%i:%s linkcount=%i water=%i/%i\n",
+		cl->ps.pmove.pm_type,
+		cl->ps.pmove.pm_flags,
+		cl->ps.pmove.w_flags,
+		cl->ps.pmove.pm_time,
+		cl->ps.pmove.origin[0], cl->ps.pmove.origin[1], cl->ps.pmove.origin[2],
+		cl->ps.pmove.velocity[0], cl->ps.pmove.velocity[1], cl->ps.pmove.velocity[2],
+		StuckInfo_EntNum(ground),
+		StuckInfo_EntName(ground),
+		ent->groundentity_linkcount,
+		ent->waterlevel,
+		ent->watertype);
+	StuckInfo_Print(ent, "cmd msec=%i fwd=%i side=%i up=%i buttons=0x%x prediction=%i light=%i angles=(%i %i %i) aim=(%i %i %i)\n",
+		cl->pcmd.msec,
+		cl->pcmd.forwardmove,
+		cl->pcmd.sidemove,
+		cl->pcmd.upmove,
+		cl->pcmd.buttons,
+		cl->pcmd.prediction,
+		cl->pcmd.lightlevel,
+		cl->pcmd.angles[0], cl->pcmd.angles[1], cl->pcmd.angles[2],
+		cl->pcmd.aimangles[0], cl->pcmd.aimangles[1], cl->pcmd.aimangles[2]);
+	StuckInfo_Print(ent, "buttons current=0x%x old=0x%x latched=0x%x remember=0x%x seq_attack=%i upper=%i/%i lower=%i/%i weapon=%s ready=%i charge=%i\n",
+		info->buttons,
+		info->oldbuttons,
+		info->latched_buttons,
+		info->remember_buttons,
+		info->seqcmd[ACMDU_ATTACK],
+		info->upperseq,
+		info->upperframe,
+		info->lowerseq,
+		info->lowerframe,
+		(info->pers.weapon != NULL ? info->pers.weapon->classname : "<none>"),
+		info->pers.weaponready,
+		info->weaponcharge);
+	StuckInfo_Print(ent, "playerinfo flags=0x%x edictflags=0x%x pm_flags=0x%x pm_w_flags=0x%x target=%p target_ent=%p targetEnt=%p enemy=%p\n",
+		info->flags,
+		info->edictflags,
+		info->pm_flags,
+		info->pm_w_flags,
+		info->target,
+		info->target_ent,
+		info->targetEnt,
+		info->enemy);
+
+	const vec3_t feet = VEC3_INITA(ent->s.origin, 0.0f, 0.0f, ent->mins[2] + 1.0f);
+	const vec3_t head = VEC3_INITA(ent->s.origin, 0.0f, 0.0f, ent->maxs[2]);
+	StuckInfo_Print(ent, "pointcontents origin=0x%x feet=0x%x head=0x%x\n",
+		gi.pointcontents(ent->s.origin),
+		gi.pointcontents(feet),
+		gi.pointcontents(head));
+
+	const vec3_t trace_zero = VEC3_INIT(ent->s.origin);
+	const vec3_t trace_pos_x = VEC3_INITA(ent->s.origin, 16.0f, 0.0f, 0.0f);
+	const vec3_t trace_neg_x = VEC3_INITA(ent->s.origin, -16.0f, 0.0f, 0.0f);
+	const vec3_t trace_pos_y = VEC3_INITA(ent->s.origin, 0.0f, 16.0f, 0.0f);
+	const vec3_t trace_neg_y = VEC3_INITA(ent->s.origin, 0.0f, -16.0f, 0.0f);
+	const vec3_t trace_pos_z = VEC3_INITA(ent->s.origin, 0.0f, 0.0f, 16.0f);
+	const vec3_t trace_neg_z = VEC3_INITA(ent->s.origin, 0.0f, 0.0f, -16.0f);
+	StuckInfo_PrintTrace(ent, "zero", trace_zero);
+	StuckInfo_PrintTrace(ent, "+x", trace_pos_x);
+	StuckInfo_PrintTrace(ent, "-x", trace_neg_x);
+	StuckInfo_PrintTrace(ent, "+y", trace_pos_y);
+	StuckInfo_PrintTrace(ent, "-y", trace_neg_y);
+	StuckInfo_PrintTrace(ent, "+z", trace_pos_z);
+	StuckInfo_PrintTrace(ent, "-z", trace_neg_z);
+
+	vec3_t near_mins = VEC3_INITA(ent->absmin, -96.0f, -96.0f, -96.0f);
+	vec3_t near_maxs = VEC3_INITA(ent->absmax, 96.0f, 96.0f, 96.0f);
+	edict_t* nearby[MAX_EDICTS];
+	const int count = gi.BoxEdicts(near_mins, near_maxs, nearby, ARRAY_SIZE(nearby), AREA_SOLID);
+	StuckInfo_Print(ent, "nearby solid entities: %i\n", count);
+
+	int printed = 0;
+	for (int i = 0; i < count && printed < 24; i++)
+	{
+		const edict_t* other = nearby[i];
+		if (other == NULL || other == ent)
+			continue;
+
+		StuckInfo_Print(ent, "  %i:%s origin=(%.1f %.1f %.1f) mins=(%.1f %.1f %.1f) maxs=(%.1f %.1f %.1f) solid=%i clip=0x%x sv=0x%x owner=%i\n",
+			StuckInfo_EntNum(other),
+			StuckInfo_EntName(other),
+			other->s.origin[0], other->s.origin[1], other->s.origin[2],
+			other->mins[0], other->mins[1], other->mins[2],
+			other->maxs[0], other->maxs[1], other->maxs[2],
+			other->solid,
+			other->clipmask,
+			other->svflags,
+			StuckInfo_EntNum(other->owner));
+		printed++;
+	}
+
+	StuckInfo_Print(ent, "--- end stuckinfo ---\n");
+
+	if (stuckinfo_file != NULL)
+	{
+		fclose(stuckinfo_file);
+		stuckinfo_file = NULL;
+	}
+}
+
 #pragma endregion
 
 void ClientCommand(edict_t* ent)
@@ -1094,6 +1276,12 @@ void ClientCommand(edict_t* ent)
 	if (Q_stricmp(cmd, "showcoords") == 0)
 	{
 		Cmd_ShowCoords_f(ent);
+		return;
+	}
+
+	if (Q_stricmp(cmd, "stuckinfo") == 0)
+	{
+		Cmd_StuckInfo_f(ent);
 		return;
 	}
 

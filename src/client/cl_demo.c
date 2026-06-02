@@ -57,8 +57,9 @@ void CL_Record_f(void)
 	SZ_Init(&buf, buf_data, sizeof(buf_data));
 
 	// Send the serverdata.
+	const int demo_protocol = (cls.serverProtocol == PROTOCOL_VERSION || cls.serverProtocol == H2R_PROTOCOL_VERSION ? cls.serverProtocol : H2R_PROTOCOL_VERSION);
 	MSG_WriteByte(&buf, svc_serverdata);
-	MSG_WriteLong(&buf, H2R_PROTOCOL_VERSION); // H2: PROTOCOL_VERSION.
+	MSG_WriteLong(&buf, demo_protocol); // H2: PROTOCOL_VERSION.
 	MSG_WriteLong(&buf, 0x10000 + cl.servercount);
 	MSG_WriteByte(&buf, 1); // Demos are always attract loops.
 	MSG_WriteString(&buf, cl.gamedir);

@@ -287,6 +287,7 @@ typedef struct
 
 	int quakePort; // A 16 bit value that allows quake servers to work around address translating routers.
 	netchan_t netchan;
+	int connectProtocol; // Protocol currently being tried while connecting.
 	int serverProtocol; // In case we are doing some kind of version hack.
 
 	int challenge; // From the server to use for connecting.
@@ -516,7 +517,7 @@ typedef snd_export_t (*GetSoundAPI_t)(snd_import_t);
 
 #pragma region ========================== CVARS ==========================
 
-#define CL_PREDICT		((qboolean)cl_predict->value) //mxd
+#define CL_PREDICT		((qboolean)(cl_predict->value && (cls.state != ca_active || cls.serverProtocol != PROTOCOL_VERSION || (cl_protocol51_predict != NULL && cl_protocol51_predict->value)))) //mxd
 #define CL_FREEZEWORLD	((qboolean)cl_freezeworld->value) //mxd
 #define CL_PAUSED		((qboolean)cl_paused->value) //mxd
 
@@ -529,6 +530,7 @@ extern cvar_t* cl_add_particles;
 extern cvar_t* cl_add_entities;
 
 extern cvar_t* cl_predict;
+extern cvar_t* cl_protocol51_predict;
 
 extern cvar_t* cl_noskins;
 extern cvar_t* cl_autoskins;

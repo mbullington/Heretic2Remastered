@@ -175,7 +175,7 @@ static void SV_FlushRedirect(const int sv_redirected, char* outputbuf)
 static void SVC_Status(void)
 {
 	Com_BeginRedirect(RD_PACKET, sv_outputbuf, sizeof(sv_outputbuf), SV_FlushRedirect);
-	Com_Printf(SV_StatusString());
+	Com_Printf("%s", SV_StatusString());
 	Com_EndRedirect();
 }
 

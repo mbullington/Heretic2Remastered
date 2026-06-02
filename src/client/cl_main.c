@@ -33,6 +33,7 @@ cvar_t* cl_noskins;
 cvar_t* cl_autoskins;
 static cvar_t* cl_timeout;
 cvar_t* cl_predict;
+cvar_t* cl_protocol51_predict;
 cvar_t* cl_maxfps;
 
 cvar_t* cl_add_particles;
@@ -158,14 +159,36 @@ static void ClearIgnoredPlayersList(void)
 }
 
 //mxd. Get current network protocol version.
+static qboolean CL_IsSupportedProtocolVersion(const int protocol)
+{
+	return (protocol == PROTOCOL_VERSION || protocol == H2R_PROTOCOL_VERSION);
+}
+
 int CL_GetProtocolVersion(void)
 {
 	const int protocol = Cvar_VariableInt("protocol");
 
-	if (protocol != PROTOCOL_VERSION && protocol != H2R_PROTOCOL_VERSION)
+	if (!CL_IsSupportedProtocolVersion(protocol))
 		return H2R_PROTOCOL_VERSION;
 
 	return protocol;
+}
+
+static int CL_GetConnectProtocol(void)
+{
+	if (CL_IsSupportedProtocolVersion(cls.connectProtocol))
+		return cls.connectProtocol;
+
+	return CL_GetProtocolVersion();
+}
+
+static void CL_SendInfoRequest(const netadr_t* adr)
+{
+	const int protocol = CL_GetProtocolVersion();
+	Netchan_OutOfBandPrint(NS_CLIENT, adr, va("info %i", protocol));
+
+	const int fallback_protocol = (protocol == H2R_PROTOCOL_VERSION ? PROTOCOL_VERSION : H2R_PROTOCOL_VERSION);
+	Netchan_OutOfBandPrint(NS_CLIENT, adr, va("info %i", fallback_protocol));
 }
 
 // Goes from a connected state to full screen console state.
@@ -281,7 +304,6 @@ void CL_PingServers_f(void)
 	// Send a broadcast packet.
 	Com_Printf("pinging broadcast...\n");
 
-	const int protocol = CL_GetProtocolVersion(); //mxd. Get current protocol...
 	netadr_t adr = { .type = NA_LOOPBACK }; //mxd. Initialize.
 
 	const cvar_t* noudp = Cvar_Get("noudp", "0", CVAR_NOSET);
@@ -289,7 +311,7 @@ void CL_PingServers_f(void)
 	{
 		adr.type = NA_BROADCAST;
 		adr.port = BigShort(PORT_SERVER);
-		Netchan_OutOfBandPrint(NS_CLIENT, &adr, va("info %i", protocol));
+		CL_SendInfoRequest(&adr);
 	}
 
 	const cvar_t* noipx = Cvar_Get("noipx", "0", CVAR_NOSET);
@@ -297,7 +319,7 @@ void CL_PingServers_f(void)
 	{
 		adr.type = NA_BROADCAST_IPX;
 		adr.port = BigShort(PORT_SERVER);
-		Netchan_OutOfBandPrint(NS_CLIENT, &adr, va("info %i", protocol));
+		CL_SendInfoRequest(&adr);
 	}
 
 	//mxd. Added sanity check.
@@ -325,7 +347,7 @@ void CL_PingServers_f(void)
 		if (adr.port == 0)
 			adr.port = BigShort(PORT_SERVER);
 
-		Netchan_OutOfBandPrint(NS_CLIENT, &adr, va("info %i", protocol));
+		CL_SendInfoRequest(&adr);
 	}
 }
 
@@ -494,7 +516,7 @@ static void CL_SendConnectPacket(void)
 			adr.port = BigShort(PORT_SERVER);
 
 		const int port = Cvar_VariableInt("qport");
-		const int protocol = CL_GetProtocolVersion(); //mxd. Original logic uses PROTOCOL_VERSION.
+		const int protocol = CL_GetConnectProtocol(); //mxd. Original logic uses PROTOCOL_VERSION.
 		userinfo_modified = false;
 
 		Netchan_OutOfBandPrint(NS_CLIENT, &adr, "connect %i %i %i \"%s\"\n", protocol, port, cls.challenge, Cvar_Userinfo());
@@ -506,6 +528,25 @@ static void CL_SendConnectPacket(void)
 	}
 }
 
+static qboolean CL_RetryWithServerProtocol(const char* message)
+{
+	static const char prefix[] = "Server is version ";
+
+	if (cls.state != ca_connecting || strncmp(message, prefix, sizeof(prefix) - 1) != 0)
+		return false;
+
+	const int protocol = (int)strtol(message + sizeof(prefix) - 1, NULL, 10);
+	if (!CL_IsSupportedProtocolVersion(protocol) || protocol == CL_GetConnectProtocol())
+		return false;
+
+	cls.connectProtocol = protocol;
+	cls.connect_time = (float)cls.realtime;
+	Com_Printf("Server uses protocol %i; retrying...\n", protocol);
+	CL_SendConnectPacket();
+
+	return true;
+}
+
 // Resend a connect message if the last one has timed out.
 static void CL_CheckForResend(void)
 {
@@ -515,6 +556,7 @@ static void CL_CheckForResend(void)
 	if (cls.state == ca_disconnected && Com_ServerState())
 	{
 		cls.state = ca_connecting;
+		cls.connectProtocol = CL_GetProtocolVersion();
 		strncpy_s(cls.servername, sizeof(cls.servername), "localhost", sizeof(cls.servername) - 1); //mxd. strncpy -> strncpy_s
 		CL_SendConnectPacket(); // We don't need a challenge on the localhost.
 
@@ -559,6 +601,7 @@ static void CL_Connect_f(void)
 	CL_Disconnect();
 
 	cls.state = ca_connecting;
+	cls.connectProtocol = CL_GetProtocolVersion();
 	strncpy_s(cls.servername, sizeof(cls.servername), server, sizeof(cls.servername) - 1); //mxd. strncpy -> strncpy_s
 	cls.connect_time = -99999; // CL_CheckForResend() will fire immediately.
 }
@@ -1111,6 +1154,10 @@ static void CL_ParseStatusMessage(void)
 {
 	char* s = MSG_ReadString(&net_message);
 
+	// We probe both supported protocols; suppress the expected reject from the other one.
+	if (strstr(s, "wrong version") != NULL)
+		return;
+
 	Com_Printf("%s\n", s);
 	M_AddToServerList(&net_from, s);
 }
@@ -1158,7 +1205,9 @@ static void CL_ConnectionlessPacket(void)
 	}
 	else if (strcmp(c, "print") == 0) // Print command from somewhere.
 	{
-		Com_Printf("%s", MSG_ReadString(&net_message));
+		char* message = MSG_ReadString(&net_message);
+		if (!CL_RetryWithServerProtocol(message))
+			Com_Printf("%s", message);
 	}
 	else if (strcmp(c, "ping") == 0) // Ping from somewhere.
 	{
@@ -1250,6 +1299,7 @@ static void CL_InitLocal(void)
 	cl_noskins = Cvar_Get("cl_noskins", "0", 0);
 	cl_autoskins = Cvar_Get("cl_autoskins", "0", 0);
 	cl_predict = Cvar_Get("cl_predict", "1", 0); // H2: 0
+	cl_protocol51_predict = Cvar_Get("cl_protocol51_predict", "0", CVAR_ARCHIVE);
 
 	cl_frametime = Cvar_Get("cl_frametime", "0.0", 0);
 	cl_yawspeed = Cvar_Get("cl_yawspeed", "70", CVAR_ARCHIVE);

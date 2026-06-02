@@ -326,8 +326,8 @@ static void SV_BeginDownload_f(void)
 	char* name = Cmd_Argv(1);
 	const int offset = (Cmd_Argc() > 2 ? Q_atoi(Cmd_Argv(2)) : 0); // Downloaded offset.
 
-	// Validate download path.
-	if (!SV_IsValidDownloadPath(name))
+	// Validate download path and offset.
+	if (!SV_IsValidDownloadPath(name) || offset < 0)
 	{
 		MSG_WriteByte(&sv_client->netchan.message, svc_download);
 		MSG_WriteShort(&sv_client->netchan.message, -1);

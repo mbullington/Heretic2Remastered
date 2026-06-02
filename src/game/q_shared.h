@@ -29,6 +29,12 @@
 	#define H2R_NORETURN	__attribute__((noreturn)) //mxd
 #endif
 
+#if defined(__GNUC__) || defined(__clang__)
+	#define H2R_PRINTF(fmt_index, first_arg) __attribute__((format(printf, fmt_index, first_arg)))
+#else
+	#define H2R_PRINTF(fmt_index, first_arg)
+#endif
+
 #define ARRAY_SIZE(a)	(sizeof((a))/sizeof((a)[0])) //mxd. Because it's strange to depend on windows header for this.
 
 //mxd. Player/monster step size. Used by pmove.c, m_move.c and mg_ai.c...
@@ -216,18 +222,18 @@ extern char* Sys_FindFirst(const char* path, uint musthave, uint canthave);
 extern char* Sys_FindNext(uint musthave, uint canthave);
 extern void Sys_FindClose(void);
 
-H2R_NORETURN Q2DLL_DECLSPEC extern void Sys_Error(const char* error, ...);
+H2R_NORETURN Q2DLL_DECLSPEC extern void Sys_Error(const char* error, ...) H2R_PRINTF(1, 2);
 
 #ifdef __cplusplus //mxd. Needed, so code in game/ds.cpp could build...
 extern "C"
 {
 #endif
-Q2DLL_DECLSPEC extern void Com_Printf(const char* fmt, ...);
+Q2DLL_DECLSPEC extern void Com_Printf(const char* fmt, ...) H2R_PRINTF(1, 2);
 #ifdef __cplusplus
 }
 #endif
 
-Q2DLL_DECLSPEC extern void Com_ColourPrintf(PalIdx_t colour, const char* fmt, ...);
+Q2DLL_DECLSPEC extern void Com_ColourPrintf(PalIdx_t colour, const char* fmt, ...) H2R_PRINTF(2, 3);
 
 #pragma endregion
 

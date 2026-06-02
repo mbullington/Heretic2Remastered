@@ -6,13 +6,23 @@
 
 #include "client.h"
 #include "EffectFlags.h"
+#include "p_anims.h"
 #include "Vector.h"
 
 static cvar_t* cl_nodelta;
+static cvar_t* cl_inputwatch;
+static cvar_t* cl_protocol51_unstick;
+static cvar_t* cl_protocol51_strip_any;
+static cvar_t* cl_protocol51_nodelta;
 
 static uint frame_msec;
 static uint old_sys_frame_time;
 static float quickturn_time; // H2
+static int inputwatch_next_time;
+static int protocol51_unstick_origin_time;
+static int protocol51_unstick_recovery_until;
+static int protocol51_unstick_message_time;
+static short protocol51_unstick_origin[3];
 
 int pred_pm_flags; // H2
 int pred_pm_w_flags; // H2
@@ -396,9 +406,493 @@ void IN_CenterView(void)
 	cl.viewangles[PITCH] = angle;
 }
 
+static FILE* cl_stuckinfo_file;
+
+static void CL_StuckInfoPrint(const char* fmt, ...)
+{
+	char msg[1024];
+	va_list argptr;
+	va_start(argptr, fmt);
+	vsprintf_s(msg, sizeof(msg), fmt, argptr);
+	va_end(argptr);
+
+	Com_Printf("%s", msg);
+
+	if (cl_stuckinfo_file != NULL)
+	{
+		fprintf(cl_stuckinfo_file, "%s", msg);
+		fflush(cl_stuckinfo_file);
+	}
+}
+
+static void CL_StuckInfoPrintKey(const char* name, const kbutton_t* key)
+{
+	CL_StuckInfoPrint("%-12s state=0x%x down0=%i:%s down1=%i:%s downtime=%u msec=%u\n",
+		name,
+		key->state,
+		key->down[0], (key->down[0] > 0 ? Key_KeynumToString(key->down[0]) : "<none>"),
+		key->down[1], (key->down[1] > 0 ? Key_KeynumToString(key->down[1]) : "<none>"),
+		key->downtime,
+		key->msec);
+}
+
+static void CL_StuckInfoPrintCmd(const char* label, const usercmd_t* cmd)
+{
+	CL_StuckInfoPrint("%s msec=%i fwd=%i side=%i up=%i buttons=0x%x%s%s%s%s%s%s%s%s%s angles=(%i %i %i) aim=(%i %i %i) light=%i pred=%i\n",
+		label,
+		cmd->msec,
+		cmd->forwardmove,
+		cmd->sidemove,
+		cmd->upmove,
+		cmd->buttons,
+		(cmd->buttons & BUTTON_ATTACK ? " ATTACK" : ""),
+		(cmd->buttons & BUTTON_DEFEND ? " DEFEND" : ""),
+		(cmd->buttons & BUTTON_ACTION ? " ACTION" : ""),
+		(cmd->buttons & BUTTON_RUN ? " RUN" : ""),
+		(cmd->buttons & BUTTON_CREEP ? " CREEP" : ""),
+		(cmd->buttons & BUTTON_LOOKAROUND ? " LOOK" : ""),
+		(cmd->buttons & BUTTON_INVENTORY ? " INV" : ""),
+		(cmd->buttons & BUTTON_QUICKTURN ? " QUICKTURN" : ""),
+		(cmd->buttons & BUTTON_ANY ? " ANY" : ""),
+		cmd->angles[0], cmd->angles[1], cmd->angles[2],
+		cmd->aimangles[0], cmd->aimangles[1], cmd->aimangles[2],
+		cmd->lightlevel,
+		cmd->prediction);
+}
+
+static void CL_StuckInfo_f(void)
+{
+	char name[MAX_OSPATH];
+	Com_sprintf(name, sizeof(name), "%s/client_stuckinfo.txt", FS_Userdir());
+	fopen_s(&cl_stuckinfo_file, name, "a");
+	if (cl_stuckinfo_file != NULL)
+		fprintf(cl_stuckinfo_file, "\n");
+
+	CL_StuckInfoPrint("client stuckinfo log: %s\n", name);
+	CL_StuckInfoPrint("--- client stuckinfo realtime=%i state=%i key_dest=%i protocol=%i serverProtocol=%i server=%s ---\n",
+		cls.realtime,
+		cls.state,
+		cls.key_dest,
+		CL_GetProtocolVersion(),
+		cls.serverProtocol,
+		cls.servername);
+	CL_StuckInfoPrint("ignore_input=%i cinematicfreeze=%i remote_id=%i anykeydown=%i force_packet=%i outgoing=%i incoming=%i dropped=%i\n",
+		CL_IgnoreInput(),
+		cl.frame.playerstate.cinematicfreeze,
+		cl.frame.playerstate.remote_id,
+		anykeydown,
+		cls.force_packet,
+		cls.netchan.outgoing_sequence,
+		cls.netchan.incoming_sequence,
+		cls.netchan.dropped);
+	CL_StuckInfoPrint("viewangles=(%.2f %.2f %.2f) inputangles=(%.2f %.2f %.2f) delta_inputangles=(%.2f %.2f %.2f) predicted_origin=(%.2f %.2f %.2f) prediction_error=(%.2f %.2f %.2f)\n",
+		cl.viewangles[0], cl.viewangles[1], cl.viewangles[2],
+		cl.inputangles[0], cl.inputangles[1], cl.inputangles[2],
+		cl.delta_inputangles[0], cl.delta_inputangles[1], cl.delta_inputangles[2],
+		cl.predicted_origin[0], cl.predicted_origin[1], cl.predicted_origin[2],
+		cl.prediction_error[0], cl.prediction_error[1], cl.prediction_error[2]);
+	CL_StuckInfoPrint("pmove type=%i flags=0x%x w_flags=0x%x time=%i origin=(%i %i %i) velocity=(%i %i %i) pred_pm_flags=0x%x pred_pm_w_flags=0x%x\n",
+		cl.frame.playerstate.pmove.pm_type,
+		cl.frame.playerstate.pmove.pm_flags,
+		cl.frame.playerstate.pmove.w_flags,
+		cl.frame.playerstate.pmove.pm_time,
+		cl.frame.playerstate.pmove.origin[0], cl.frame.playerstate.pmove.origin[1], cl.frame.playerstate.pmove.origin[2],
+		cl.frame.playerstate.pmove.velocity[0], cl.frame.playerstate.pmove.velocity[1], cl.frame.playerstate.pmove.velocity[2],
+		pred_pm_flags,
+		pred_pm_w_flags);
+
+	CL_StuckInfoPrintKey("attack", &in_attack);
+	CL_StuckInfoPrintKey("defend", &in_defend);
+	CL_StuckInfoPrintKey("action", &in_action);
+	CL_StuckInfoPrintKey("forward", &in_forward);
+	CL_StuckInfoPrintKey("back", &in_back);
+	CL_StuckInfoPrintKey("moveleft", &in_moveleft);
+	CL_StuckInfoPrintKey("moveright", &in_moveright);
+	CL_StuckInfoPrintKey("speed", &in_speed);
+	CL_StuckInfoPrintKey("creep", &in_creep);
+	CL_StuckInfoPrintKey("lookaround", &in_lookaround);
+	CL_StuckInfoPrintKey("quickturn", &in_quickturn);
+	CL_StuckInfoPrintKey("inventory", &in_inventory);
+
+	const playerinfo_t* info = &cl.playerinfo;
+	CL_StuckInfoPrint("playerinfo buttons=0x%x old=0x%x latched=0x%x remember=0x%x seq_attack=%i upper=%i/%i lower=%i/%i weapon=%s ready=%i charge=%i flags=0x%x pm_flags=0x%x pm_w_flags=0x%x\n",
+		info->buttons,
+		info->oldbuttons,
+		info->latched_buttons,
+		info->remember_buttons,
+		info->seqcmd[ACMDU_ATTACK],
+		info->upperseq,
+		info->upperframe,
+		info->lowerseq,
+		info->lowerframe,
+		(info->pers.weapon != NULL ? info->pers.weapon->classname : "<none>"),
+		info->pers.weaponready,
+		info->weaponcharge,
+		info->flags,
+		info->pm_flags,
+		info->pm_w_flags);
+
+	CL_StuckInfoPrintCmd("cl.cmd", &cl.cmd);
+	for (int i = 0; i < 4; i++)
+	{
+		const int sequence = cls.netchan.outgoing_sequence - i;
+		CL_StuckInfoPrintCmd(va("cmd[%i]", sequence), &cl.cmds[sequence & (CMD_BACKUP - 1)]);
+	}
+
+	CL_StuckInfoPrint("--- end client stuckinfo ---\n");
+
+	if (cl_stuckinfo_file != NULL)
+	{
+		fclose(cl_stuckinfo_file);
+		cl_stuckinfo_file = NULL;
+	}
+}
+
+static void CL_ClearKButton(kbutton_t* key)
+{
+	memset(key, 0, sizeof(*key));
+}
+
+static void CL_InputWatchFilePrintf(FILE* f, const char* fmt, ...)
+{
+	char msg[1024];
+	va_list argptr;
+	va_start(argptr, fmt);
+	vsprintf_s(msg, sizeof(msg), fmt, argptr);
+	va_end(argptr);
+
+	fprintf(f, "%s", msg);
+}
+
+static void CL_InputWatchPrintKey(FILE* f, const char* name, const kbutton_t* key)
+{
+	CL_InputWatchFilePrintf(f, " %s=0x%x/%i:%s/%i:%s",
+		name,
+		key->state,
+		key->down[0], (key->down[0] > 0 ? Key_KeynumToString(key->down[0]) : "-"),
+		key->down[1], (key->down[1] > 0 ? Key_KeynumToString(key->down[1]) : "-"));
+}
+
+static void CL_InputWatchTrace(FILE* f, const char* label, const vec3_t start, const vec3_t mins, const vec3_t maxs, const vec3_t end, const int flags)
+{
+	trace_t tr;
+	CL_Trace(start, mins, maxs, end, MASK_PLAYERSOLID, flags | CTF_ALWAYS_CHECK_CONTENTS, &tr);
+	CL_InputWatchFilePrintf(f, "  trace %-9s start=%i all=%i frac=%.3f end=(%.1f %.1f %.1f) contents=0x%x ent=%p\n",
+		label,
+		tr.startsolid,
+		tr.allsolid,
+		tr.fraction,
+		tr.endpos[0], tr.endpos[1], tr.endpos[2],
+		tr.contents,
+		tr.ent);
+}
+
+static void CL_InputWatchCollision(FILE* f, const usercmd_t* cmd)
+{
+	const vec3_t origin = VEC3_INITS(cl.frame.playerstate.pmove.origin, 0.125f);
+	vec3_t mins = VEC3_INIT(cl.playerinfo.mins);
+	vec3_t maxs = VEC3_INIT(cl.playerinfo.maxs);
+
+	if (Vec3IsZero(mins) && Vec3IsZero(maxs))
+	{
+		VectorSet(mins, -16.0f, -16.0f, -24.0f);
+		VectorSet(maxs, 16.0f, 16.0f, 48.0f);
+	}
+
+	vec3_t forward;
+	vec3_t right;
+	vec3_t up;
+	vec3_t angles = VEC3_SET(0.0f, SHORT2ANGLE(cl.frame.playerstate.pmove.delta_angles[YAW] + cmd->angles[YAW]), 0.0f);
+	AngleVectors(angles, forward, right, up);
+
+	vec3_t end;
+	const vec3_t feet = VEC3_INITA(origin, 0.0f, 0.0f, mins[2] + 1.0f);
+	const vec3_t head = VEC3_INITA(origin, 0.0f, 0.0f, maxs[2]);
+	CL_InputWatchFilePrintf(f, "  bbox mins=(%.1f %.1f %.1f) maxs=(%.1f %.1f %.1f) pointcontents origin=0x%x feet=0x%x head=0x%x\n",
+		mins[0], mins[1], mins[2],
+		maxs[0], maxs[1], maxs[2],
+		CL_PMpointcontents(origin),
+		CL_PMpointcontents(feet),
+		CL_PMpointcontents(head));
+
+	CL_InputWatchTrace(f, "zero/world", origin, mins, maxs, origin, CTF_CLIP_TO_WORLD);
+	CL_InputWatchTrace(f, "zero/all", origin, mins, maxs, origin, CTF_CLIP_TO_ALL | CTF_IGNORE_PLAYER);
+
+	VectorMA(origin, 32.0f, forward, end);
+	CL_InputWatchTrace(f, "fwd/world", origin, mins, maxs, end, CTF_CLIP_TO_WORLD);
+	CL_InputWatchTrace(f, "fwd/all", origin, mins, maxs, end, CTF_CLIP_TO_ALL | CTF_IGNORE_PLAYER);
+
+	VectorMA(origin, -32.0f, forward, end);
+	CL_InputWatchTrace(f, "back/world", origin, mins, maxs, end, CTF_CLIP_TO_WORLD);
+	VectorMA(origin, 32.0f, right, end);
+	CL_InputWatchTrace(f, "right/world", origin, mins, maxs, end, CTF_CLIP_TO_WORLD);
+	VectorMA(origin, -32.0f, right, end);
+	CL_InputWatchTrace(f, "left/world", origin, mins, maxs, end, CTF_CLIP_TO_WORLD);
+	VectorMA(origin, -32.0f, up, end);
+	CL_InputWatchTrace(f, "down/world", origin, mins, maxs, end, CTF_CLIP_TO_WORLD);
+}
+
+static void CL_InputWatchLog(const usercmd_t* cmd)
+{
+	char name[MAX_OSPATH];
+	Com_sprintf(name, sizeof(name), "%s/client_inputwatch.txt", FS_Userdir());
+
+	FILE* f;
+	if (fopen_s(&f, name, "a") != 0 || f == NULL)
+		return;
+
+	const player_state_t* ps = &cl.frame.playerstate;
+	CL_InputWatchFilePrintf(f, "watch realtime=%i key_dest=%i anykeydown=%i ignore=%i seq=%i/%i drop=%i serverProtocol=%i predict=%i p51_predict=%g p51_unstick=%i strip_any=%g nodelta=%g\n",
+		cls.realtime,
+		cls.key_dest,
+		anykeydown,
+		CL_IgnoreInput(),
+		cls.netchan.outgoing_sequence,
+		cls.netchan.incoming_sequence,
+		cls.netchan.dropped,
+		cls.serverProtocol,
+		CL_PREDICT,
+		cl_protocol51_predict->value,
+		(cls.realtime < protocol51_unstick_recovery_until),
+		cl_protocol51_strip_any->value,
+		(cls.serverProtocol == PROTOCOL_VERSION && (int)cl_protocol51_nodelta->value ? 1.0f : cl_nodelta->value));
+	CL_InputWatchFilePrintf(f, "  frame server=%i delta=%i time=%i cltime=%i valid=%i frame_parse=%i frame_ents=%i parse_head=%i playernum=%i\n",
+		cl.frame.serverframe,
+		cl.frame.deltaframe,
+		cl.frame.servertime,
+		cl.time,
+		cl.frame.valid,
+		cl.frame.parse_entities,
+		cl.frame.num_entities,
+		cl.parse_entities,
+		cl.playernum);
+	CL_InputWatchFilePrintf(f, "  cmd msec=%i fwd=%i side=%i up=%i buttons=0x%x%s%s%s%s%s angles=(%i %i %i) aim=(%i %i %i)\n",
+		cmd->msec,
+		cmd->forwardmove,
+		cmd->sidemove,
+		cmd->upmove,
+		cmd->buttons,
+		(cmd->buttons & BUTTON_ATTACK ? " ATTACK" : ""),
+		(cmd->buttons & BUTTON_ACTION ? " ACTION" : ""),
+		(cmd->buttons & BUTTON_RUN ? " RUN" : ""),
+		(cmd->buttons & BUTTON_AUTOAIM ? " AUTOAIM" : ""),
+		(cmd->buttons & BUTTON_ANY ? " ANY" : ""),
+		cmd->angles[0], cmd->angles[1], cmd->angles[2],
+		cmd->aimangles[0], cmd->aimangles[1], cmd->aimangles[2]);
+	CL_InputWatchFilePrintf(f, "  pmove type=%i flags=0x%x w=0x%x c=0x%x time=%i gravity=%i origin=(%i %i %i) velocity=(%i %i %i) delta=(%i %i %i) camdelta=(%i %i %i) predicted=(%.1f %.1f %.1f)\n",
+		ps->pmove.pm_type,
+		ps->pmove.pm_flags,
+		ps->pmove.w_flags,
+		ps->pmove.c_flags,
+		ps->pmove.pm_time,
+		ps->pmove.gravity,
+		ps->pmove.origin[0], ps->pmove.origin[1], ps->pmove.origin[2],
+		ps->pmove.velocity[0], ps->pmove.velocity[1], ps->pmove.velocity[2],
+		ps->pmove.delta_angles[0], ps->pmove.delta_angles[1], ps->pmove.delta_angles[2],
+		ps->pmove.camera_delta_angles[0], ps->pmove.camera_delta_angles[1], ps->pmove.camera_delta_angles[2],
+		cl.predicted_origin[0], cl.predicted_origin[1], cl.predicted_origin[2]);
+	CL_InputWatchFilePrintf(f, "  ps viewheight=%i fov=%.1f rdflags=0x%x remote_id=%i freeze=%i dead=%i flags=0x%x edictflags=0x%x fwdvel=%.1f sidevel=%.1f upvel=%.1f upper=%i/%i lower=%i/%i weapon=%i ready=%i mins=(%.1f %.1f %.1f) maxs=(%.1f %.1f %.1f)\n",
+		ps->viewheight,
+		ps->fov,
+		ps->rdflags,
+		ps->remote_id,
+		ps->cinematicfreeze,
+		ps->deadflag,
+		ps->flags,
+		ps->edictflags,
+		ps->fwdvel,
+		ps->sidevel,
+		ps->upvel,
+		ps->upperseq,
+		ps->upperframe,
+		ps->lowerseq,
+		ps->lowerframe,
+		ps->weapon,
+		ps->weaponready,
+		ps->mins[0], ps->mins[1], ps->mins[2],
+		ps->maxs[0], ps->maxs[1], ps->maxs[2]);
+	if (cl.playernum >= 0 && cl.playernum + 1 < MAX_EDICTS)
+	{
+		const centity_t* cent = &cl_entities[cl.playernum + 1];
+		CL_InputWatchFilePrintf(f, "  playerent serverframe=%i current_origin=(%.1f %.1f %.1f) current_angles=(%.1f %.1f %.1f) current_frame=%i model=%i solid=0x%x effects=0x%x renderfx=0x%x\n",
+			cent->serverframe,
+			cent->current.origin[0], cent->current.origin[1], cent->current.origin[2],
+			cent->current.angles[0], cent->current.angles[1], cent->current.angles[2],
+			cent->current.frame,
+			cent->current.modelindex,
+			cent->current.solid,
+			cent->current.effects,
+			cent->current.renderfx);
+	}
+	CL_InputWatchFilePrintf(f, "  keys");
+	CL_InputWatchPrintKey(f, "forward", &in_forward);
+	CL_InputWatchPrintKey(f, "back", &in_back);
+	CL_InputWatchPrintKey(f, "left", &in_moveleft);
+	CL_InputWatchPrintKey(f, "right", &in_moveright);
+	CL_InputWatchPrintKey(f, "attack", &in_attack);
+	CL_InputWatchPrintKey(f, "action", &in_action);
+	CL_InputWatchPrintKey(f, "speed", &in_speed);
+	CL_InputWatchFilePrintf(f, "\n");
+	CL_InputWatchFilePrintf(f, "  playerinfo buttons=0x%x old=0x%x remember=0x%x upper=%i/%i lower=%i/%i weapon=%s ready=%i pm_flags=0x%x flags=0x%x\n",
+		cl.playerinfo.buttons,
+		cl.playerinfo.oldbuttons,
+		cl.playerinfo.remember_buttons,
+		cl.playerinfo.upperseq,
+		cl.playerinfo.upperframe,
+		cl.playerinfo.lowerseq,
+		cl.playerinfo.lowerframe,
+		(cl.playerinfo.pers.weapon != NULL ? cl.playerinfo.pers.weapon->classname : "<none>"),
+		cl.playerinfo.pers.weaponready,
+		cl.playerinfo.pm_flags,
+		cl.playerinfo.flags);
+	CL_InputWatchCollision(f, cmd);
+	CL_InputWatchFilePrintf(f, "\n");
+
+	fclose(f);
+}
+
+static void CL_InputWatchMaybeLog(const usercmd_t* cmd)
+{
+	if (cl_inputwatch == NULL || !(int)cl_inputwatch->value || cls.state != ca_active || cls.serverProtocol != PROTOCOL_VERSION)
+		return;
+
+	if (cls.realtime < inputwatch_next_time)
+		return;
+
+	inputwatch_next_time = cls.realtime + 1000;
+	CL_InputWatchLog(cmd);
+}
+
+static qboolean CL_Protocol51HasMoveInput(const usercmd_t* cmd)
+{
+	return (cmd->forwardmove != 0 || cmd->sidemove != 0 || cmd->upmove != 0);
+}
+
+static qboolean CL_Protocol51OriginChanged(const pmove_state_t* pmove)
+{
+	return (protocol51_unstick_origin[0] != pmove->origin[0] ||
+		protocol51_unstick_origin[1] != pmove->origin[1] ||
+		protocol51_unstick_origin[2] != pmove->origin[2]);
+}
+
+static void CL_Protocol51UnstickMaybe(usercmd_t* cmd)
+{
+	if (cl_protocol51_unstick == NULL || !(int)cl_protocol51_unstick->value || cls.state != ca_active || cls.serverProtocol != PROTOCOL_VERSION)
+		return;
+
+	const pmove_state_t* pmove = &cl.frame.playerstate.pmove;
+	if (CL_Protocol51OriginChanged(pmove))
+	{
+		protocol51_unstick_origin[0] = pmove->origin[0];
+		protocol51_unstick_origin[1] = pmove->origin[1];
+		protocol51_unstick_origin[2] = pmove->origin[2];
+		protocol51_unstick_origin_time = cls.realtime;
+		protocol51_unstick_recovery_until = 0;
+		return;
+	}
+
+	if (!CL_Protocol51HasMoveInput(cmd) || CL_IgnoreInput() || cls.key_dest != key_game)
+	{
+		protocol51_unstick_origin_time = cls.realtime;
+		protocol51_unstick_recovery_until = 0;
+		return;
+	}
+
+	if (protocol51_unstick_origin_time == 0)
+	{
+		protocol51_unstick_origin_time = cls.realtime;
+		return;
+	}
+
+	if (cls.realtime - protocol51_unstick_origin_time < 700)
+		return;
+
+	if (protocol51_unstick_recovery_until < cls.realtime)
+	{
+		protocol51_unstick_recovery_until = cls.realtime + 1500;
+
+		if (cls.realtime - protocol51_unstick_message_time > 5000)
+		{
+			Com_Printf("Protocol 51 movement appears stuck; trying recovery wobble.\n");
+			protocol51_unstick_message_time = cls.realtime;
+		}
+	}
+
+	if (cls.realtime >= protocol51_unstick_recovery_until)
+		return;
+
+	switch ((cls.realtime / 150) % 6)
+	{
+		case 0:
+			cmd->forwardmove = 64;
+			cmd->sidemove = 64;
+			break;
+		case 1:
+			cmd->forwardmove = 64;
+			cmd->sidemove = -64;
+			break;
+		case 2:
+			cmd->forwardmove = -64;
+			cmd->sidemove = 0;
+			break;
+		case 3:
+			cmd->forwardmove = 0;
+			cmd->sidemove = 64;
+			break;
+		case 4:
+			cmd->forwardmove = 0;
+			cmd->sidemove = -64;
+			break;
+		default:
+			cmd->forwardmove = 64;
+			cmd->sidemove = 0;
+			break;
+	}
+
+	cmd->buttons |= BUTTON_ANY;
+}
+
+static void CL_UnstickInput_f(void)
+{
+	Key_ClearStates();
+
+	CL_ClearKButton(&in_left);
+	CL_ClearKButton(&in_right);
+	CL_ClearKButton(&in_forward);
+	CL_ClearKButton(&in_back);
+	CL_ClearKButton(&in_lookup);
+	CL_ClearKButton(&in_lookdown);
+	CL_ClearKButton(&in_moveleft);
+	CL_ClearKButton(&in_moveright);
+	CL_ClearKButton(&in_up);
+	CL_ClearKButton(&in_down);
+	CL_ClearKButton(&in_attack);
+	CL_ClearKButton(&in_defend);
+	CL_ClearKButton(&in_action);
+	CL_ClearKButton(&in_creep);
+	CL_ClearKButton(&in_inventory);
+	CL_ClearKButton(&in_quickturn);
+	CL_ClearKButton(&in_autoaim);
+	CL_ClearKButton(&in_klook);
+	CL_ClearKButton(&in_strafe);
+	CL_ClearKButton(&in_speed);
+	CL_ClearKButton(&in_lookaround);
+
+	command_down = false;
+	quickturn_time = 0.0f;
+	in_do_autoaim = false;
+	cls.force_packet = true;
+
+	Com_Printf("Cleared client input button state.\n");
+}
+
 void CL_InitInput(void)
 {
 	Cmd_AddCommand("centerview", IN_CenterView);
+	Cmd_AddCommand("stuckinfo", CL_StuckInfo_f);
+	Cmd_AddCommand("cl_stuckinfo", CL_StuckInfo_f);
+	Cmd_AddCommand("unstickinput", CL_UnstickInput_f);
+	Cmd_AddCommand("cl_unstickinput", CL_UnstickInput_f);
 
 	Cmd_AddCommand("+moveup", IN_UpDown);
 	Cmd_AddCommand("-moveup", IN_UpUp);
@@ -446,6 +940,10 @@ void CL_InitInput(void)
 	Cmd_AddCommand("-inventory", IN_InventoryUp);
 
 	cl_nodelta = Cvar_Get("cl_nodelta", "0", 0);
+	cl_inputwatch = Cvar_Get("cl_inputwatch", "1", 0);
+	cl_protocol51_unstick = Cvar_Get("cl_protocol51_unstick", "0", CVAR_ARCHIVE);
+	cl_protocol51_strip_any = Cvar_Get("cl_protocol51_strip_any", "1", CVAR_ARCHIVE);
+	cl_protocol51_nodelta = Cvar_Get("cl_protocol51_nodelta", "1", CVAR_ARCHIVE);
 }
 
 static void CL_ClampPitch(void)
@@ -896,6 +1394,9 @@ static void CL_FinishMove(usercmd_t* cmd) // Called on packetframe.
 	if (anykeydown > 0 && cls.key_dest == key_game)
 		cmd->buttons |= BUTTON_ANY;
 
+	if (cls.state == ca_active && cls.serverProtocol == PROTOCOL_VERSION && (int)cl_protocol51_strip_any->value)
+		cmd->buttons &= ~BUTTON_ANY;
+
 	// Send the ambient light level at the player's current position.
 	cmd->lightlevel = (byte)(Clamp(cl_lightlevel->value, 0.0f, 255.0f)); //mxd. Clamp to byte range (r_lightlevel can potentially exceed 255 when player is affected by multiple dynamic lights).
 }
@@ -939,7 +1440,9 @@ void CL_SendCmd(void)
 	cl.cmd_time[index] = cls.realtime; // For netgraph ping calculation.
 	CL_FinalizeCmd(); // YQ2
 
+	CL_Protocol51UnstickMaybe(&cl.cmds[index]);
 	cl.cmd = cl.cmds[index];
+	CL_InputWatchMaybeLog(&cl.cmd);
 
 	if (cls.state == ca_disconnected || cls.state == ca_connecting)
 		return;
@@ -977,7 +1480,10 @@ void CL_SendCmd(void)
 	MSG_WriteByte(&buf, 0);
 
 	// Let the server know what the last frame we got was, so the next message can be delta compressed.
-	if ((int)cl_nodelta->value || !cl.frame.valid || cls.demowaiting)
+	// For legacy protocol 51, prefer full frames by default: this avoids subtle playerstate/entity
+	// delta mismatches when talking to original servers while keeping protocol 55 bandwidth efficient.
+	const qboolean protocol51_nodelta = (cls.serverProtocol == PROTOCOL_VERSION && (int)cl_protocol51_nodelta->value);
+	if ((int)cl_nodelta->value || protocol51_nodelta || !cl.frame.valid || cls.demowaiting)
 		MSG_WriteLong(&buf, -1); // No compression
 	else
 		MSG_WriteLong(&buf, cl.frame.serverframe);
@@ -1001,4 +1507,9 @@ void CL_SendCmd(void)
 
 	// Deliver the message.
 	Netchan_Transmit(&cls.netchan, buf.cursize, buf.data);
+
+	// Match the original client: Netchan_Transmit() advances outgoing_sequence,
+	// so clear the newly-current command slot before input accumulates into it.
+	usercmd_t* next_cmd = &cl.cmds[cls.netchan.outgoing_sequence & (CMD_BACKUP - 1)];
+	memset(next_cmd, 0, sizeof(*next_cmd));
 }
