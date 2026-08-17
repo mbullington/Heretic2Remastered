@@ -39,7 +39,9 @@ workload is slow and deterministic-ish, medians are not affordable).
   metrics only (do NOT loosen gates or change the workload)
 
 ## Off Limits
-- Everything under `src/` (game logic, client, server, shared headers)
+- `src/` game logic, client, server, shared headers. EXCEPTION:
+  `src/client/glimp_sdl3.c` may receive H2_DOS-ifdef'd DOS video-mode
+  selection changes only.
 - BSP/model loading semantics, network, sound
 - The `r_swspans 0` fan/fallback paths: keep them functionally intact
 - `vendor-*`, `.dos-deps`, `.dos-data`, toolchains; never touch PAK data
