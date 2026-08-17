@@ -2812,6 +2812,8 @@ int SW_RenderFrame(const refdef_t *fd)
 		return 0;
 	sw_refdef = *fd;
 	setup_view(fd);
+	if (fd->rdflags & RDF_NOWORLDMODEL)
+		SW_ClearColorFill();
 	const uclock_t frame_start = uclock();
 	uclock_t mark = frame_start;
 	// Sky runs AFTER the world pass and writes only where depth is still far

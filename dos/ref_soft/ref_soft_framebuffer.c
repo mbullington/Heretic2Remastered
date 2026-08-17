@@ -64,15 +64,25 @@ void SW_FrameBufferShutdown(void)
 	sw_height = 0;
 }
 
+static uint32_t sw_clear_color;
+
 void SW_Clear(const uint32_t color)
 {
 	const uclock_t start = uclock();
 	const size_t pixels = (size_t)sw_width * (size_t)sw_height;
-	for (size_t i = 0; i < pixels; ++i)
-		sw_color[i] = color;
+	sw_clear_color = color;
+	// Color fill is deferred: SW_RasterFrame re-fills only frames without a
+	// worldmodel. Worldmodel frames are fully repainted by world/sky spans.
 	// Depth stores inverse-z (larger = closer), so the far plane is zero.
 	memset(sw_depth, 0, pixels * sizeof(*sw_depth));
 	sw_stats.bench_us_clear += (unsigned long long)(uclock() - start);
+}
+
+void SW_ClearColorFill(void)
+{
+	const size_t pixels = (size_t)sw_width * (size_t)sw_height;
+	for (size_t i = 0; i < pixels; ++i)
+		sw_color[i] = sw_clear_color;
 }
 
 static byte channel(const uint32_t color, const int shift)
