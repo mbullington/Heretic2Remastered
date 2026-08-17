@@ -98,3 +98,56 @@ x87 emulation is host-side cheap (int-key z conversion of the world inner loop c
 3. WORLD inner loop 118ms @ 92-120cy/px: split z-test run from texel run per 16px block (z-mask first, contiguous texel runs) to drop per-px branch+5-inc overhead on z-passed runs; or 2-row pairing. Instruction-count audited, not FPU.
 4. present 24.2ms: SDL converter on 320x200 windowed XRGB8888 pitch 1280; rows 200-239 black. Copy only 200 rows? surface is 240 but window shows 200? Measure partial convert [y0..200).
 
+
+## #32 (PLANNED, next big swing): painter-order opaque world, drop per-px z
+Goal: world_us 97,113 -> ~60-75ms. Mechanism: recursive BSP walk near->far => opaque world
+spans stop testing/writing per-px zb for themselves (front-to-back painter = z results);
+zb WRITE must remain (entities/flex gate on world zb). Steps:
+1. Replace SW_RasterWorld leaf-list iteration with node recursion: side=PlaneSide(vieworg);
+   walk(near child), draw node faces, walk(far child)? ORDER for front-to-back write:
+   visit near subtree FIRST, then node faces, then far subtree (contained content painter-safe).
+   Keep vis cluster marking (visible_faces[]) but walk nodes instead of flat face scan.
+2. In span engines: opaque world span inner loop: drop `if (ikey >= zb_row[idx])` test AND
+   keep unconditional zb write. Alpha/warp spans keep z-test+conditional path (they must
+   still lose to nearer opaque spans; with painter order nearer spans already written zb).
+3. Gates judge coplanar tie semantics: equal ikey: classic BSP coplanar-valid content -> no diff on bench.
+Risks: dup faces (SURF_UNDULATE displaced), overlap ordering across leaves (BSP guarantees).
+Expected: -13..20ms. Also enables (later) zb-write elision for fully-opaque-covered rows.
+
+## Other queued swings (post #32)
+- Flex gradients/prologue: per-tri FPU ~60 ops + span setup ~500; batch fixpoint preconvert.
+- Sky zero-run rows (est -2..3ms).
+- 8-bit indexed pipeline + LUT modulation (needs gate-contract renegotiation; est -40ms world; DO NOT attempt without user sign-off).
+
+## BANGER STACK (exa-mined 2026-08-14, replaces "dark magic" wishlist). Sources:
+- Abrash Black Book ch66/67/70 (phatcode.net/res/224): Quake span-sorting internals.
+- Sanglard Q2 software review (fabiensanglard.net/quake2/quake2_software_renderer.php):
+  colormap.pcx = 256x320 LUT: 64 shading gradient rows + 16x16 translucency-blend squares.
+  Q2 sw lightmaps are MONOCHROME; H2 lightmaps are RGB (delta = colored-light fidelity).
+
+### B1: Quake-native span-sorting world (edge list, zero overdraw, NO zb per px)  [3-4x on world]
+Walk BSP front-to-back, assign node seq numbers; polygons -> clipped edges -> ONE global
+x-bucketed edge list scanned top-to-bottom once (AEL); emit x-sorted spans into per-surface
+span lists; spans cover screen EXACTLY once; hidden faces emit no spans. Kills: per-px
+zb load/cmp/store on world (3-4 of 10 ops), span-engine z-write, sky z-walk (sky px =
+background edge-list sentinel, filled from exact coverage, 76.8K->~35K walked px).
+Supersedes #32 painter-order (same direction, native mechanism instead of a write-painter).
+world 97 -> ~30-40ms, sky 16.8 -> ~4-6ms, zb traffic for world gone (clear keeps zb for entities only => clear ~0.8ms).
+NOTE: surface-cache ALREADY falsified here (#23) -- do not re-attempt lightmap bake caching;
+span-sorting is orthogonal (it works on screen px, no surface texel caches).
+
+### B2: 8-bit indexed framebuffer + colormap.pcx-style LUT (256-color pipeline, needs sign-off)  [2x world, 3x present]
+texel 8-bit + shade byte -> lut[shade<<8 | texel] -> write byte: ~6-8 ops/px (vs 28 RGB).
+Present: 76.8KB -> SDL palette surface (SDL3 pal8->XRGB) = quarter the bytes.
+Colored light: RGB lightmaps must quantize to shade-index; torches/blue light lose hue.
+GATE IMPACT: pixel class changes (only 256 colors) => baseline refresh + visual review REQUIRED before keep rule. DO NOT RUN without user sign-off on the fidelity trade.
+Transflex/sfx blending via blend squares of same palette.
+
+### B3: entity/flex gradient batching (prologue+gradients amortized, fixedpoint)  [1.35x entities]
+~44ms entities+flex: per-tri gradient FPU + per-entity transform. Batch: transform ONCE per
+entity to fixedpoint vertex set, gradients by INT arithmetic on 16.16 (drops FPU per tri).
+Big local multiplier but smaller absolute pool (est -8..12ms).
+
+### Rejected by math (do NOT propose): MMX (DOSBox flat parity; P90 has no MMX), damage rects
+(view moves every frame), resolution tricks (output-exact gates), surface cache (falsified #23).
+STACK OUTCOME ESTIMATE: B1+B3 without sign-off: total ~100-115ms. B1+B2+B3 with sign-off: ~45-60ms -> PASSES the 85ms / 30fps stop condition. (~2.6-3.4x from 155ms; 10x not reachable at 320x240 with per-px color work -- state honestly.)
