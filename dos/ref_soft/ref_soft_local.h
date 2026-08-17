@@ -168,7 +168,7 @@ typedef struct sw_vertex_s {
 
 extern refimport_t sw_ri;
 extern uint32_t *sw_color;
-extern float *sw_depth;
+extern uint32_t *sw_depth; // depth as non-negative float bits (ordered as int)
 extern int sw_width;
 extern int sw_height;
 extern refdef_t sw_refdef;

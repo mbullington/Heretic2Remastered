@@ -527,7 +527,7 @@ static void draw_face_spans(const screen_vertex_t *verts, const int n, const sw_
 		float ltz = v0->light_t_over_z + gradient_ltz_x * x_center + gradient_ltz_y * y_center;
 
 		uint32_t *const fb_row = sw_color + (size_t)y * sw_width;
-		float *const zb_row = sw_depth + (size_t)y * sw_width;
+		uint32_t *const zb_row = sw_depth + (size_t)y * sw_width;
 		int x = xa;
 		int remaining = xb - xa + 1;
 		while (remaining > 0)
@@ -562,8 +562,16 @@ static void draw_face_spans(const screen_vertex_t *verts, const int n, const sw_
 			else if (ils < 0) ils = 0;
 			if (ilt > light_max_t_fixed) ilt = light_max_t_fixed;
 			else if (ilt < 0) ilt = 0;
-			float wiz = w;
-			const float wizard_step = gradient_w_x;
+			// All stored depths are non-negative floats (SW_PutPixel/span guards
+			// reject <= 0), so their bit patterns order as uint32 keys exactly like
+			// the floats did. Step an integer key block-wise instead of a per-pixel
+			// FADD + FCOM pair; within-block linearization of the key can flip only
+			// exact z-fighting ties (documented tolerance).
+			uint32_t ikey;
+			uint32_t ikey_end;
+			memcpy(&ikey, &w, 4);
+			memcpy(&ikey_end, &w_end, 4);
+			const int ikey_step = ((int)ikey_end - (int)ikey) / block;
 
 			if (alpha >= 1.0f && twist_pow2 && theight_pow2)
 			{
@@ -574,7 +582,7 @@ static void draw_face_spans(const screen_vertex_t *verts, const int n, const sw_
 				for (int i = 0; i < block; ++i, ++x)
 				{
 					const size_t idx = (size_t)x;
-					if (wiz >= zb_row[idx])
+					if (ikey >= zb_row[idx])
 					{
 						const uint32_t texel = image->pixels[((it >> 16) & mask_h) * image->width + ((iu >> 16) & mask_w)];
 						const int lidx = (int)((unsigned)ilt >> 20) * light_stride + (int)((unsigned)ils >> 20);
@@ -587,10 +595,10 @@ static void draw_face_spans(const screen_vertex_t *verts, const int n, const sw_
 							light_b = light_prev & 1023u;
 						}
 						fb_row[idx] = span_modulate3(texel, light_r, light_g, light_b);
-						zb_row[idx] = wiz;
+						zb_row[idx] = ikey;
 						++depth_writes;
 					}
-					iu += iu_step; it += it_step; ils += ils_step; ilt += ilt_step; wiz += wizard_step;
+					iu += iu_step; it += it_step; ils += ils_step; ilt += ilt_step; ikey += (uint32_t)ikey_step;
 				}
 				sw_stats.depth_writes += depth_writes;
 				sw_stats.bench_pixels_world += (unsigned)block;
@@ -619,7 +627,7 @@ static void draw_face_spans(const screen_vertex_t *verts, const int n, const sw_
 						light_cache[(int)((unsigned)ilt >> 20) * light_stride + (int)((unsigned)ils >> 20)]);
 					int sa = ((lit >> 24) * alpha_fixed) >> 8;
 					if (sa > 255) sa = 255;
-					if (sa != 0 && wiz >= zb_row[idx])
+					if (sa != 0 && ikey >= zb_row[idx])
 					{
 						const uint32_t dst = fb_row[idx];
 						const int dw = 255 - sa;
@@ -629,14 +637,15 @@ static void draw_face_spans(const screen_vertex_t *verts, const int n, const sw_
 						fb_row[idx] = r | (g << 8) | (bb << 16) | 0xff000000u;
 						if (sa == 255 && alpha >= 1.0f)
 						{
-							zb_row[idx] = wiz;
+							zb_row[idx] = ikey;
 							++sw_stats.depth_writes;
 						}
 					}
 					++sw_stats.bench_pixels_world;
-					iu += iu_step; it += it_step; ils += ils_step; ilt += ilt_step; wiz += wizard_step;
+					iu += iu_step; it += it_step; ils += ils_step; ilt += ilt_step; ikey += (uint32_t)ikey_step;
 				}
 			}
+			(void)gradient_w_x;
 			uz += gradient_uz_x * block;
 			vz += gradient_vz_x * block;
 			lsz += gradient_lsz_x * block;
@@ -1913,7 +1922,7 @@ static void span_raster_flex_triangle(const flex_screen_vertex_t a, const flex_s
 		float bz = a.blue_over_z + gb_x * x_center + gb_y * y_center;
 		float az = a.alpha_over_z + ga_x * x_center + ga_y * y_center;
 		uint32_t *const fb_row = sw_color + (size_t)y * sw_width;
-		float *const zb_row = sw_depth + (size_t)y * sw_width;
+		uint32_t *const zb_row = sw_depth + (size_t)y * sw_width;
 		int x = xa;
 		int remaining = xb - xa + 1;
 		while (remaining > 0)
@@ -1944,12 +1953,16 @@ static void span_raster_flex_triangle(const flex_screen_vertex_t a, const flex_s
 			const int dg = (int)((g1 - g0) * 131072.0f * SW_INV_WIDTH(block));
 			const int db = (int)((b1c - b0c) * 131072.0f * SW_INV_WIDTH(block));
 			const int da = (int)((a1c - a0c) * 131072.0f * SW_INV_WIDTH(block));
-			float wiz = w;
+			uint32_t ikey;
+			uint32_t ikey_end;
+			memcpy(&ikey, &w, 4);
+			memcpy(&ikey_end, &w_end, 4);
+			const int ikey_step = ((int)ikey_end - (int)ikey) / block;
 			for (int i = 0; i < block; ++i, ++x)
 			{
 				++sw_stats.bench_pixels_flex;
 				const size_t idx = (size_t)x;
-				if (!no_depth_test && wiz < zb_row[idx])
+				if (!no_depth_test && ikey < zb_row[idx])
 					goto advance;
 				{
 					const int tx = ClampI(iu >> 16, 0, image->width - 1);
@@ -1978,7 +1991,7 @@ static void span_raster_flex_triangle(const flex_screen_vertex_t a, const flex_s
 						fb_row[idx] = SW_RGBA((byte)min(255u, mr), (byte)min(255u, mg), (byte)min(255u, mb), 255);
 						if (depth_write && !no_depth_test)
 						{
-							zb_row[idx] = wiz;
+							zb_row[idx] = ikey;
 							++sw_stats.depth_writes;
 						}
 					}
@@ -1994,7 +2007,7 @@ static void span_raster_flex_triangle(const flex_screen_vertex_t a, const flex_s
 				}
 advance:
 				(void)0;
-				iu += du; it += dt; ir += dr; ig += dg; ib += db; ia += da; wiz += gw_x;
+				iu += du; it += dt; ir += dr; ig += dg; ib += db; ia += da; ikey += (uint32_t)ikey_step;
 			}
 			uz += guz_x * block;
 			vz += gvz_x * block;

@@ -7,7 +7,7 @@
 #include <time.h>
 
 uint32_t *sw_color;
-float *sw_depth;
+uint32_t *sw_depth;
 int sw_width;
 int sw_height;
 h2dos_soft_stats_t sw_stats;
@@ -86,7 +86,11 @@ void SW_PutPixel(const int x, const int y, const float depth, const uint32_t col
 		return;
 
 	const size_t index = (size_t)y * (size_t)sw_width + (size_t)x;
-	if (depth < sw_depth[index])
+	// All stored depths are non-negative floats, so their bit patterns order as
+	// unsigned ints exactly like the floats did, with no FPU compare.
+	uint32_t depth_key;
+	memcpy(&depth_key, &depth, 4);
+	if (depth_key < sw_depth[index])
 		return;
 
 	const byte alpha = channel(color, 24);
@@ -107,7 +111,7 @@ void SW_PutPixel(const int x, const int y, const float depth, const uint32_t col
 
 	if (depth_write)
 	{
-		sw_depth[index] = depth;
+		sw_depth[index] = depth_key;
 		++sw_stats.depth_writes;
 	}
 }

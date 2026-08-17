@@ -56,3 +56,16 @@
 2. sky tile tagging (38.2ms wall; layered transform sky)
 3. coarse 8x8-tile z-reject to kill walked-but-z-rejected world px (overdraw)
 4. world hand asm inner loop (92cy/px observed vs ~30 model) - last resort
+
+## Entity anatomy (2026-08-17, complete)
+entities 36.3ms = flex ~20.5ms + brush 14.4ms + sprites ~0
+- flex: 320 tris/frame, 45% bbox-culled (now hoisted pre-fill), ALL fast-path; per-tri setup = float gradient tax (x87 emulation ~10-30cy/op). per-tri ~60us for ~6px.
+- brush: 175 draw_face calls/frame ~85us each (vs 18us for world faces). World-entity-cull kept (sphere, ~10% whole-model culls only). Per-face cost places in draw_face vertex loop + clip_near + light dims, ALL float.
+## Ranked next levers
+1. FLEX: convert span_raster_flex_triangle edge-stepping + span-start eval to fixed point (gradients stay float once/tri). Est 5-8ms.
+2. BRUSH: per-face cheap cone cull DURING vertex loop in draw_face (bail before s/t mins + clip_near); entity faces skip min/max light scan when culled. Est 3-6ms.
+3. WORLD inner loop (THE whale, 111ms spans for 108K px @ ~92cy): hand-schedule the opaque pow2 block loop in C first (split z-test loop from texel loop: test wiz-run z-pass mask over the block, then unconditional texel run for pass-runs) to cut z-compare FPU ops (wiz float compare per px!). wiz is FLOAT: the per-px depth compare is x87 FCOM... convert depth compare keys to int (beware negative wiz values ordering = int compare with sign flip... use bias+unsigned trick exact for floats? sign-magnitude: f>=0 -> key = bits; f<0 -> key = ~bits. all floats comp exact via int). Est 10-25ms if FPU tax real.
+4. sky 38.2ms: flat-tile tagging via 8x8 tile attribute map written by clear, whole-tile fill where tags say uniform.
+5. present 20-24ms: already XRGB8888; SDL converter wins. Try SDL_BlitSurface vs manual? or render sw_color directly into surface (locks LFB); blocked by SW depth/color as static buffers - END maybe skip.
+## Ruled out (regressed on DOSBox flat-op model)
+light LUT, tw_shift, hand present shuffle, int16 depth, ABGR mode
