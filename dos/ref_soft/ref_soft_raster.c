@@ -762,9 +762,21 @@ static void draw_face(const sw_bsp_t *bsp, const int face_index, const vec3_t or
 		return;
 	++sw_stats.bench_world_faces;
 	const dface_t *face = &bsp->faces[face_index];
+	const int first_edge = LittleLong(face->firstedge);
+	const int edge_count = LittleShort(face->numedges);
+	const int texinfo_index = LittleShort(face->texinfo);
+	if (edge_count < 3 || edge_count > SW_MAX_FACE_VERTS || first_edge < 0 ||
+		first_edge > bsp->num_surfedges - edge_count || texinfo_index < 0 || texinfo_index >= bsp->num_texinfo)
+		return;
+	const texinfo_t *texture = &bsp->texinfo[texinfo_index];
+	const int flags = LittleLong(texture->flags);
+	if (flags & (SURF_NODRAW | SURF_SKY))
+		return;
+	if ((flags & (SURF_TRANS33 | SURF_TRANS66 | SURF_ALPHA_TEXTURE | SURF_WARP | SURF_UNDULATE)) == 0)
 	{
-		// GL-equivalent single-sided backface cull (same test as the brush loop):
-		// viewer position in entity-local space is vieworg - origin.
+		// Opaque, non-warped faces are single-sided (GL culls with gl_cull=1):
+		// a viewer strictly behind the plane sees nothing. Translucent and
+		// wobbling surfaces stay two-sided: visible from the back half-space.
 		const dplane_t *plane = &bsp->planes[little_ushort(face->planenum)];
 		float nx = LittleFloat(plane->normal[0]);
 		float ny = LittleFloat(plane->normal[1]);
@@ -780,16 +792,6 @@ static void draw_face(const sw_bsp_t *bsp, const int face_index, const vec3_t or
 		if (pos < -0.01f)
 			return;
 	}
-	const int first_edge = LittleLong(face->firstedge);
-	const int edge_count = LittleShort(face->numedges);
-	const int texinfo_index = LittleShort(face->texinfo);
-	if (edge_count < 3 || edge_count > SW_MAX_FACE_VERTS || first_edge < 0 ||
-		first_edge > bsp->num_surfedges - edge_count || texinfo_index < 0 || texinfo_index >= bsp->num_texinfo)
-		return;
-	const texinfo_t *texture = &bsp->texinfo[texinfo_index];
-	const int flags = LittleLong(texture->flags);
-	if (flags & (SURF_NODRAW | SURF_SKY))
-		return;
 	int animation_frames;
 	const sw_image_t *image = texture_animation(bsp, texinfo_index, entity_frame, &animation_frames);
 	if (image == NULL)
@@ -2577,6 +2579,16 @@ void SW_RasterEntities(const refdef_t *fd)
 					for (int face = 0; face < model->num_faces; ++face)
 					{
 						const dface_t *face_ptr = &model->bsp->faces[model->first_face + face];
+						const int tix = LittleShort(face_ptr->texinfo);
+						if (tix >= 0 && tix < model->bsp->num_texinfo)
+						{
+							const int tflags = LittleLong(model->bsp->texinfo[tix].flags);
+							if (tflags & (SURF_TRANS33 | SURF_TRANS66 | SURF_ALPHA_TEXTURE | SURF_WARP | SURF_UNDULATE))
+							{
+								draw_face(model->bsp, model->first_face + face, entity->origin, entity->frame);
+								continue;
+							}
+						}
 						const dplane_t *plane = &model->bsp->planes[little_ushort(face_ptr->planenum)];
 						float nx = LittleFloat(plane->normal[0]);
 						float ny = LittleFloat(plane->normal[1]);
