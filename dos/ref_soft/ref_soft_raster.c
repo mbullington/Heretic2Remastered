@@ -2552,8 +2552,29 @@ void SW_RasterEntities(const refdef_t *fd)
 				}
 				else
 				{
+					// GL-equivalent backface cull: BSP planes are single-sided, and GL
+					// renders bmodels with face culling enabled. Translate the plane into
+					// world space by the entity origin (the soft rasterizer never rotates
+					// bmodels) and skip faces whose back side faces the viewer.
 					for (int face = 0; face < model->num_faces; ++face)
+					{
+						const dface_t *face_ptr = &model->bsp->faces[model->first_face + face];
+						const dplane_t *plane = &model->bsp->planes[little_ushort(face_ptr->planenum)];
+						float nx = LittleFloat(plane->normal[0]);
+						float ny = LittleFloat(plane->normal[1]);
+						float nz = LittleFloat(plane->normal[2]);
+						float pdist = LittleFloat(plane->dist);
+						if (LittleShort(face_ptr->side))
+						{
+							nx = -nx; ny = -ny; nz = -nz; pdist = -pdist;
+						}
+						const float pos = nx * (sw_refdef.vieworg[0] - entity->origin[0]) +
+							ny * (sw_refdef.vieworg[1] - entity->origin[1]) +
+							nz * (sw_refdef.vieworg[2] - entity->origin[2]) - pdist;
+						if (pos < -0.01f)
+							continue;
 						draw_face(model->bsp, model->first_face + face, entity->origin, entity->frame);
+					}
 				}
 				sw_stats.bench_us_ent_brush += (unsigned long long)(uclock() - tmark);
 				sw_stats.bench_brush_faces += (unsigned)model->num_faces;
