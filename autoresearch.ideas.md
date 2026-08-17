@@ -217,3 +217,18 @@ Flex entity pipeline decomposition via ablation probes (direct bench runs, evide
 - REMAINING unexplained: ~3.4x localized phantom in flex tri-loop (~1,500 dynamic-instr-equiv/iter vs ~300-450 static). Localized suspects: fnstsw×12/body chains, x87-serialized dependencies, x87fxch thrash, -O3 spills. NOT loop count, NOT rejects, NOT lookups, NOT colors.
 - NEXT-BUILD (B3): convert tri loop to (a) per-strip hoisted uv+color+proj tables (entity_seq-keyed color cache), (b) float-free control flow in loop body (no chained FPU compares), (c) pointer-walk instead of command_vertices[3] indexing. Also wire flex-setup/flex-dispatch timers (currently 0/dead) to finally bracket the phantom.
 - Session state: tree @ dc863377, all probes reverted, plan_tracker tasks current.
+
+## B2 RGB565 — implementation site map (post-#32, working from 77ce9692)
+Goal: internal framebuffer + textures become 16-bit RGB565; present 307KB→153KB (also candidate VESA 320x240x16 mode); per-px modulate ~7-9 ops (2 packed multiplies) vs current 3 extracts+3 muls+3 min+pack.
+
+Sites (verified by grep census):
+- ref_soft_framebuffer.c: SW_RGBA macro def (:18 inline), SW_Clear (:51), pal→sw_color palette table (:121 XRGB8888), SW_Present (:144 — LFB copy loop, 4B/px; switch to 2B/px 153KB).
+- ref_soft_raster.c touchpoints (~17 grep hits, but many in comments): line 138 lightmap_color pack (returns uint32 light sample; becomes 565 with 256=1.0 style scale packed differently), 604 span_modulate3 (world opaque px), 639 dst fetch + 644 translucent pack (world alpha path), 1164/1184 sky writes (two loops), flex write paths (~2040-2065: SW_RGBA packs ×3, modulate mr/mg/mb), brush path, sprite path, blend path.
+- ref_soft_image.c: 7 SW_RGBA callers (M8/M32 decode, missing-texture magenta, resize) — decode target type change.
+- Blend/mix helpers: SW_BlendRGBA? grep before build.
+Design decisions:
+- Keep zb SEPARATE uint32 array (unchanged) — do not try packing depth into 565 (keys need full precision).
+- Style scaling: lightmap samples currently 256=1.0 per channel; 565 bilinear: keep 32-bit staging for light sample then quantize→565 (r5g6b5 with 256→~31/63 scale via (v>>3)/(v>>2)); 0-diff impossible → REQUIRES one-time baseline refresh + visual review (user pre-approved).
+- Modulate: tex565 * light565: split channels: r=(tr*lr)>>5... with light in [0..512] (2x overbright) → r6=(tr*lr+16)>>5... keep single-precision-ish, verify vs GL tolerance in new baselines.
+- DOSBox present: if SDL3/VESA mode stays 32-bit XRGB, present converts 565→8888 (lossless expand) OR switch mode; measure both (conversion = 76.8K px × ~6 ops ≈ 15ms — may kill it; if so, keep internal 565 only for MODULATE win? NO — modulate win exists only if textures 565. Present conversion cost likely swamps → prefer VESA 16-bit mode in h2dos_platform; check current mode set in h2dos_ui.c/platform).
+Order: (1) mode/present experiments first (cheap, isolates present win), (2) texture/fb format sweep, (3) baselines regen + visual sign-off, (4) log as one keep with refresh noted.
