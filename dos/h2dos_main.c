@@ -999,12 +999,16 @@ int main(const int argc, char** argv)
 
 	const int server_frame_start = sv.framenum;
 	previous = Sys_Microseconds() - 100000;
+	long long bench_time_us = 0;
 	for (frame = 0; frame < frame_limit; ++frame)
 	{
 		long long now = Sys_Microseconds();
 		long long elapsed = now - previous;
 		if (bench_requested)
+		{
 			elapsed = H2DOS_MIN_FRAME_USEC; // decouple sim pacing from render cost
+			bench_time_us += elapsed;      // deterministic sim clock (curtime below)
+		}
 		else if (elapsed < H2DOS_MIN_FRAME_USEC)
 		{
 			Sys_Nanosleep((int)((H2DOS_MIN_FRAME_USEC - elapsed) * 1000));
@@ -1017,7 +1021,7 @@ int main(const int argc, char** argv)
 			minimum_delta = elapsed;
 		if (elapsed > maximum_delta)
 			maximum_delta = elapsed;
-		curtime = (int)(now / 1000ll);
+		curtime = bench_requested ? (int)(bench_time_us / 1000ll) : (int)(now / 1000ll);
 		Qcommon_Frame((int)elapsed);
 		previous = now;
 		if (realdata)
