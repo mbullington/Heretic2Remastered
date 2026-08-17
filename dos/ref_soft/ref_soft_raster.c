@@ -1584,6 +1584,84 @@ static qboolean face_point_inside(const sw_bsp_t *bsp, const dface_t *face, cons
 	return true;
 }
 
+static qboolean sample_bsp_light(const vec3_t origin, float *red, float *green, float *blue);
+
+// Exact-match test for one world face: the vertical ray from origin downward
+// (up to 2048 units, 0.01 upward tolerance) striking the face plane, then a
+// point-in-polygon check. Selection keeps the minimum drop; exact ties keep
+// the smallest face index (identical to the legacy ascending linear scan).
+static qboolean sw_light_face_test(const sw_bsp_t *bsp, const dface_t *face, const vec3_t origin,
+	float *nearest, const dface_t **nearest_face, int *nearest_index, vec3_t nearest_point, const int face_index)
+{
+	const int flags = LittleLong(bsp->texinfo[LittleShort(face->texinfo)].flags);
+	if (flags & SURF_FULLBRIGHT)
+		return false;
+	const dplane_t *plane = &bsp->planes[little_ushort(face->planenum)];
+	vec3_t normal = {
+		LittleFloat(plane->normal[0]), LittleFloat(plane->normal[1]), LittleFloat(plane->normal[2])
+	};
+	float distance = LittleFloat(plane->dist);
+	if (LittleShort(face->side))
+	{
+		VectorScale(normal, -1.0f, normal);
+		distance = -distance;
+	}
+	if (fabsf(normal[2]) < 0.0001f)
+		return false;
+	const float drop = (dot3(normal, origin) - distance) / normal[2];
+	if (!isfinite(drop) || drop < -0.01f || drop > 2048.0f)
+		return false;
+	if (drop > *nearest || (drop == *nearest && face_index >= *nearest_index))
+		return false;
+	vec3_t point = { origin[0], origin[1], origin[2] - drop };
+	if (!face_point_inside(bsp, face, point, normal))
+		return false;
+	*nearest = drop;
+	*nearest_face = face;
+	*nearest_index = face_index;
+	VectorCopy(point, nearest_point);
+	return true;
+}
+
+// BSP descent replacement for the legacy full-face linear scan. The vertical
+// ray column [origin.z + 0.01, origin.z - 2048] only intersects subtrees whose
+// node plane the column crosses; other subtrees cannot contain an accepted
+// point, so they are pruned exactly. Leaf faces are de-duplicated by the
+// (drop, face_index) selection rule, which matches the linear scan's result.
+static void sw_light_descend(const sw_bsp_t *bsp, const vec3_t origin, const int nodenum,
+	float *nearest, const dface_t **nearest_face, int *nearest_index, vec3_t nearest_point)
+{
+	if (nodenum < 0)
+	{
+		const dleaf_t *leaf = &bsp->leaves[-1 - nodenum];
+		const int first = little_ushort(leaf->firstleafface);
+		const int count = little_ushort(leaf->numleaffaces);
+		for (int i = 0; i < count; ++i)
+		{
+			const int face_index = little_ushort(bsp->leaffaces[first + i]);
+			sw_light_face_test(bsp, &bsp->faces[face_index], origin, nearest, nearest_face, nearest_index, nearest_point, face_index);
+		}
+		return;
+	}
+	const dnode_t *node = &bsp->nodes[nodenum];
+	const dplane_t *plane = &bsp->planes[LittleLong(node->planenum)];
+	const float nz = LittleFloat(plane->normal[2]);
+	const float dist = LittleFloat(plane->normal[0]) * origin[0] + LittleFloat(plane->normal[1]) * origin[1] +
+		nz * origin[2] - LittleFloat(plane->dist);
+	const int side = dist >= 0.0f ? 0 : 1;
+	sw_light_descend(bsp, origin, LittleLong(node->children[side]), nearest, nearest_face, nearest_index, nearest_point);
+	qboolean cross;
+	if (fabsf(nz) >= 0.0001f)
+	{
+		const float t = dist / nz;
+		cross = (t >= -0.5f && t <= 2048.5f);
+	}
+	else
+		cross = (dist >= -0.5f && dist <= 0.5f);
+	if (cross)
+		sw_light_descend(bsp, origin, LittleLong(node->children[side ^ 1]), nearest, nearest_face, nearest_index, nearest_point);
+}
+
 static qboolean sample_bsp_light(const vec3_t origin, float *red, float *green, float *blue)
 {
 	if (sw_world_model == NULL || sw_world_model->bsp == NULL)
@@ -1591,34 +1669,19 @@ static qboolean sample_bsp_light(const vec3_t origin, float *red, float *green, 
 	const sw_bsp_t *bsp = sw_world_model->bsp;
 	float nearest = FLT_MAX;
 	const dface_t *nearest_face = NULL;
+	int nearest_index = bsp->num_faces;
 	vec3_t nearest_point = { 0.0f, 0.0f, 0.0f };
-	for (int face_index = 0; face_index < bsp->num_faces; ++face_index)
+	const qboolean descent_ok = bsp->nodes != NULL && bsp->num_nodes > 0 && bsp->leaves != NULL && bsp->leaffaces != NULL;
+	if (descent_ok)
+		sw_light_descend(bsp, origin, 0, &nearest, &nearest_face, &nearest_index, nearest_point);
+	else
 	{
-		const dface_t *face = &bsp->faces[face_index];
-		const int flags = LittleLong(bsp->texinfo[LittleShort(face->texinfo)].flags);
-		if (flags & SURF_FULLBRIGHT)
-			continue;
-		const dplane_t *plane = &bsp->planes[little_ushort(face->planenum)];
-		vec3_t normal = {
-			LittleFloat(plane->normal[0]), LittleFloat(plane->normal[1]), LittleFloat(plane->normal[2])
-		};
-		float distance = LittleFloat(plane->dist);
-		if (LittleShort(face->side))
+		for (int face_index = 0; face_index < bsp->num_faces; ++face_index)
 		{
-			VectorScale(normal, -1.0f, normal);
-			distance = -distance;
+			const dface_t *face = &bsp->faces[face_index];
+			if (sw_light_face_test(bsp, face, origin, &nearest, &nearest_face, &nearest_index, nearest_point, face_index))
+				continue;
 		}
-		if (fabsf(normal[2]) < 0.0001f)
-			continue;
-		const float drop = (dot3(normal, origin) - distance) / normal[2];
-		if (!isfinite(drop) || drop < -0.01f || drop >= nearest || drop > 2048.0f)
-			continue;
-		vec3_t point = { origin[0], origin[1], origin[2] - drop };
-		if (!face_point_inside(bsp, face, point, normal))
-			continue;
-		nearest = drop;
-		nearest_face = face;
-		VectorCopy(point, nearest_point);
 	}
 	if (nearest_face == NULL)
 		return false;
