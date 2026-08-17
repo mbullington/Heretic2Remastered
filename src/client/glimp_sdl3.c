@@ -48,6 +48,14 @@ static qboolean CreateSDLWindow(const SDL_WindowFlags flags, const int width, co
 
 static qboolean InitDisplayModes(void) //mxd
 {
+#ifdef H2_DOS
+	viddef_t dos_modes[] = {
+		{ .width = 320, .height = 240 },
+		{ .width = 640, .height = 480 },
+	};
+	VID_InitModes(dos_modes, (int)SDL_arraysize(dos_modes));
+	return true;
+#else
 	uint cur_display;
 
 	if (window == NULL)
@@ -145,6 +153,7 @@ static qboolean InitDisplayModes(void) //mxd
 
 	Com_Printf("Couldn't get display modes: %s\n", SDL_GetError());
 	return false;
+#endif
 }
 
 // Sets the window icon.

@@ -5,17 +5,25 @@
 //
 
 #include "snd_sdl3.h"
+#ifndef H2_NO_OPENAL
 #include "snd_al.h"
+#endif
 #include "client.h"
 #include "snd_main.h"
 #include "snd_LowpassFilter.h"
+#ifndef H2_NO_OGG
 #include "snd_ogg.h"
+#endif
 #include "snd_wav.h"
 #include "Vector.h"
 #include "g_local.h"
 #include <SDL3/SDL.h> //mxd. Needs to be included below engine stuff: includes stdbool.h, which messes up qboolean define...
 
+#include <limits.h>
+#include <stdint.h>
+
 #define SDL_PAINTBUFFER_SIZE 2048
+#define SDL_AUDIO_SCRATCH_BYTES 4096
 #define SDL_FULLVOLUME	80 // Only begin attenuating sound volumes when outside the FULLVOLUME range.
 
 #define ENT_ATTEN_MASK	(255 - ENT_VOL_MASK) //mxd
@@ -25,16 +33,25 @@ static SDL_AudioStream* stream;
 
 static portable_samplepair_t paintbuffer[SDL_PAINTBUFFER_SIZE];
 static portable_samplepair_t s_rawsamples[MAX_RAW_SAMPLES];
+static byte audio_scratch[SDL_AUDIO_SCRATCH_BYTES];
 
-static int playpos = 0;
-static int samplesize = 0;
-static int soundtime = 0;
+static int playpos;
+static int samplesize;
+static int soundtime;
+static int soundtime_buffers;
+static int old_playpos;
 static int snd_scaletable[32][256];
 static int snd_vol;
 
 static LpfContext_t lpf_context;
 
+#ifndef H2_NO_OPENAL
 cvar_t* s_hrtf; //mxd. Toggle HRTF spatialization (OpenAL Soft Aureal 3D mode).
+#endif
+
+#ifdef H2_DOS
+static h2dos_sound_stats_t dos_stats;
+#endif
 
 // Transfers a mixed "paint buffer" to the SDL output buffer and places it at the appropriate position.
 static void SNDSDL3_TransferPaintBuffer(const int endtime)
@@ -51,6 +68,15 @@ static void SNDSDL3_TransferPaintBuffer(const int endtime)
 			paintbuffer[i].right = val;
 		}
 	}
+
+#ifdef H2_DOS
+	for (int i = 0; i < endtime - paintedtime; ++i)
+		if (paintbuffer[i].left != 0 || paintbuffer[i].right != 0)
+			dos_stats.mixed_nonzero_frames++;
+#endif
+
+	if (!SNDSDL3_LockBuffer())
+		return;
 
 	// Optimized case.
 	if (sound.samplebits == 16 && sound.channels == 2)
@@ -82,6 +108,7 @@ static void SNDSDL3_TransferPaintBuffer(const int endtime)
 			ls_paintedtime += (snd_linear_count >> 1);
 		}
 
+		SNDSDL3_UnlockBuffer();
 		return;
 	}
 
@@ -123,6 +150,8 @@ static void SNDSDL3_TransferPaintBuffer(const int endtime)
 			out_idx = (out_idx + 1) & out_mask;
 		}
 	}
+
+	SNDSDL3_UnlockBuffer();
 }
 
 // Mixes an 8 bit sample into a channel.
@@ -446,28 +475,31 @@ static void SNDSDL3_AddLoopSounds(void)
 // Calculates the absolute timecode of current playback.
 static void SNDSDL3_UpdateSoundtime(void)
 {
-	static int buffers;
-	static int oldsamplepos;
-
 	const int fullsamples = sound.samples / sound.channels;
+	int current_playpos;
+
+	if (!SNDSDL3_LockBuffer())
+		return;
+	current_playpos = playpos;
+	SNDSDL3_UnlockBuffer();
 
 	// It is possible to miscount buffers if it has wrapped twice between calls to S_Update. Oh well.
-	if (playpos < oldsamplepos)
+	if (current_playpos < old_playpos)
 	{
-		buffers++; // Buffer wrapped.
+		soundtime_buffers++; // Buffer wrapped.
 
 		if (paintedtime > 0x40000000)
 		{
 			// Time to chop things off to avoid 32 bit limits.
-			buffers = 0;
+			soundtime_buffers = 0;
 			paintedtime = fullsamples;
 
 			S_StopAllSounds();
 		}
 	}
 
-	oldsamplepos = playpos;
-	soundtime = buffers * fullsamples + playpos / sound.channels;
+	old_playpos = current_playpos;
+	soundtime = soundtime_buffers * fullsamples + current_playpos / sound.channels;
 }
 
 // Updates the volume scale table based on current volume setting.
@@ -492,15 +524,25 @@ static void SNDSDL3_UpdateScaletable(void) // Q2: S_InitScaletable().
 // Saves a sound sample into cache. If necessary, endianness conversions are performed.
 qboolean SNDSDL3_Cache(sfx_t* sfx, const wavinfo_t* info, byte* data)
 {
-	const float stepscale = (float)info->rate / (float)sound.speed; // This is usually 0.5, 1, or 2.
-	const int outcount = (int)((float)info->samples / stepscale);
-	const int len = outcount * info->width * info->channels;
-
-	if (len == 0)
+	if (sfx == NULL || info == NULL || data == NULL || sound.speed <= 0 || info->rate <= 0 ||
+		(info->width != 1 && info->width != 2) || (info->channels != 1 && info->channels != 2) ||
+		info->samples <= 0)
 	{
-		si.Com_Printf("SDL_Cache: invalid sound file '%s' (zero length)\n", sfx->name);
+		si.Com_Printf("SDL_Cache: invalid sound metadata\n");
 		return false;
 	}
+
+	const uint64_t scaled_samples = (uint64_t)(unsigned)info->samples * (unsigned)sound.speed;
+	const uint64_t outcount64 = scaled_samples / (unsigned)info->rate;
+	const uint64_t len64 = outcount64 * (unsigned)info->width * (unsigned)info->channels;
+	if (outcount64 == 0 || outcount64 > INT_MAX || len64 > INT_MAX - sizeof(sfxcache_t))
+	{
+		si.Com_Printf("SDL_Cache: invalid sound file '%s' (resampled size overflow)\n", sfx->name);
+		return false;
+	}
+	const int outcount = (int)outcount64;
+	const int len = (int)len64;
+	const double stepscale = (double)info->rate / sound.speed;
 
 	sfx->cache = si.Z_Malloc(len + (int)sizeof(sfxcache_t));
 
@@ -516,14 +558,19 @@ qboolean SNDSDL3_Cache(sfx_t* sfx, const wavinfo_t* info, byte* data)
 	sc->width = ((int)s_loadas8bit->value ? 1 : info->width);
 
 	if (sc->loopstart != -1)
-		sc->loopstart = (int)((float)sc->loopstart / stepscale);
+		sc->loopstart = (int)(sc->loopstart / stepscale);
 
 	// Resample / decimate to the current source rate.
-	uint samplefrac = 0;
 	for (int i = 0; i < outcount; i++)
 	{
-		const uint srcsample = samplefrac >> 8;
-		samplefrac += (int)(stepscale * 256.0f);
+		const uint64_t source = (uint64_t)(unsigned)i * (unsigned)info->rate / (unsigned)sound.speed;
+		if (source >= (unsigned)info->samples)
+		{
+			si.Z_Free(sfx->cache);
+			sfx->cache = NULL;
+			return false;
+		}
+		const uint srcsample = (uint)source;
 
 		int sample;
 
@@ -538,6 +585,10 @@ qboolean SNDSDL3_Cache(sfx_t* sfx, const wavinfo_t* info, byte* data)
 			((char*)sc->data)[i] = (char)(sample >> 8);
 	}
 
+#ifdef H2_DOS
+	dos_stats.cached_sounds++;
+	dos_stats.cached_source_samples += (unsigned long)info->samples;
+#endif
 	return true;
 }
 
@@ -606,6 +657,7 @@ void SNDSDL3_RawSamples(const int num_samples, const uint rate, const int width,
 	}
 }
 
+#ifndef H2_NO_OPENAL
 // HRTF rendering path: uses OpenAL Soft loopback device with HRTF for per-source 3D spatialization.
 // Replaces the software mixer in SNDSDL3_PaintChannels when HRTF is active.
 static void SNDSDL3_PaintChannelsHRTF(const int endtime)
@@ -679,6 +731,7 @@ static void SNDSDL3_PaintChannelsHRTF(const int endtime)
 		paintedtime = end;
 	}
 }
+#endif
 
 // Runs every frame, handles all necessary sound calculations and fills the playback buffer.
 void SNDSDL3_Update(void)
@@ -731,8 +784,12 @@ void SNDSDL3_Update(void)
 		si.Com_Printf("----(%i)---- painted: %i\n", total_sounds, paintedtime);
 	}
 
-	// Stream music.
+	// Stream music or update the platform CD fallback when OGG is excluded.
+#ifndef H2_NO_OGG
 	OGG_Stream();
+#else
+	si.CDAudio_Update();
+#endif
 
 	if (sound.buffer == NULL)
 		return;
@@ -758,70 +815,85 @@ void SNDSDL3_Update(void)
 
 	const uint samps = sound.samples >> (sound.channels - 1);
 
+#ifndef H2_NO_OPENAL
 	if (AL_IsActive() && (int)s_hrtf->value)
 		SNDSDL3_PaintChannelsHRTF(min(endtime, soundtime + samps));
 	else
+#endif
 		SNDSDL3_PaintChannels(min(endtime, soundtime + samps));
 }
 
 // Callback function for SDL. Writes sound data to SDL when requested.
-static void SNDSDL3_FillSDL3AudioBuffer(byte* sdl_stream, const int length)
+static void SNDSDL3_FillSDL3AudioBuffer(byte* output, const int length)
 {
-	int pos = playpos * (sound.samplebits / 8);
+	const int bytes_per_sample = sound.samplebits / 8;
+	int remaining = length;
 
-	if (pos >= samplesize)
+	if (sound.buffer == NULL || samplesize <= 0 || bytes_per_sample <= 0)
 	{
-		playpos = 0;
-		pos = 0;
+		memset(output, 0, length);
+		return;
 	}
 
-	const int to_buffer_end = samplesize - pos;
-
-	int length1;
-	int length2;
-
-	if (length > to_buffer_end)
+	while (remaining > 0)
 	{
-		length1 = to_buffer_end;
-		length2 = length - length1;
-	}
-	else
-	{
-		length1 = length;
-		length2 = 0;
-	}
+		const int position = playpos * bytes_per_sample;
+		const int available = samplesize - position;
+		const int chunk = min(remaining, available);
 
-	memcpy(sdl_stream, sound.buffer + pos, length1);
+		memcpy(output, sound.buffer + position, chunk);
+		output += chunk;
+		remaining -= chunk;
+		playpos = (playpos + chunk / bytes_per_sample) % sound.samples;
 
-	// Set new position.
-	if (length2 <= 0)
-	{
-		playpos += (length1 / (sound.samplebits / 8));
-	}
-	else
-	{
-		memcpy(sdl_stream + length1, sound.buffer, length2);
-		playpos = length2 / (sound.samplebits / 8);
+		if (chunk == 0)
+			break;
 	}
 
-	if (playpos >= samplesize)
-		playpos = 0;
+	if (remaining > 0)
+		memset(output, 0, remaining);
 }
 
 // Wrapper function, ties the old existing callback logic from the SDL 1.2 days and later fiddled into SDL 2 to a SDL 3 compatible callback...
 static void SNDSDL3_AudioStreamCallback(void* userdata, SDL_AudioStream* sdl_stream, int additional_amount, int total_amount)
 {
-	if (additional_amount < 1)
+	(void)userdata;
+	(void)total_amount;
+
+	const int frame_bytes = sound.channels * sound.samplebits / 8;
+	if (additional_amount < 1 || frame_bytes <= 0)
 		return;
 
-	byte* data = SDL_stack_alloc(byte, additional_amount);
-
-	if (data != NULL)
+	int remaining = additional_amount - additional_amount % frame_bytes;
+#ifdef H2_DOS
+	qboolean submitted = false;
+#endif
+	while (remaining > 0)
 	{
-		SNDSDL3_FillSDL3AudioBuffer(data, additional_amount);
-		SDL_PutAudioStreamData(sdl_stream, data, additional_amount);
-		SDL_stack_free(data);
+		int chunk = min(remaining, SDL_AUDIO_SCRATCH_BYTES);
+		chunk -= chunk % frame_bytes;
+		if (chunk <= 0)
+			break;
+		SNDSDL3_FillSDL3AudioBuffer(audio_scratch, chunk);
+		if (!SDL_PutAudioStreamData(sdl_stream, audio_scratch, chunk))
+			break;
+#ifdef H2_DOS
+		submitted = true;
+		dos_stats.submitted_bytes += (unsigned long)chunk;
+		if (sound.samplebits == 16)
+		{
+			const short* samples = (const short*)audio_scratch;
+			for (int i = 0; i < chunk / (int)sizeof(*samples); ++i)
+				if (samples[i] != 0)
+					dos_stats.submitted_nonzero_samples++;
+		}
+#endif
+		remaining -= chunk;
 	}
+#ifdef H2_DOS
+	if (submitted)
+		dos_stats.callback_calls++;
+#endif
 }
 
 // Initializes the SDL sound backend and sets up SDL.
@@ -829,6 +901,9 @@ qboolean SNDSDL3_BackendInit(void)
 {
 	si.Com_Printf("Initializing SDL3 audio backend.\n");
 
+#ifdef H2_DOS
+	memset(&dos_stats, 0, sizeof(dos_stats));
+#endif
 	if (!SDL_WasInit(SDL_INIT_AUDIO) && !SDL_Init(SDL_INIT_AUDIO))
 	{
 		si.Com_Printf("Couldn't initialize SDL3 audio: %s.\n", SDL_GetError());
@@ -845,9 +920,7 @@ qboolean SNDSDL3_BackendInit(void)
 		.freq = (s_khz->value == 44.0f ? 44100 : 22050), // H2: no 11025 speed.
 	};
 
-	// Let's try our luck.
 	stream = SDL_OpenAudioDeviceStream(SDL_AUDIO_DEVICE_DEFAULT_PLAYBACK, &spec, SNDSDL3_AudioStreamCallback, NULL);
-
 	if (stream == NULL)
 	{
 		si.Com_Printf("SDL_OpenAudioDeviceStream() failed: %s\n", SDL_GetError());
@@ -877,41 +950,106 @@ qboolean SNDSDL3_BackendInit(void)
 
 	samplesize = sound.samples * (sound.samplebits / 8);
 	sound.buffer = calloc(1, samplesize);
+	if (sound.buffer == NULL)
+	{
+		si.Com_Printf("Couldn't allocate SDL3 mixing buffer.\n");
+		SDL_DestroyAudioStream(stream);
+		stream = NULL;
+		SDL_QuitSubSystem(SDL_INIT_AUDIO);
+		return false;
+	}
+
+	playpos = 0;
+	soundtime = 0;
+	soundtime_buffers = 0;
+	old_playpos = 0;
 
 	s_underwater_gain_hf->modified = true;
 	LPF_Initialize(&lpf_context, LPF_DEFAULT_GAIN_HF, sound.speed);
 
 	SNDSDL3_UpdateScaletable();
-	SDL_ResumeAudioDevice(SDL_GetAudioStreamDevice(stream));
 
-	playpos = 0;
-	soundtime = 0;
-
+#ifndef H2_NO_OPENAL
 	// Register HRTF toggle cvar (disabled by default until loopback rendering issues are resolved).
 	s_hrtf = si.Cvar_Get("s_hrtf", "0", CVAR_ARCHIVE);
+#endif
 
+	if (!SDL_ResumeAudioStreamDevice(stream))
+	{
+		si.Com_Printf("Couldn't resume SDL3 audio stream: %s.\n", SDL_GetError());
+		SDL_DestroyAudioStream(stream);
+		stream = NULL;
+		free(sound.buffer);
+		sound.buffer = NULL;
+		samplesize = 0;
+		SDL_QuitSubSystem(SDL_INIT_AUDIO);
+		return false;
+	}
+
+#ifdef H2_DOS
+	dos_stats.backend_initialized = true;
+	dos_stats.soundblaster_driver = drivername != NULL && strcmp(drivername, "soundblaster") == 0;
+#endif
 	si.Com_Printf("SDL3 audio backend initialized.\n");
-
 	return true;
 }
+
+qboolean SNDSDL3_LockBuffer(void)
+{
+	if (stream == NULL)
+		return false;
+	if (SDL_LockAudioStream(stream))
+		return true;
+	si.Com_Printf("Couldn't lock SDL3 audio stream: %s.\n", SDL_GetError());
+	return false;
+}
+
+void SNDSDL3_UnlockBuffer(void)
+{
+	if (stream != NULL && !SDL_UnlockAudioStream(stream))
+		si.Com_Printf("Couldn't unlock SDL3 audio stream: %s.\n", SDL_GetError());
+}
+
+#ifdef H2_DOS
+qboolean SNDSDL3_GetDOSStats(h2dos_sound_stats_t* stats)
+{
+	if (stats == NULL || !SNDSDL3_LockBuffer())
+		return false;
+	*stats = dos_stats;
+	SNDSDL3_UnlockBuffer();
+	return true;
+}
+#endif
 
 // Shuts the SDL backend down.
 void SNDSDL3_BackendShutdown(void)
 {
 	si.Com_Printf("Closing SDL audio device...\n");
 
-	// Shut down OpenAL HRTF loopback device first.
-	AL_Shutdown();
+	if (stream != NULL)
+	{
+		if (!SDL_PauseAudioStreamDevice(stream))
+			si.Com_Printf("Couldn't pause SDL3 audio stream: %s.\n", SDL_GetError());
 
-	SDL_PauseAudioDevice(SDL_GetAudioStreamDevice(stream));
-	SDL_DestroyAudioStream(stream);
-	SDL_QuitSubSystem(SDL_INIT_AUDIO);
+#ifndef H2_NO_OPENAL
+		// Shut down OpenAL HRTF loopback after SDL stops requesting samples.
+		AL_Shutdown();
+#endif
+		SDL_DestroyAudioStream(stream);
+		stream = NULL;
+	}
 
 	free(sound.buffer);
 	sound.buffer = NULL;
-
 	playpos = 0;
 	samplesize = 0;
+	soundtime = 0;
+	soundtime_buffers = 0;
+	old_playpos = 0;
 
+#ifdef H2_DOS
+	dos_stats.backend_initialized = false;
+#endif
+	SDL_QuitSubSystem(SDL_INIT_AUDIO);
 	si.Com_Printf("SDL audio device shut down.\n");
 }

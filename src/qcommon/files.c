@@ -631,6 +631,7 @@ char* FS_NextPath(const char* prevpath)
 	return NULL;
 }
 
+#ifndef H2_DOS
 //mxd. Copy base\config\*.cfg to "x:\Users\[User]\Saved Games\Heretic2R\configs".
 static void CopyConfigs(const char* src_dir, const char* dst_dir)
 {
@@ -658,6 +659,7 @@ static void CopyConfigs(const char* src_dir, const char* dst_dir)
 
 	Sys_FindClose();
 }
+#endif
 
 void FS_InitFilesystem(void)
 {
@@ -688,11 +690,13 @@ void FS_InitFilesystem(void)
 
 	//mxd. Skip fs_cddir / "-cddir" command line arg logic.
 
+#ifndef H2_DOS
 	// Detect Heretic II CD and extract PAK files if needed (before scanning the game directory).
 	CD_DetectAndExtract(va("%s/"BASEDIRNAME, fs_basedir->string));
 
 	// Search for and copy Heretic II PAK files from Steam/GOG/Program Files installations.
 	CD_SearchAndCopyPaks(va("%s/"BASEDIRNAME, fs_basedir->string));
+#endif
 
 	// Start up with 'base' by default.
 	FS_AddGameDirectory(va("%s/"BASEDIRNAME, fs_basedir->string));
@@ -712,6 +716,11 @@ void FS_InitFilesystem(void)
 
 	// H2: set user directory.
 	arg_index = COM_CheckParm("-userdir");
+#ifdef H2_DOS
+	const char* dos_userdir = (arg_index > 0 ? COM_Argv(arg_index + 1) : fs_gamedir);
+	fs_userdir = Cvar_Get("userdir", dos_userdir, 0);
+	fs_configsdir = Cvar_Get("configsdir", va("%s/config", fs_userdir->string), CVAR_NOSET);
+#else
 	qboolean use_modern_userdir = false; //mxd
 
 	if (arg_index > 0)
@@ -757,4 +766,5 @@ void FS_InitFilesystem(void)
 	{
 		fs_configsdir = Cvar_Get("configsdir", vanilla_cfg_path, CVAR_NOSET);
 	}
+#endif
 }

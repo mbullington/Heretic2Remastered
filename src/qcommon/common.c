@@ -667,6 +667,11 @@ void Qcommon_Init(const int argc, char** argv)
 	Com_ColourPrintf(P_HEADER, "==== "GAME_FULLNAME" initialized ====\n\n"); // Q2: Com_Printf //mxd. Use define.
 }
 
+#ifdef H2_DOS
+unsigned h2dos_sv_frame_calls;
+unsigned h2dos_cl_frame_calls;
+#endif
+
 void Qcommon_Frame(int usec) //mxd. msec -> usec.
 {
 	static int packetdelta = 1000000; // Time since last packetframe in microseconds.
@@ -755,6 +760,9 @@ void Qcommon_Frame(int usec) //mxd. msec -> usec.
 	// Run the server frame.
 	if (packetframe)
 	{
+#ifdef H2_DOS
+		h2dos_sv_frame_calls++;
+#endif
 		SV_Frame(servertimedelta);
 		servertimedelta = 0;
 	}
@@ -762,6 +770,9 @@ void Qcommon_Frame(int usec) //mxd. msec -> usec.
 	// Run the client frame.
 	if (packetframe || renderframe)
 	{
+#ifdef H2_DOS
+		h2dos_cl_frame_calls++;
+#endif
 		CL_Frame(packetdelta, renderdelta, clienttimedelta, packetframe, renderframe);
 		clienttimedelta = 0;
 

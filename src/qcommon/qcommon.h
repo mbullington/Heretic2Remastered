@@ -569,6 +569,17 @@ extern void NET_Init(void);
 extern void NET_Shutdown(void);
 extern void NET_Config(qboolean multiplayer);
 
+#ifdef H2_DOS
+typedef struct h2dos_net_stats_s
+{
+	unsigned packets_sent;
+	unsigned packets_received;
+	unsigned packets_dropped;
+} h2dos_net_stats_t;
+
+extern h2dos_net_stats_t NET_GetDOSStats(void);
+#endif
+
 extern qboolean NET_GetPacket(netsrc_t sock, netadr_t* n_from, sizebuf_t* n_message);
 extern void NET_SendPacket(netsrc_t sock, int length, const void* data, const netadr_t* to); //mxd. Changed 'to' type to netadr_t*.
 
@@ -707,6 +718,10 @@ extern void Z_FreeTags(int tag);
 
 extern void Qcommon_Init(int argc, char** argv);
 extern void Qcommon_Frame(int usec);
+#ifdef H2_DOS
+extern unsigned h2dos_sv_frame_calls;
+extern unsigned h2dos_cl_frame_calls;
+#endif
 
 extern void CL_MusicGetCurrentTrackInfo(int* track, uint* track_pos, qboolean* looping); //mxd
 

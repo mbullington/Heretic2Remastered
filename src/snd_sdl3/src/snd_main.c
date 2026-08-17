@@ -4,10 +4,14 @@
 // Copyright 2025 mxd
 //
 
+#ifndef H2_NO_OPENAL
 #include "snd_al.h"
 #include "snd_efx.h"
+#endif
 #include "snd_main.h"
+#ifndef H2_NO_OGG
 #include "snd_ogg.h"
+#endif
 #include "snd_sdl3.h"
 #include "snd_wav.h"
 #include "Vector.h"
@@ -17,7 +21,11 @@
 #else
 #define SNDLIB_DECLSPEC __attribute__((visibility("default")))
 #endif
+#ifdef H2_NO_OPENAL
+#define SNDLIB_NAME	"SDL3 Software Mixer"
+#else
 #define SNDLIB_NAME	"SDL3 Aureal 3D"
+#endif
 
 snd_import_t si;
 
@@ -76,6 +84,7 @@ static cvar_t* s_attn_static;
 cvar_t* s_underwater_gain_hf; // YQ2
 cvar_t* s_camera_under_surface; // H2
 
+#ifndef H2_NO_OPENAL
 // EFX effect cvars.
 cvar_t* s_reverb;
 cvar_t* s_reverb_gain;
@@ -83,6 +92,30 @@ cvar_t* s_occlusion;
 
 // Track current underwater state to detect changes.
 static qboolean s_was_underwater = false;
+#endif
+
+#ifdef H2_NO_OGG
+static void S_MusicPlay(const int track, const uint track_pos, const qboolean looping)
+{
+	(void)track_pos;
+	if (track == 0)
+		si.CDAudio_Stop();
+	else
+		si.CDAudio_Play(track, looping);
+}
+
+static void S_MusicStop(void)
+{
+	si.CDAudio_Stop();
+}
+
+static void S_MusicGetCurrentTrackInfo(int* track, uint* track_pos, qboolean* looping)
+{
+	*track = 0;
+	*track_pos = 0;
+	*looping = false;
+}
+#endif
 
 #pragma region ========================== Console commands ==========================
 
@@ -207,10 +240,12 @@ static void S_Init(void)
 		s_camera_under_surface = si.Cvar_Get("cl_camera_under_surface", "0.0", 0); // H2
 		//TODO: implement s_feedback_kind YQ2 logic?
 
+#ifndef H2_NO_OPENAL
 		// EFX effect cvars.
 		s_reverb = si.Cvar_Get("s_reverb", "1", CVAR_ARCHIVE);
 		s_reverb_gain = si.Cvar_Get("s_reverb_gain", "0.7", CVAR_ARCHIVE);
 		s_occlusion = si.Cvar_Get("s_occlusion", "1", CVAR_ARCHIVE);
+#endif
 
 		// H2: extra attenuation cvars.
 		s_attn_norm = si.Cvar_Get("s_attn_norm", "0.0008", 0);
@@ -232,8 +267,11 @@ static void S_Init(void)
 			paintedtime = 0;
 			s_active = true;
 
+#ifndef H2_NO_OGG
 			OGG_Init();
+#endif
 
+#ifndef H2_NO_OPENAL
 			// Initialize EFX effects system after OpenAL is ready.
 			if (AL_IsActive())
 			{
@@ -244,6 +282,7 @@ static void S_Init(void)
 						AL_ConnectSourcesToEFX();
 				}
 			}
+#endif
 
 			si.Com_Printf("Sound sampling rate: %i\n", sound.speed);
 			S_StopAllSounds();
@@ -265,10 +304,14 @@ static void S_Shutdown(void)
 	si.Cmd_RemoveCommand("soundinfo");
 
 	S_StopAllSounds();
+#ifndef H2_NO_OGG
 	OGG_Shutdown();
+#endif
 
+#ifndef H2_NO_OPENAL
 	// Shutdown EFX before OpenAL.
 	EFX_Shutdown();
+#endif
 
 	// Free all sounds.
 	sfx_t* sfx = &known_sfx[0];
@@ -661,10 +704,11 @@ static void S_ClearBuffer(void)
 
 	s_rawend = 0;
 
-	if (sound.buffer != NULL)
+	if (sound.buffer != NULL && SNDSDL3_LockBuffer())
 	{
 		const int clear = ((sound.samplebits == 8) ? 0x80 : 0);
 		memset(sound.buffer, clear, sound.samples * sound.samplebits / 8);
+		SNDSDL3_UnlockBuffer();
 	}
 }
 
@@ -735,6 +779,7 @@ static void S_Update(const vec3_t origin, const vec3_t forward, const vec3_t rig
 	VectorCopy(right, listener_right);
 	VectorCopy(up, listener_up);
 
+#ifndef H2_NO_OPENAL
 	// Update underwater state for EFX filtering.
 	if (EFX_IsActive())
 	{
@@ -751,11 +796,13 @@ static void S_Update(const vec3_t origin, const vec3_t forward, const vec3_t rig
 				EFX_SetEnvironment(22); // EAX_ENVIRONMENT_UNDERWATER
 		}
 	}
+#endif
 
 	SNDSDL3_Update();
 }
 
 // Set EAX environment preset (called from game code).
+#ifndef H2_NO_OPENAL
 static void S_SetEaxEnvironment(const int env_index)
 {
 	if (!sound_started || !EFX_IsActive())
@@ -768,6 +815,7 @@ static void S_SetEaxEnvironment(const int env_index)
 	if (s_reverb->value > 0.0f)
 		EFX_SetEnvironment(env_index);
 }
+#endif
 
 SNDLIB_DECLSPEC snd_export_t GetSoundAPI(const snd_import_t snd_import)
 {
@@ -797,14 +845,24 @@ SNDLIB_DECLSPEC snd_export_t GetSoundAPI(const snd_import_t snd_import)
 	snd_export.FindName = S_FindName;
 
 	// Music playback.
+#ifdef H2_NO_OGG
+	snd_export.MusicPlay = S_MusicPlay;
+	snd_export.MusicStop = S_MusicStop;
+	snd_export.MusicGetCurrentTrackInfo = S_MusicGetCurrentTrackInfo;
+#else
 	snd_export.MusicPlay = OGG_PlayTrack;
 	snd_export.MusicStop = OGG_Stop;
 	snd_export.MusicGetCurrentTrackInfo = OGG_GetCurrentTrackInfo; //mxd
+#endif
 
 	// Cinematics playback.
 	snd_export.RawSamples = S_RawSamples;
 
+#ifdef H2_NO_OPENAL
+	snd_export.SetEaxEnvironment = NULL;
+#else
 	snd_export.SetEaxEnvironment = S_SetEaxEnvironment;
+#endif
 
 	return snd_export;
 }

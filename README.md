@@ -220,6 +220,10 @@ The engine loads content from `base.pak`, `Htic2-0.pak` through `Htic2-9.pak`, a
 - **Music (OGG)** — the sound backend tries `FS_LoadFile` with `stb_vorbis_open_memory`, falling back to `stb_vorbis_open_filename` for loose files.
 - **HD videos (MP4/MKV)** — the client tries loose files first, then extracts from PAK to a temporary file for the platform video backend (WMF on Windows, AVFoundation on macOS, FFmpeg/libavcodec on Unix when available).
 
+## Experimental DOS port
+
+The DJGPP graph preserves the SDL3 diagnostics and builds `SILVER.EXE`, a production `Qcommon_Init`/`Qcommon_Frame` lifecycle target. Bounded DOSBox runs cover a dedicated synthetic server and a local synthetic client/server session using the statically linked DOS software renderer and SDL3 software sound mixer. The renderer presents the real console and menu through SDL3 VESA and supports validated M8/M32/book images, BSP PVS surfaces and RGB lightmaps, depth-tested brush/sprite entities, Raven flexible models, projected six-sided skies, animated and deformed special surfaces, surface queries, particles, translucent surfaces, and dynamic lights. A generated WAV proof crosses the engine loader, channel mixer, SDL3 stream callback, and DOS Sound Blaster driver without OpenAL. It is **not yet a playable Heretic II build**: flexible models have only synthetic standard-frame coverage, and sprite/effect parity and representative original-content validation remain incomplete. No original game PAKs are included, and gameplay is unverified. See [docs/dos-build.md](docs/dos-build.md) for exact evidence and boundaries.
+
 ## Building on macOS
 
 A native macOS CMake/Ninja build is available. Install CMake, Ninja, SDL3, and OpenAL/openal-soft. MP4/MKV cinematics use the system AVFoundation frameworks. Then run:

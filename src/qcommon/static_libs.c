@@ -1,17 +1,19 @@
 // static_libs.c -- built-in module loader for H2_STATIC_GAME builds.
 
 #include "qcommon.h"
+#include "client.h"
+#include "server.h"
 
 #include <stddef.h>
 
-extern void GetGameAPI(void);
-extern void H2R_ClientEffects_GetfxAPI(void);
-extern void GetRefAPI(void);
-extern void GetSoundAPI(void);
+extern game_export_t* GetGameAPI(const game_import_t* import);
+extern client_fx_export_t H2R_ClientEffects_GetfxAPI(client_fx_import_t import);
+extern refexport_t GetRefAPI(refimport_t import);
+extern snd_export_t GetSoundAPI(snd_import_t import);
 
 static const int h2_static_game_handle = 1;
 static const int h2_static_clfx_handle = 2;
-static const int h2_static_ref_gl3_handle = 3;
+static const int h2_static_renderer_handle = 3;
 static const int h2_static_snd_sdl3_handle = 4;
 
 static const char* H2R_BaseName(const char* path)
@@ -50,8 +52,13 @@ void* H2R_LoadLibrary(const char* name)
 	if (H2R_StaticNameMatches(name, "Client Effects"))
 		return (void*)&h2_static_clfx_handle;
 
+#ifdef H2_DOS
+	if (H2R_StaticNameMatches(name, "ref_soft"))
+		return (void*)&h2_static_renderer_handle;
+#else
 	if (H2R_StaticNameMatches(name, "ref_gl3"))
-		return (void*)&h2_static_ref_gl3_handle;
+		return (void*)&h2_static_renderer_handle;
+#endif
 
 	if (H2R_StaticNameMatches(name, "snd_sdl3"))
 		return (void*)&h2_static_snd_sdl3_handle;
@@ -70,7 +77,7 @@ void* H2R_GetProcAddress(void* library, const char* symbol)
 	if (library == (void*)&h2_static_clfx_handle)
 		return (Q_stricmp(symbol, "GetfxAPI") == 0 ? (void*)H2R_ClientEffects_GetfxAPI : NULL);
 
-	if (library == (void*)&h2_static_ref_gl3_handle)
+	if (library == (void*)&h2_static_renderer_handle)
 		return (Q_stricmp(symbol, "GetRefAPI") == 0 ? (void*)GetRefAPI : NULL);
 
 	if (library == (void*)&h2_static_snd_sdl3_handle)
@@ -84,6 +91,6 @@ int H2R_FreeLibrary(void* library)
 	return library == NULL ||
 		library == (void*)&h2_static_game_handle ||
 		library == (void*)&h2_static_clfx_handle ||
-		library == (void*)&h2_static_ref_gl3_handle ||
+		library == (void*)&h2_static_renderer_handle ||
 		library == (void*)&h2_static_snd_sdl3_handle;
 }

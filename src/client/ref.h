@@ -23,6 +23,8 @@
 #define CONCHAR_SIZE		8 //mxd. Conchars char size. Each char is 8x8 pixels.
 #define CONCHAR_LINE_HEIGHT	10 //mxd. Not a console line height!
 
+struct Surface_s;
+
 typedef struct svertex_s //mxd. Sprite vertex definition.
 {
 	float x;

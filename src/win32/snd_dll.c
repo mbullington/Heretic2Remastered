@@ -154,7 +154,11 @@ static void SND_InitSndlibInfos(void) //mxd
 	num_sndlib_infos = 0;
 
 #ifdef H2_STATIC_GAME
+#ifdef H2_NO_OPENAL
+	strcpy_s(sndlib_infos[0].title, sizeof(sndlib_infos[0].title), "SDL3 Software Mixer");
+#else
 	strcpy_s(sndlib_infos[0].title, sizeof(sndlib_infos[0].title), "SDL3 Aureal 3D");
+#endif
 	strcpy_s(sndlib_infos[0].id, sizeof(sndlib_infos[0].id), DEFAULT_SOUND_LIBRARY_NAME);
 	num_sndlib_infos = 1;
 	return;

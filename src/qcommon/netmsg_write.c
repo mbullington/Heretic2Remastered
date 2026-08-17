@@ -215,7 +215,8 @@ void ParseEffectToSizeBuf(sizebuf_t* sb, const char* format, va_list marker) // 
 		switch (*format)
 		{
 			case 'b':
-				MSG_WriteByte(sb, va_arg(marker, byte));
+				// byte variadic args are promoted to int; reading byte/short from variadic args is undefined behavior -mxd/sbs.
+				MSG_WriteByte(sb, (byte)va_arg(marker, int));
 				break;
 
 			case 'd':
@@ -236,7 +237,7 @@ void ParseEffectToSizeBuf(sizebuf_t* sb, const char* format, va_list marker) // 
 				break;
 
 			case 's':
-				MSG_WriteShort(sb, va_arg(marker, short));
+				MSG_WriteShort(sb, (short)va_arg(marker, int));
 				break;
 
 			case 't':

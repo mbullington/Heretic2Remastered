@@ -13,8 +13,6 @@
 
 #define MIN_TELEPORT_DISTANCE	640 //mxd. 80 world units. When distance between previous and current player origin > this, assume player teleported.
 
-int pred_pm_flags;
-int pred_pm_w_flags;
 qboolean trace_ignore_player;
 qboolean trace_ignore_camera;
 qboolean trace_ignore_bmodels; //mxd

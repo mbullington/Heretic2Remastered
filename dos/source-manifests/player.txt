@@ -1,0 +1,11 @@
+src/Player/p_actions.c
+src/Player/p_anim_branch.c
+src/Player/p_anim_data.c
+src/Player/p_animactor.c
+src/Player/p_anims.c
+src/Player/p_chicken.c
+src/Player/p_chicken_anim.c
+src/Player/p_items.c
+src/Player/p_main.c
+src/Player/p_utility.c
+src/Player/p_weapon.c

@@ -1,0 +1,9 @@
+src/server/sv_ccmds.c
+src/server/sv_effects.c
+src/server/sv_entities.c
+src/server/sv_game.c
+src/server/sv_init.c
+src/server/sv_main.c
+src/server/sv_send.c
+src/server/sv_user.c
+src/server/sv_world.c

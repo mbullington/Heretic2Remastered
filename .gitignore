@@ -1,5 +1,8 @@
 /build/**
 /cmake-build-*/
+/.dos-build/
+/.dos-data/
+/.dos-deps/
 /release
 /lib/*.exp
 /lib/*.lib
@@ -26,3 +29,5 @@
 /src/WinSnd/debug
 /src/WinSnd/release
 *.user
+__pycache__/
+.bb

@@ -1,0 +1,16 @@
+!src/H2Common/DllMain.c
+src/H2Common/ByteOrder.c
+src/H2Common/Common.c
+src/H2Common/Console.c
+src/H2Common/InfoStrings.c
+src/H2Common/Math.c
+src/H2Common/Matrix.c
+src/H2Common/Motion.c
+src/H2Common/Random.c
+src/H2Common/ResourceManager.c
+src/H2Common/SinglyLinkedList.c
+src/H2Common/SurfaceProps.c
+src/H2Common/TextPalette.c
+src/H2Common/Vector.c
+src/H2Common/q_Physics.c
+src/game/q_shared.c

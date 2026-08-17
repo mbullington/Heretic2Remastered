@@ -7,12 +7,25 @@ set(CMAKE_C_EXTENSIONS ON)
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS ON)
-set(CMAKE_POSITION_INDEPENDENT_CODE ON)
-set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
 if(NOT CMAKE_BUILD_TYPE AND NOT CMAKE_CONFIGURATION_TYPES)
 	set(CMAKE_BUILD_TYPE Release CACHE STRING "Build type" FORCE)
 endif()
+
+if(DOS)
+	if(NOT DJGPP)
+		message(FATAL_ERROR "The DOS target graph requires a DJGPP toolchain")
+	endif()
+
+	set(H2_STATIC_GAME ON CACHE BOOL "Use monolithic engine bindings" FORCE)
+	set(H2_ENABLE_FFMPEG OFF CACHE BOOL "FFmpeg is unavailable on DOS" FORCE)
+	set(H2_DOS_BUILD ON CACHE INTERNAL "Configure the DOS-only target graph")
+	add_subdirectory(dos)
+	return()
+endif()
+
+set(CMAKE_POSITION_INDEPENDENT_CODE ON)
+set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
 set(H2_OUTPUT_DIR "${CMAKE_SOURCE_DIR}/build")
 if(APPLE)

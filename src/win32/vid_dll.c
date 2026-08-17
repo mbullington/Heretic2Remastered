@@ -20,7 +20,15 @@
 #define FreeLibrary(library) H2R_FreeLibrary((void*)(library))
 #endif
 
-#define FALLBACK_REFLIB	"gl3" //mxd. GL3 is the only supported renderer.
+#ifdef H2_DOS
+	#define FALLBACK_REFLIB "soft"
+	#define STATIC_REFLIB_NAME "ref_soft"
+	#define STATIC_REFLIB_TITLE "DOS SDL3 software"
+#else
+	#define FALLBACK_REFLIB "gl3" //mxd. GL3 is the desktop renderer.
+	#define STATIC_REFLIB_NAME "ref_gl3"
+	#define STATIC_REFLIB_TITLE "OpenGL 3.3+"
+#endif
 #ifdef _WIN32
 	#define REF_LIB_EXT ".dll"
 #elif defined(__APPLE__)
@@ -318,7 +326,7 @@ static void VID_InitReflibInfos(void) //mxd
 	num_reflib_infos = 0;
 
 #ifdef H2_STATIC_GAME
-	strcpy_s(reflib_infos[0].title, sizeof(reflib_infos[0].title), "OpenGL 3.3+");
+	strcpy_s(reflib_infos[0].title, sizeof(reflib_infos[0].title), STATIC_REFLIB_TITLE);
 	strcpy_s(reflib_infos[0].id, sizeof(reflib_infos[0].id), FALLBACK_REFLIB);
 	num_reflib_infos = 1;
 	return;
@@ -359,10 +367,14 @@ void VID_CheckChanges(void) //TODO: check YQ2 logic.
 		if (se.StopAllSounds != NULL) //mxd. Sound backend is now initialized after renderer backend, so this will be NULL on the first call...
 			se.StopAllSounds();
 
-		Cvar_ForceSet("vid_ref", "gl3"); //mxd. GL3 is the only supported renderer.
+		Cvar_ForceSet("vid_ref", FALLBACK_REFLIB);
 
 		char ref_name[100];
+#ifdef H2_STATIC_GAME
+		Com_sprintf(ref_name, sizeof(ref_name), "%s", STATIC_REFLIB_NAME);
+#else
 		Com_sprintf(ref_name, sizeof(ref_name), "ref_%s" REF_LIB_EXT, vid_ref->string);
+#endif
 
 		if (!VID_LoadRefresh(ref_name))
 		{
@@ -391,8 +403,8 @@ void VID_Init(void)
 	vid_restart_required = true; // H2
 
 	// Create the video variables so we know how to start the graphics drivers.
-	vid_ref = Cvar_Get("vid_ref", "gl3", CVAR_ARCHIVE); // H2: "soft"; H2_1.07: "gl".
-	Cvar_ForceSet("vid_ref", "gl3"); // Always start with the GL3 renderer.
+	vid_ref = Cvar_Get("vid_ref", FALLBACK_REFLIB, CVAR_ARCHIVE);
+	Cvar_ForceSet("vid_ref", FALLBACK_REFLIB);
 	vid_gamma = Cvar_Get("vid_gamma", "0.5", CVAR_ARCHIVE);
 	vid_brightness = Cvar_Get("vid_brightness", "0.5", CVAR_ARCHIVE); // H2
 	vid_contrast = Cvar_Get("vid_contrast", "0.5", CVAR_ARCHIVE); // H2

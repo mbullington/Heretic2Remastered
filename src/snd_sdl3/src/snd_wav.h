@@ -9,3 +9,7 @@
 #include "snd_local.h"
 
 extern sfxcache_t* S_LoadSound(sfx_t* s);
+
+#ifdef H2_DOS
+extern qboolean H2DOS_WavFileIsValid(const char* name);
+#endif

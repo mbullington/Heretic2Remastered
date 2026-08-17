@@ -84,12 +84,19 @@ static inline void OutputDebugString(const char* text)
 		fputs(text, stderr);
 }
 
+#ifndef __cplusplus
 #ifndef min
 #define min(a, b) ((a) < (b) ? (a) : (b))
 #endif
 #ifndef max
 #define max(a, b) ((a) > (b) ? (a) : (b))
 #endif
+#endif
+
+static inline size_t h2_min_size(const size_t a, const size_t b)
+{
+	return a < b ? a : b;
+}
 
 #ifndef _inline
 #define _inline static inline
@@ -124,7 +131,7 @@ static inline int h2_strcpy_s(char* dst, size_t dst_size, const char* src)
 	}
 
 	const size_t len = strlen(src);
-	const size_t copy = min(len, dst_size - 1);
+	const size_t copy = h2_min_size(len, dst_size - 1);
 	memcpy(dst, src, copy);
 	dst[copy] = '\0';
 
@@ -145,7 +152,7 @@ static inline int h2_strncpy_s(char* dst, size_t dst_size, const char* src, size
 	if (count == _TRUNCATE)
 		count = dst_size - 1;
 
-	const size_t available = min(count, dst_size - 1);
+	const size_t available = h2_min_size(count, dst_size - 1);
 	const size_t copy = strnlen(src, available);
 	memcpy(dst, src, copy);
 	dst[copy] = '\0';
@@ -301,7 +308,7 @@ static inline void h2_split_find_pattern(const char* path, char* base, size_t ba
 
 	if (slash != NULL)
 	{
-		const size_t len = min((size_t)(slash - path), base_size - 1);
+		const size_t len = h2_min_size((size_t)(slash - path), base_size - 1);
 		memcpy(base, path, len);
 		base[len] = '\0';
 		h2_strcpy_s(pattern, pattern_size, slash + 1);
@@ -324,7 +331,7 @@ static inline int h2_find_next_match(h2_find_t* find, struct _finddata_t* data)
 		if (fnmatch(find->pattern, ent->d_name, 0) != 0)
 			continue;
 
-		h2_strncpy_s(data->name, sizeof(data->name), ent->d_name, sizeof(data->name) - 1);
+		h2_strncpy_s(data->name, sizeof(data->name), ent->d_name, sizeof(ent->d_name) - 1);
 		data->attrib = _A_ARCH;
 
 		char full[PATH_MAX];
