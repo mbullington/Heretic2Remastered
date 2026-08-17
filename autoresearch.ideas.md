@@ -47,3 +47,12 @@
 - Prefetch next span's texture row? (DOSBox does not model cache; skip.)
 - Translation lookaside: dot3 world_to_view per projected vertex for world
   faces shares the view basis — already done per frame; minor.
+
+## Learnings (seg 4 continued)
+- DOSBox flat-op model: light LUT (+8.8ms world) and pow2 tw_shift (+4.2ms) both REGRESSED vs IMUL chains; hand present shuffle regressed vs SDL_ConvertPixels (+5.5ms). Micro-ALU/memory swaps are empirically hostile here — test, never assume.
+- Anatomy 2026-08-17: entity 36.9ms = flex 20.8ms (bench-model-flex=256/32≈8/frame?! verify per-frame scaling) + sprites ~0.014ms + ~16ms gap = inline/brush entity faces flowing through draw_face (attributed to world buckets). Flex pixel work is tiny (~1038 px/frame, 244 lerps/frame, prologue 186us) => ~20ms unaccounted inside SW_RasterFlexEntity = per-modela/tri setup (clip/project/skin fetch). Next: sub-stage timers inside SW_RasterFlexEntity (pose/clip/project/raster).
+## Queued mechanisms (unchanged priority)
+1. flex sub-stage timers -> then cut the dominant stage
+2. sky tile tagging (38.2ms wall; layered transform sky)
+3. coarse 8x8-tile z-reject to kill walked-but-z-rejected world px (overdraw)
+4. world hand asm inner loop (92cy/px observed vs ~30 model) - last resort
