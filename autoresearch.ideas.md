@@ -1,0 +1,53 @@
+# Untried hypotheses (remove when attempted)
+
+## World pass (world_us ~128 ms — biggest target)
+- SPAN-SORTED front-to-back world rendering (Abrash-style span clipping per
+  scanline from front-to-back BSP order): each world pixel shaded once, no
+  per-pixel z compare for accepted spans; keep z writes for entity testing.
+  Expected: remove ~10-15 cy/px + all 1.42× overdraw.
+- Lightmap fetch hoisting: light cells constant over ≤16-texel runs; fetch
+  per-run instead of per-pixel (1 mul + clamps saved per px).
+- Int16 depth buffer with fixed-point iz stepping: halves z traffic; watch
+  precision at far range (needs care: quantize at 2^15 w/ per-block reseed).
+- Split U/T perspective: compute `(iu/iz)` via reciprocal LUT of iz at 12-bit
+  precision instead of FPU div per block-END (only 2 divs per block remain,
+  per *span* + per-tri → likely minor now).
+- Draw sky-covered spans without storing z (sky is always furthest).
+
+## Sky (sky_us ~36–56 ms, rotating → cache never hits)
+- Tile-based swirl: render the warp into 16×16 tiles and memcpy identical
+  tiles; the swirl field is smooth — quantize dir.z/dir.x to tile grid.
+- Bypass the cache entirely on rotate!=0 and write directly with the
+  incremental dir stepping loop (save the double-buffer copy + key checks).
+
+## Entities (entities_us ~38 ms)
+- Per-entity affine approx for small screenspace tris: skip per-block div
+  (done: 1 div/span). Next: batch transform via per-entity basis reuse in
+  the *facing* prologue (world_to_view dot3 → shave 3 mul chains using
+  pre-folded entity basis) — mostly registers though.
+- Back-face cull flex triangles BEFORE per-tri setup via screen-space
+  signed area test (projected cache gives it nearly free).
+- Clip the GLCMD fan walk: bound per-fan vertex count tests, avoid memcpy
+  float reads by aliasing (undefined-behavior-safe unions if C allows).
+
+## Present (present_us ~23 ms)
+- Had a custom RGBA→RGB24 repack (bitfield + 32-bit stores) that measured
+  SLOWER than SDL_ConvertPixels (28.7 vs 22.7 ms) — SDL's converter is
+  already hot. Instead: eliminate the conversion — make the INTERNAL
+  framebuffer RGB24 directly?? Huge ripple (every raster path writes 32-bit)
+  but kills the entire convert+extra buffer traffic. Or present 60Hz→30Hz
+  (skip every other SW_Present; visual change! needs care — benchmark
+  artifacts would differ; classify as workload change, not allowed).
+
+## Clear (clear_us ~6 ms)
+- Sky already fills the whole viewport; skip the color clear when
+  `SW_ClearDepth`-only is possible; and clear depth with single-width
+  sweep at 8 bytes/iteration (rep stos pattern).
+
+## Cross-cutting
+- 32-bit inner-loop batching: process 2 texels/iteration (load 2×32-bit,
+  combine stores) to amortize loop overhead.
+- Move `bench_*` counter stores out of all inner loops into locals.
+- Prefetch next span's texture row? (DOSBox does not model cache; skip.)
+- Translation lookaside: dot3 world_to_view per projected vertex for world
+  faces shares the view basis — already done per frame; minor.
