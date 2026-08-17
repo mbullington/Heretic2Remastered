@@ -18,14 +18,13 @@ rotating sky) via `.dos-data/` real-data mode.
 - **Secondary tie-breakers / telemetry**: world_us, sky_us, entities_us,
   clear_us, present_us, walked_world_px, inside_world_px, flex_vertex_lerps,
   flex_prologue_us.
-- DOSBox fixed-cycle timing has run-to-run drift; treat < ~3% deltas as
-  within noise unless a mechanism explains them. Keep decisions honest with
-  the confidence score.
+- DOSBox fixed-cycle timing drifts (sky_us observed flipping 36<->56ms
+  across identical builds), so `autoresearch.sh` runs the bench THREE times
+  and reports per-metric MEDIANS. ~90s per verify.
 
 ## How to Run
 `./autoresearch.sh` — incremental DJGPP build (nix toolchain), then the
-DOSBox benchmark, then prints METRIC lines. Takes ~10 minutes (single run;
-workload is slow and deterministic-ish, medians are not affordable).
+THREE DOSBox benchmark runs, then prints per-metric MEDIAN lines. ~90s per verify.
 `autoresearch.checks.sh` runs the pixel/status gates on success.
 
 ## Files in Scope
