@@ -191,7 +191,9 @@ static qboolean screen_vertex_valid(const screen_vertex_t vertex)
 
 #define SW_SPAN_STEP 16
 #define SW_LIGHT_CACHE_MAX 64
-static uint32_t sw_face_light_cache[SW_LIGHT_CACHE_MAX * SW_LIGHT_CACHE_MAX];
+// Dense build scratch (lw x lh) and the band-packed working buffer (lw+2 x lh+2).
+static uint32_t sw_face_light_dense[SW_LIGHT_CACHE_MAX * SW_LIGHT_CACHE_MAX];
+static uint32_t sw_face_light_cache[(SW_LIGHT_CACHE_MAX + 2) * (SW_LIGHT_CACHE_MAX + 2)];
 
 // Reciprocal table replaces the per-block integer divide of the span stepping
 // code ((u1-u0)*65536/len) with one float multiply: an fdiv is ~39 cycles on a
@@ -258,6 +260,37 @@ static void sw_lightstyles_snapshot(void)
 		sw_lightstyle_fingerprint[i * 3 + 2] = styles != NULL ? styles[i].rgb[2] : 1.0f;
 	}
 	sw_lightstyle_fingerprint_valid = true;
+}
+
+// Pack the dense lw x lh miniature into a (lw+2) x (lh+2) band with
+// edge-extended rows and columns. Spans can then index light cells without
+// any per-pixel clamping (sub-texel overshoot never exceeds one cell).
+static void band_pack_light(const uint32_t *dense, const int lw, const int lh, uint32_t *band)
+{
+	const int bw = lw + 2;
+	for (int r = 0; r < lh; ++r)
+		memcpy(band + (r + 1) * bw + 1, dense + r * lw, sizeof(uint32_t) * (size_t)lw);
+	for (int r = 1; r <= lh; ++r)
+	{
+		band[r * bw] = band[r * bw + 1];
+		band[r * bw + lw + 1] = band[r * bw + lw];
+	}
+	memcpy(band, band + bw, sizeof(uint32_t) * (size_t)bw);
+	memcpy(band + (lh + 1) * bw, band + lh * bw, sizeof(uint32_t) * (size_t)bw);
+}
+
+// span_modulate with the light channels pre-unpacked (avoids re-extracting
+// them per pixel; the caller keeps them in registers per light cell).
+static inline uint32_t span_modulate3(const uint32_t texel, const unsigned lr, const unsigned lg,
+	const unsigned lb)
+{
+	uint32_t r = (((texel) & 0xffu) * lr + 128u) >> 8;
+	uint32_t g = ((((texel) >> 8) & 0xffu) * lg + 128u) >> 8;
+	uint32_t b = ((((texel) >> 16) & 0xffu) * lb + 128u) >> 8;
+	if (r > 255u) r = 255u;
+	if (g > 255u) g = 255u;
+	if (b > 255u) b = 255u;
+	return r | (g << 8) | (b << 16) | 0xff000000u;
 }
 
 static qboolean build_face_light(const sw_bsp_t *bsp, const dface_t *face, const int light_width,
@@ -401,26 +434,29 @@ static void draw_face_spans(const screen_vertex_t *verts, const int n, const sw_
 			store->light_width != light_width || store->light_height != light_height)
 		{
 			uint32_t *grown = realloc(store->samples,
-				sizeof(*store->samples) * (size_t)light_width * (size_t)light_height);
+				sizeof(*store->samples) * (size_t)(light_width + 2) * (size_t)(light_height + 2));
 			if (grown == NULL)
 				return;
 			store->samples = grown;
 			store->light_width = light_width;
 			store->light_height = light_height;
-			if (!build_face_light(bsp, face, light_width, light_height, store->samples))
+			if (!build_face_light(bsp, face, light_width, light_height, sw_face_light_dense))
 				return;
+			band_pack_light(sw_face_light_dense, light_width, light_height, store->samples);
 			store->generation = sw_face_light_generation;
 		}
 		light_cache = store->samples;
 	}
 	else
 	{
-		if (!build_face_light(bsp, face, light_width, light_height, sw_face_light_cache))
+		if (!build_face_light(bsp, face, light_width, light_height, sw_face_light_dense))
 			return; // oversized lightmaps: caller falls back to the per-pixel path
+		band_pack_light(sw_face_light_dense, light_width, light_height, sw_face_light_cache);
 		light_cache = sw_face_light_cache;
 	}
 	const int light_min_s = (int)texture_min_s;
 	const int light_min_t = (int)texture_min_t;
+	const int light_stride = light_width + 2;
 
 	const qboolean twist_pow2 = (image->width & (image->width - 1)) == 0;
 	const qboolean theight_pow2 = (image->height & (image->height - 1)) == 0;
@@ -511,29 +547,44 @@ static void draw_face_spans(const screen_vertex_t *verts, const int n, const sw_
 			const float lt1 = (ltz + gradient_ltz_x * block) * iz1;
 			int iu = (int)(u0 * 65536.0f);
 			int it = (int)(v0b * 65536.0f);
-			int ils = (int)(ls0 * 65536.0f) - (light_min_s << 16);
-			int ilt = (int)(lt0 * 65536.0f) - (light_min_t << 16);
+			// +1 cell bias into the band-packed light map => no per-pixel clamps
+			int ils = (int)(ls0 * 65536.0f) - (light_min_s << 16) + (1 << 20);
+			int ilt = (int)(lt0 * 65536.0f) - (light_min_t << 16) + (1 << 20);
 			const int iu_step = (int)((u1 - u0) * 65536.0f * SW_INV_WIDTH(block));
 			const int it_step = (int)((v1b - v0b) * 65536.0f * SW_INV_WIDTH(block));
 			const int ils_step = (int)((ls1 - ls0) * 65536.0f * SW_INV_WIDTH(block));
 			const int ilt_step = (int)((lt1 - lt0) * 65536.0f * SW_INV_WIDTH(block));
+			const int light_max_s_fixed = ((light_width + 2) << 20) - 1;
+			const int light_max_t_fixed = ((light_height + 2) << 20) - 1;
+			if (ils > light_max_s_fixed) ils = light_max_s_fixed;
+			else if (ils < 0) ils = 0;
+			if (ilt > light_max_t_fixed) ilt = light_max_t_fixed;
+			else if (ilt < 0) ilt = 0;
 			float wiz = w;
 			const float wizard_step = gradient_w_x;
 
 			if (alpha >= 1.0f && twist_pow2 && theight_pow2)
 			{
 				unsigned depth_writes = 0;
+				int light_prev_idx = -1;
+				unsigned light_prev = 0;
+				unsigned light_r = 256u, light_g = 256u, light_b = 256u;
 				for (int i = 0; i < block; ++i, ++x)
 				{
 					const size_t idx = (size_t)x;
 					if (wiz >= zb_row[idx])
 					{
 						const uint32_t texel = image->pixels[((it >> 16) & mask_h) * image->width + ((iu >> 16) & mask_w)];
-						unsigned lu = (unsigned)ils >> 20;
-						unsigned lv = (unsigned)ilt >> 20;
-						if (lu >= (unsigned)light_width) lu = light_width - 1;
-						if (lv >= (unsigned)light_height) lv = light_height - 1;
-						fb_row[idx] = span_modulate(texel, light_cache[lv * light_width + lu]);
+						const int lidx = (int)((unsigned)ilt >> 20) * light_stride + (int)((unsigned)ils >> 20);
+						if (lidx != light_prev_idx)
+						{
+							light_prev_idx = lidx;
+							light_prev = light_cache[lidx];
+							light_r = (light_prev >> 20) & 1023u;
+							light_g = (light_prev >> 10) & 1023u;
+							light_b = light_prev & 1023u;
+						}
+						fb_row[idx] = span_modulate3(texel, light_r, light_g, light_b);
 						zb_row[idx] = wiz;
 						++depth_writes;
 					}
@@ -562,9 +613,8 @@ static void draw_face_spans(const screen_vertex_t *verts, const int n, const sw_
 						ty = ((int)floorf(fv) % image->height + image->height) % image->height;
 					}
 					const uint32_t texel = image->pixels[ty * image->width + tx];
-					int lxidx = ClampI(ils >> 20, 0, light_width - 1);
-					int ltidx = ClampI(ilt >> 20, 0, light_height - 1);
-					const uint32_t lit = span_modulate(texel, light_cache[ltidx * light_width + lxidx]);
+					const uint32_t lit = span_modulate(texel,
+						light_cache[(int)((unsigned)ilt >> 20) * light_stride + (int)((unsigned)ils >> 20)]);
 					int sa = ((lit >> 24) * alpha_fixed) >> 8;
 					if (sa > 255) sa = 255;
 					if (sa != 0 && wiz >= zb_row[idx])
