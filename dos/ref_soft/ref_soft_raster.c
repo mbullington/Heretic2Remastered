@@ -190,6 +190,10 @@ static qboolean screen_vertex_valid(const screen_vertex_t vertex)
 // inverse-z depth convention. Replaces per-pixel barycentric division.
 
 #define SW_SPAN_STEP 16
+// World faces: 32px subdivision quantum halves the FDIV+FIST-heavy block
+// prologue count (~11.4K/frame); perspective linearization drift stays inside
+// the documented 2-LSB budget (gate-verified).
+#define SW_WORLD_SPAN_STEP 32
 #define SW_LIGHT_CACHE_MAX 64
 // Dense build scratch (lw x lh) and the band-packed working buffer (lw+2 x lh+2).
 static uint32_t sw_face_light_dense[SW_LIGHT_CACHE_MAX * SW_LIGHT_CACHE_MAX];
@@ -533,7 +537,7 @@ static void draw_face_spans(const screen_vertex_t *verts, const int n, const sw_
 		while (remaining > 0)
 		{
 			++sw_stats.bench_world_blocks;
-			const int block = (x & (SW_SPAN_STEP - 1)) ? min(remaining, SW_SPAN_STEP - (x & (SW_SPAN_STEP - 1))) : min(remaining, SW_SPAN_STEP);
+			const int block = (x & (SW_WORLD_SPAN_STEP - 1)) ? min(remaining, SW_WORLD_SPAN_STEP - (x & (SW_WORLD_SPAN_STEP - 1))) : min(remaining, SW_WORLD_SPAN_STEP);
 			if (w <= 0.0f)
 				return;
 			const float w_end = w + gradient_w_x * block;
