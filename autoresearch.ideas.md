@@ -33,11 +33,7 @@
 ## Present (present_us ~23 ms)
 - Had a custom RGBA→RGB24 repack (bitfield + 32-bit stores) that measured
   SLOWER than SDL_ConvertPixels (28.7 vs 22.7 ms) — SDL's converter is
-  already hot. Instead: eliminate the conversion — make the INTERNAL
-  framebuffer RGB24 directly?? Huge ripple (every raster path writes 32-bit)
-  but kills the entire convert+extra buffer traffic. Or present 60Hz→30Hz
-  (skip every other SW_Present; visual change! needs care — benchmark
-  artifacts would differ; classify as workload change, not allowed).
+  already hot.
 
 ## Clear (clear_us ~6 ms)
 - Sky already fills the whole viewport; skip the color clear when
