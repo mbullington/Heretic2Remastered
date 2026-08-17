@@ -1826,7 +1826,15 @@ static void span_raster_flex_triangle(const flex_screen_vertex_t a, const flex_s
 		return;
 	if ((a.x < 0.0f && b.x < 0.0f && c.x < 0.0f) || (a.x >= (float)sw_width && b.x >= (float)sw_width && c.x >= (float)sw_width) ||
 		(a.y < 0.0f && b.y < 0.0f && c.y < 0.0f) || (a.y >= (float)sw_height && b.y >= (float)sw_height && c.y >= (float)sw_height))
+	{
+		++sw_stats.bench_flex_tris_bbox;
 		return;
+	}
+	if (a.inverse_z <= 0.0f && b.inverse_z <= 0.0f && c.inverse_z <= 0.0f)
+	{
+		++sw_stats.bench_flex_tris_behind;
+		return;
+	}
 	const float x10 = b.x - a.x, y10 = b.y - a.y;
 	const float x20 = c.x - a.x, y20 = c.y - a.y;
 	const float denom = x10 * y20 - x20 * y10;
@@ -2181,6 +2189,7 @@ void SW_RasterFlexEntity(const entity_t *entity, const sw_model_t *model, const 
 	const float cy = cosf(entity->angles[1]);
 	const float sy = sinf(entity->angles[1]);
 	flex_proj_cache_reset();
+	const uclock_t swaprefs_start = uclock();
 	qboolean use_swap = flex->num_clusters > 0 && entity->swapFrame != NO_SWAP_FRAME &&
 		entity->swapFrame >= 0 && entity->swapFrame < flex->header.num_frames;
 	Placement_t swap_joints[SW_MAX_FLEX_JOINTS];
@@ -2279,6 +2288,8 @@ void SW_RasterFlexEntity(const entity_t *entity, const sw_model_t *model, const 
 		}
 		++sw_stats.reference_updates;
 	}
+	const uclock_t tris_start = uclock();
+	sw_stats.bench_us_flex_swaprefs += (unsigned long long)(tris_start - swaprefs_start);
 	float base_light[3];
 	flex_light(entity, base_light);
 	sw_image_t *base_skin = entity->skin;
@@ -2347,6 +2358,7 @@ void SW_RasterFlexEntity(const entity_t *entity, const sw_model_t *model, const 
 				flex_proj_cache_t projected[3];
 				int vertex_indices[3];
 				qboolean cache_ok = true;
+				const uclock_t tri_iter = uclock();
 				for (int corner = 0; corner < 3; ++corner)
 				{
 					const int command = command_start + command_vertices[corner] * 3;
@@ -2367,8 +2379,11 @@ void SW_RasterFlexEntity(const entity_t *entity, const sw_model_t *model, const 
 					colors[corner][3] = node_color[3];
 				}
 				sw_bench_tri_category = 1;
+				++sw_stats.bench_flex_tris;
 				if (cache_ok && skin != NULL && skin->pixels != NULL)
 				{
+					sw_stats.bench_us_flex_setup += (unsigned long long)(uclock() - tri_iter);
+					const uclock_t dispatch_start = uclock();
 					flex_screen_vertex_t corners[3];
 					for (int corner = 0; corner < 3; ++corner)
 					{
@@ -2385,9 +2400,12 @@ void SW_RasterFlexEntity(const entity_t *entity, const sw_model_t *model, const 
 					}
 					dispatch_flex_screen_triangle(corners[0], corners[1], corners[2], skin,
 						opaque_depth && !skin->has_alpha, additive);
+					++sw_stats.bench_flex_tris_fast;
+					sw_stats.bench_us_flex_dispatch += (unsigned long long)(uclock() - dispatch_start);
 				}
 				else
 				{
+					++sw_stats.bench_flex_tris_clip;
 					for (int corner = 0; corner < 3; ++corner)
 					{
 						const int vertex = vertex_indices[corner];
@@ -2401,6 +2419,7 @@ void SW_RasterFlexEntity(const entity_t *entity, const sw_model_t *model, const 
 		}
 	}
 	++sw_stats.flex_entities;
+	sw_stats.bench_us_flex_tris += (unsigned long long)(uclock() - tris_start);
 	if (shadow_pass) ++sw_stats.flex_shadow_entities;
 }
 
@@ -2455,8 +2474,11 @@ void SW_RasterEntities(const refdef_t *fd)
 			}
 			else if ((model->kind == SW_MODEL_INLINE || model->kind == SW_MODEL_BSP) && model->bsp != NULL)
 			{
+				const uclock_t tmark = uclock();
 				for (int face = 0; face < model->num_faces; ++face)
 					draw_face(model->bsp, model->first_face + face, entity->origin, entity->frame);
+				sw_stats.bench_us_ent_brush += (unsigned long long)(uclock() - tmark);
+				sw_stats.bench_brush_faces += (unsigned)model->num_faces;
 				++sw_stats.brush_entities;
 			}
 		}

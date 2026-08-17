@@ -821,8 +821,12 @@ static void log_bench_summary(void)
 		"bench-world-walk-waste-pct=%u\nbench-flex-walk-waste-pct=%u\n"
 		"bench-flex-vertex-lerps=%llu\nbench-avg-us-flex-prologue=%llu\n"
 		"bench-avg-us-ent-flex=%llu\nbench-avg-us-ent-sprite=%llu\n"
-		"bench-model-flex=%u\nbench-model-sprite=%u\n",
-		stats->bench_frames, (unsigned long long)uclock(),
+		"bench-model-flex=%u\nbench-model-sprite=%u\n"
+		"bench-avg-us-flex-swaprefs=%llu\nbench-avg-us-flex-tris=%llu\n"
+		"bench-flex-tris=%u\nbench-flex-tris-fast=%u\nbench-flex-tris-clip=%u\n"
+		"bench-avg-us-flex-setup=%llu\nbench-avg-us-flex-dispatch=%llu\n"
+		"bench-flex-tris-bbox=%u\nbench-flex-tris-behind=%u\n"
+		"bench-avg-us-ent-brush=%llu\nbench-brush-faces=%u\n",		stats->bench_frames, (unsigned long long)uclock(),
 		stats->bench_us_clear, stats->bench_us_sky, stats->bench_us_world,
 		stats->bench_us_entities, stats->bench_us_particles, stats->bench_us_lights,
 		stats->bench_us_blend, stats->bench_us_present, stats->bench_us_frame,
@@ -839,7 +843,12 @@ static void log_bench_summary(void)
 		walked_flex > 0 ? (walked_flex - inside_flex) * 100u / walked_flex : 0,
 		stats->bench_flex_vertex_lerps, stats->bench_us_flex_prologue / frames,
 		stats->bench_us_ent_flex / frames, stats->bench_us_ent_sprite / frames,
-		stats->bench_model_flex, stats->bench_model_sprite);
+		stats->bench_model_flex, stats->bench_model_sprite,
+		stats->bench_us_flex_swaprefs / frames, stats->bench_us_flex_tris / frames,
+		stats->bench_flex_tris, stats->bench_flex_tris_fast, stats->bench_flex_tris_clip,
+		stats->bench_us_flex_setup / frames, stats->bench_us_flex_dispatch / frames,
+		stats->bench_flex_tris_bbox, stats->bench_flex_tris_behind,
+		stats->bench_us_ent_brush / frames, stats->bench_brush_faces);
 }
 
 static void begin_audio_proof(const qboolean realdata)

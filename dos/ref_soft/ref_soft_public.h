@@ -54,8 +54,19 @@ typedef struct h2dos_soft_stats_s {
 	unsigned bench_world_lightbuild_px; // face-light miniature pixels rebuilt
 	unsigned long long bench_us_world_setup;  // draw_face work before span emission
 	unsigned long long bench_us_world_spans;  // span rasterization (draw_face_spans)
+	unsigned long long bench_us_flex_swaprefs; // flex: swap-frame + reference bones
+	unsigned long long bench_us_flex_tris;     // flex: triangle dispatch loop
+	unsigned long long bench_us_flex_setup;    // flex: per-tri corner/proj setup
+	unsigned long long bench_us_flex_dispatch; // flex: dispatch_flex_screen_triangle
+	unsigned bench_flex_tris;                  // flex triangles dispatched
+	unsigned bench_flex_tris_fast;             //   ... via dispatch (screen-space)
+	unsigned bench_flex_tris_clip;             //   ... via draw_flex_triangle (clip path)
+	unsigned bench_flex_tris_bbox;             // dispatch culled: offscreen bbox
+	unsigned bench_flex_tris_behind;           // dispatch culled: all corners w<=0
 	unsigned long long bench_us_ent_flex;   // entity pass: flex models
 	unsigned long long bench_us_ent_sprite; // entity pass: sprites
+	unsigned long long bench_us_ent_brush;  // entity pass: inline/bsp model faces
+	unsigned bench_brush_faces;             // brush/inline faces walked
 	unsigned bench_model_flex;              // flex models drawn (walked, not culled-early)
 	unsigned bench_model_sprite;            // sprite models drawn
 	unsigned bench_walked_flex;
