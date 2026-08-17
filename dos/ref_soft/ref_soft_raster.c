@@ -288,9 +288,12 @@ static void band_pack_light(const uint32_t *dense, const int lw, const int lh, u
 static inline uint32_t span_modulate3(const uint32_t texel, const unsigned lr, const unsigned lg,
 	const unsigned lb)
 {
-	uint32_t r = (((texel) & 0xffu) * lr + 128u) >> 8;
-	uint32_t g = ((((texel) >> 8) & 0xffu) * lg + 128u) >> 8;
-	uint32_t b = ((((texel) >> 16) & 0xffu) * lb + 128u) >> 8;
+	// Truncating shift instead of +128 rounding: the <1-LSB difference per
+	// channel sits inside the engine's documented 2-LSB fixed-point budget, and
+	// three adds come out of the hot world inner loop.
+	uint32_t r = (((texel) & 0xffu) * lr) >> 8;
+	uint32_t g = ((((texel) >> 8) & 0xffu) * lg) >> 8;
+	uint32_t b = ((((texel) >> 16) & 0xffu) * lb) >> 8;
 	if (r > 255u) r = 255u;
 	if (g > 255u) g = 255u;
 	if (b > 255u) b = 255u;
