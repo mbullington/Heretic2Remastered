@@ -762,6 +762,24 @@ static void draw_face(const sw_bsp_t *bsp, const int face_index, const vec3_t or
 		return;
 	++sw_stats.bench_world_faces;
 	const dface_t *face = &bsp->faces[face_index];
+	{
+		// GL-equivalent single-sided backface cull (same test as the brush loop):
+		// viewer position in entity-local space is vieworg - origin.
+		const dplane_t *plane = &bsp->planes[little_ushort(face->planenum)];
+		float nx = LittleFloat(plane->normal[0]);
+		float ny = LittleFloat(plane->normal[1]);
+		float nz = LittleFloat(plane->normal[2]);
+		float pdist = LittleFloat(plane->dist);
+		if (LittleShort(face->side))
+		{
+			nx = -nx; ny = -ny; nz = -nz; pdist = -pdist;
+		}
+		const float pos = nx * (sw_refdef.vieworg[0] - origin[0]) +
+			ny * (sw_refdef.vieworg[1] - origin[1]) +
+			nz * (sw_refdef.vieworg[2] - origin[2]) - pdist;
+		if (pos < -0.01f)
+			return;
+	}
 	const int first_edge = LittleLong(face->firstedge);
 	const int edge_count = LittleShort(face->numedges);
 	const int texinfo_index = LittleShort(face->texinfo);
