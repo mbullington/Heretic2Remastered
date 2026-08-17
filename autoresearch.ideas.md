@@ -151,3 +151,69 @@ Big local multiplier but smaller absolute pool (est -8..12ms).
 ### Rejected by math (do NOT propose): MMX (DOSBox flat parity; P90 has no MMX), damage rects
 (view moves every frame), resolution tricks (output-exact gates), surface cache (falsified #23).
 STACK OUTCOME ESTIMATE: B1+B3 without sign-off: total ~100-115ms. B1+B2+B3 with sign-off: ~45-60ms -> PASSES the 85ms / 30fps stop condition. (~2.6-3.4x from 155ms; 10x not reachable at 320x240 with per-px color work -- state honestly.)
+
+## B2-REVISED (exa dig #2): 565 not 8-bit. Green light rationale informed by sources:
+- Sanglard confirms Q2 sw used max(R,G,B) 6-bit shade => monochrome-shading cheat.
+- Allegro exlights + hicolor era practice => the TRUE pair to the palette trick:
+  **RGB565 16-bit internal pipeline**: colored light KEPT (no monochrome cheat!), texels
+  16-bit, modulation via three precomputed channel-scale LUTs (r:32, g:64, b:32 entries ->
+  lut[(texel&mask)+offset]) = ~7-8 ops/px vs today's ~12-15 in modulate3; framebuffer+sky
+  cache+width-banked bytes all HALVE; present blit halves (307KB->153KB; VESA 16-bit mode
+  320x240 = LFB 0x150-class instead of 32-bit). Bilinear/perspective spans otherwise identical.
+  Fidelity: RGB565 = era-authentic hicolor (Descent II / Q2 had 15-bit paths); no monochrome
+  fake => arguably CLOSER to GL desktop than the 8-bit option. Gate baselines regenerate once.
+  Optional hi-fidelity verify on desktop.
+- 8-bit palette tier remains on the table as B2b AFTER 565 if more needed (Q2 colormap.pcx
+  mechanism: 64-gradient rows + 16x16 blend squares; lut[shade<<8|texel]).
+
+## FAST-RSQRT/SH audit (user asked "like the quake sqrt function / spherical harmonics"):
+- 0x5f3759df fast-invers sqrt: our divides/sqrts already LUT'd (SW_INV_WIDTH) or amortized
+  per-block/entity => total exploitable surface ~0.2ms. NOT a banger. reject with math.
+- Spherical harmonics: SH = runtime probe irradiance compression; H2 lights are BAKED lightmaps
+  sampled in texture space - nothing for SH to compress. The shade-space equivalent (64-level
+  colormap rows) IS the H2-correct analog and is captured by B2/B2b. reject with mechanism.
+
+## EXECUTION ORDER (locked): B1 edge-list span-sort world (no sign-off needed) -> B3 flex/
+entity gradient fixedpoint batching -> B2(565) with one-time gate refresh, then B2b optional.
+
+## B1 IMPLEMENTATION STAGES (context-safe checkpoints):
+- B1.1 SW_RasterWorld: replace leaf-list iteration (visible_faces[] flat scan) with recursive
+  node walk: side=PlaneSide(vieworg,node->plane); walk(child[side]) FIRST (near), then node's
+  own faces, then child[side^1]. Keep PVS cluster marking EXACTLY as-is (mark leaves first from
+  current code, then recurse). Still fully z-buffered; gates must be 0-diff (proves painter
+  ordering correctness for bench content). Site: SW_RasterWorld ~line 1199; draw_face entry 759.
+- B1.2 opaque world spans: drop per-px `ikey >= zb_row` test AND zb store (alpha/warp unaffected);
+  spans drawn front-to-back paint once. World px loop loses 3-4 ops.
+- B1.3 edge-list exact coverage + sky from coverage-sentinel; zb writes replaced by span-RUN zb
+  fill for entity gating; sky walks only background px.
+- Flex entities keep own zb path against world zb (unchanged semantics).
+- Counters: keep walked_px/inside_px; post-B1.2 expect walked==inside world px = unique coverage
+  approx (overdraw -> ~1.0), sky walked px collapses to hole count.
+
+## B3-forensics (measured 2026-08-17, branch dc863377, bench BENCH1)
+
+Flex entity pipeline decomposition via ablation probes (direct bench runs, evidence-verified):
+- bench-avg-us-flex-tris = per-frame sum. Baseline 20,278µs.
+- Probe A (early-return span_raster_flex_triangle): 17,309µs → ALL flex span raster incl gradients/rows/px = ~3.0ms only.
+- Probe B (skip colors/uv/corners+dispatch): 16,744µs → colors/uv/corner-build ≈ 3.5ms.
+- Probe C (B + proj lookups stubbed): 16,744 identical (dead-store elimination made C≈B) → cache-hit lookups ~free; misses 244/frame tiny.
+- Remainder ~16.7ms = tri-loop SKELETON+segment fixed costs: 325 tri-iters + 166 glcmd blocks + 8 mesh iters per frame → ~51µs per tri-iter vs ~300-450 static instrs (x87-dense: flds/fmul/fxch/faddp/fmuls/fmulp dominated, plus many fnstsw) → effective factor ~3 vs ALU-flat parity. Likely x87 stall factor in DOSBox (unverified; parity probes were ALU-only).
+- Struct sizes: SW_RasterFlexEntity = 1,326 static instrs; biggest loop ~895 bytes x87-heavy.
+- Conclusion: flex-tiny-tri pig = per-iteration FPU plumbing, NOT span engine, NOT gradients (3ms), NOT cache. B3 rewrite shape: batch per glcmd-strip outer-product: precompute per-strip corner tables so tri loop degenerates to index arithmetic; or precompute per-vertex s_over_z etc ONCE (per entity) instead of per tri (colors/intensity per vertex current per tri!). colors[][][] rebuild per TRI is suspect #1 (3 corners × 4 channels × conditionals per tri vs per-vertex-once).
+
+## B-series swing economics (all tree @ dc863377 = 155,622µs)
+- B3 skeleton-diet target: 20.3 → ~9ms = −11ms (batch + hoist per-vertex tables, fewer x87 ops in loop)
+- B2 RGB565: present 11.5→~5.5ms (153KB stores) + world/entity modulate diet −10..20ms est
+- B1.3 full edge-list: world 97→45-55ms IF zero-overdraw holds (must beat +2.3ms walk overhead; compare-drop alone falsified: +4.1ms regression logged as #31)
+- Stop line 85,000 reachable iff all three land: 155.6 − 11 − ~25 − ~45 ≈ 74µs
+
+## Open schism discovered
+- bench-avg-us-flex-tris denominator = frames ✓ verified (h2dos_main.c:847).
+- flex-setup/flex-dispatch timers exist but UNWIRED (0 values) — wire when B3 starts.
+
+## Probe D (2026-08-17, reverted): bbox reject-chain removal
+- Segment unchanged (20,553 vs 20,278 baseline): the 5-clause float trivial-reject is free.
+- x87=3x global hypothesis REJECTED: world path does ~46K span-setups × ~40 float ops per frame, 97ms total — x87 cannot be uniformly 3x or world alone breaks budget.
+- REMAINING unexplained: ~3.4x localized phantom in flex tri-loop (~1,500 dynamic-instr-equiv/iter vs ~300-450 static). Localized suspects: fnstsw×12/body chains, x87-serialized dependencies, x87fxch thrash, -O3 spills. NOT loop count, NOT rejects, NOT lookups, NOT colors.
+- NEXT-BUILD (B3): convert tri loop to (a) per-strip hoisted uv+color+proj tables (entity_seq-keyed color cache), (b) float-free control flow in loop body (no chained FPU compares), (c) pointer-walk instead of command_vertices[3] indexing. Also wire flex-setup/flex-dispatch timers (currently 0/dead) to finally bracket the phantom.
+- Session state: tree @ dc863377, all probes reverted, plan_tracker tasks current.
