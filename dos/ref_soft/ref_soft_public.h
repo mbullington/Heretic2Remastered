@@ -48,6 +48,9 @@ typedef struct h2dos_soft_stats_s {
 	unsigned bench_pixels_sprite;  // pixels written by sprite triangles
 	unsigned bench_pixels_other;   // walkers inside-triangle count not attributed elsewhere
 	unsigned bench_walked_world;   // bounding-box pixels visited (waste accounting)
+	unsigned bench_world_faces;    // draw_face() invocations
+	unsigned bench_world_spans;    // rasterized rows
+	unsigned bench_world_blocks;   // 16-px subdivided blocks
 	unsigned bench_walked_flex;
 	unsigned bench_walked_sprite;
 	unsigned long long bench_flex_vertex_lerps; // vertex posing work units in the entity pass

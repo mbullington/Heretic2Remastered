@@ -814,6 +814,7 @@ static void log_bench_summary(void)
 		"bench-avg-us-particles=%llu\nbench-avg-us-lights=%llu\n"
 		"bench-avg-us-blend=%llu\nbench-avg-us-present=%llu\n"
 		"bench-walked-world-px=%u\nbench-inside-world-px=%u\n"
+		"bench-world-faces=%u\nbench-world-spans=%u\nbench-world-blocks=%u\n"
 		"bench-walked-flex-px=%u\nbench-inside-flex-px=%u\n"
 		"bench-world-walk-waste-pct=%u\nbench-flex-walk-waste-pct=%u\n"
 		"bench-flex-vertex-lerps=%llu\nbench-avg-us-flex-prologue=%llu\n",
@@ -826,7 +827,8 @@ static void log_bench_summary(void)
 		stats->bench_us_entities / frames, stats->bench_us_particles / frames,
 		stats->bench_us_lights / frames, stats->bench_us_blend / frames,
 		stats->bench_us_present / frames,
-		walked_world, inside_world, walked_flex, inside_flex,
+		walked_world, inside_world, stats->bench_world_faces,
+		stats->bench_world_spans, stats->bench_world_blocks, walked_flex, inside_flex,
 		walked_world > 0 ? (walked_world - inside_world) * 100u / walked_world : 0,
 		walked_flex > 0 ? (walked_flex - inside_flex) * 100u / walked_flex : 0,
 		stats->bench_flex_vertex_lerps, stats->bench_us_flex_prologue / frames);

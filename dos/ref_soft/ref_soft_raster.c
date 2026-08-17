@@ -483,6 +483,7 @@ static void draw_face_spans(const screen_vertex_t *verts, const int n, const sw_
 	float left_x = 0.0f, right_x = 0.0f, left_slope = 0.0f, right_slope = 0.0f;
 	for (int y = scan_first; y <= scan_last; ++y)
 	{
+		++sw_stats.bench_world_spans;
 		const float y_center = y + 0.5f - v0->y;
 		const int old_left_prev = left_prev, old_right_prev = right_prev;
 		while (left_cur != bottom && verts[left_cur].y <= (y + 0.5f))
@@ -531,6 +532,7 @@ static void draw_face_spans(const screen_vertex_t *verts, const int n, const sw_
 		int remaining = xb - xa + 1;
 		while (remaining > 0)
 		{
+			++sw_stats.bench_world_blocks;
 			const int block = (x & (SW_SPAN_STEP - 1)) ? min(remaining, SW_SPAN_STEP - (x & (SW_SPAN_STEP - 1))) : min(remaining, SW_SPAN_STEP);
 			if (w <= 0.0f)
 				return;
@@ -742,6 +744,7 @@ static void draw_face(const sw_bsp_t *bsp, const int face_index, const vec3_t or
 {
 	if (face_index < 0 || face_index >= bsp->num_faces)
 		return;
+	++sw_stats.bench_world_faces;
 	const dface_t *face = &bsp->faces[face_index];
 	const int first_edge = LittleLong(face->firstedge);
 	const int edge_count = LittleShort(face->numedges);
