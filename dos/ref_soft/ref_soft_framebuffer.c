@@ -17,7 +17,9 @@ static SDL_Surface *sw_surface;
 
 uint32_t SW_RGBA(const byte r, const byte g, const byte b, const byte a)
 {
-	return (uint32_t)r | ((uint32_t)g << 8) | ((uint32_t)b << 16) | ((uint32_t)a << 24);
+	// XRGB8888 in-memory order (B,G,R,X little-endian): matches the window
+	// surface pixel format so presenting collapses to a straight copy.
+	return (uint32_t)b | ((uint32_t)g << 8) | ((uint32_t)r << 16) | ((uint32_t)a << 24);
 }
 
 qboolean SW_FrameBufferInit(void *window)
@@ -103,9 +105,9 @@ void SW_PutPixel(const int x, const int y, const float depth, const uint32_t col
 		const uint32_t destination = sw_color[index];
 		const int source_weight = alpha;
 		const int destination_weight = additive ? 255 : 255 - alpha;
-		const byte r = (byte)min(255, (channel(color, 0) * source_weight + channel(destination, 0) * destination_weight) / 255);
+		const byte r = (byte)min(255, (channel(color, 16) * source_weight + channel(destination, 16) * destination_weight) / 255);
 		const byte g = (byte)min(255, (channel(color, 8) * source_weight + channel(destination, 8) * destination_weight) / 255);
-		const byte b = (byte)min(255, (channel(color, 16) * source_weight + channel(destination, 16) * destination_weight) / 255);
+		const byte b = (byte)min(255, (channel(color, 0) * source_weight + channel(destination, 0) * destination_weight) / 255);
 		sw_color[index] = SW_RGBA(r, g, b, 255);
 	}
 
@@ -140,7 +142,7 @@ void SW_Present(void)
 		return;
 	}
 	const bool converted = SDL_ConvertPixels(sw_width, sw_height,
-		SDL_PIXELFORMAT_RGBA32, sw_color, sw_width * (int)sizeof(*sw_color),
+		SDL_PIXELFORMAT_XRGB8888, sw_color, sw_width * (int)sizeof(*sw_color),
 		sw_surface->format, sw_surface->pixels, sw_surface->pitch);
 	SDL_UnlockSurface(sw_surface);
 	if (!converted || !SDL_UpdateWindowSurface(sw_window))
@@ -175,7 +177,7 @@ qboolean SW_SavePPM(const char *path)
 		for (int x = 0; x < sw_width; ++x)
 		{
 			const uint32_t pixel = sw_color[(size_t)y * (size_t)sw_width + (size_t)x];
-			const byte rgb[3] = { channel(pixel, 0), channel(pixel, 8), channel(pixel, 16) };
+			const byte rgb[3] = { channel(pixel, 16), channel(pixel, 8), channel(pixel, 0) };
 			if (fwrite(rgb, 1, sizeof(rgb), file) != sizeof(rgb))
 			{
 				fclose(file);

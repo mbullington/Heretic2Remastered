@@ -136,9 +136,9 @@ static byte color_channel(const uint32_t color, const int shift)
 static uint32_t modulate(const uint32_t color, const float red, const float green, const float blue, const float alpha)
 {
 	return SW_RGBA(
-		(byte)ClampI((int)(color_channel(color, 0) * red), 0, 255),
+		(byte)ClampI((int)(color_channel(color, 16) * red), 0, 255),
 		(byte)ClampI((int)(color_channel(color, 8) * green), 0, 255),
-		(byte)ClampI((int)(color_channel(color, 16) * blue), 0, 255),
+		(byte)ClampI((int)(color_channel(color, 0) * blue), 0, 255),
 		(byte)ClampI((int)(color_channel(color, 24) * alpha), 0, 255));
 }
 
@@ -291,13 +291,13 @@ static inline uint32_t span_modulate3(const uint32_t texel, const unsigned lr, c
 	// Truncating shift instead of +128 rounding: the <1-LSB difference per
 	// channel sits inside the engine's documented 2-LSB fixed-point budget, and
 	// three adds come out of the hot world inner loop.
-	uint32_t r = (((texel) & 0xffu) * lr) >> 8;
+	uint32_t r = ((((texel) >> 16) & 0xffu) * lr) >> 8;
 	uint32_t g = ((((texel) >> 8) & 0xffu) * lg) >> 8;
-	uint32_t b = ((((texel) >> 16) & 0xffu) * lb) >> 8;
+	uint32_t b = (((texel) & 0xffu) * lb) >> 8;
 	if (r > 255u) r = 255u;
 	if (g > 255u) g = 255u;
 	if (b > 255u) b = 255u;
-	return r | (g << 8) | (b << 16) | 0xff000000u;
+	return b | (g << 8) | (r << 16) | 0xff000000u;
 }
 
 static qboolean build_face_light(const sw_bsp_t *bsp, const dface_t *face, const int light_width,
@@ -366,13 +366,13 @@ static qboolean build_face_light(const sw_bsp_t *bsp, const dface_t *face, const
 
 static inline uint32_t span_modulate(const uint32_t texel, const uint32_t light_packed)
 {
-	uint32_t r = (((texel & 0xffu) * ((light_packed >> 20) & 1023u)) + 128u) >> 8;
+	uint32_t r = ((((texel >> 16) & 0xffu) * ((light_packed >> 20) & 1023u)) + 128u) >> 8;
 	uint32_t g = ((((texel >> 8) & 0xffu) * ((light_packed >> 10) & 1023u)) + 128u) >> 8;
-	uint32_t b = ((((texel >> 16) & 0xffu) * (light_packed & 1023u)) + 128u) >> 8;
+	uint32_t b = (((texel & 0xffu) * (light_packed & 1023u)) + 128u) >> 8;
 	if (r > 255u) r = 255u;
 	if (g > 255u) g = 255u;
 	if (b > 255u) b = 255u;
-	return r | (g << 8) | (b << 16) | 0xff000000u;
+	return b | (g << 8) | (r << 16) | 0xff000000u;
 }
 
 static void draw_face_spans(const screen_vertex_t *verts, const int n, const sw_image_t *image,
@@ -638,10 +638,10 @@ static void draw_face_spans(const screen_vertex_t *verts, const int n, const sw_
 					{
 						const uint32_t dst = fb_row[idx];
 						const int dw = 255 - sa;
-						const uint32_t r = min(255u, ((lit & 0xffu) * sa + (dst & 0xffu) * dw) / 255u);
+						const uint32_t r = min(255u, (((lit >> 16) & 0xffu) * sa + ((dst >> 16) & 0xffu) * dw) / 255u);
 						const uint32_t g = min(255u, (((lit >> 8) & 0xffu) * sa + ((dst >> 8) & 0xffu) * dw) / 255u);
-						const uint32_t bb = min(255u, (((lit >> 16) & 0xffu) * sa + ((dst >> 16) & 0xffu) * dw) / 255u);
-						fb_row[idx] = r | (g << 8) | (bb << 16) | 0xff000000u;
+						const uint32_t bb = min(255u, ((lit & 0xffu) * sa + (dst & 0xffu) * dw) / 255u);
+						fb_row[idx] = bb | (g << 8) | (r << 16) | 0xff000000u;
 						if (sa == 255 && alpha >= 1.0f)
 						{
 							zb_row[idx] = ikey;
@@ -1997,9 +1997,9 @@ static void span_raster_flex_triangle(const flex_screen_vertex_t a, const flex_s
 					const int cg = min(512, max(0, ig >> 9));
 					const int cb = min(512, max(0, ib >> 9));
 					const int ca = min(512, max(0, ia >> 9));
-					const uint32_t mr = ((texel & 0xffu) * cr + 128u) >> 8;
+					const uint32_t mr = (((texel >> 16) & 0xffu) * cr + 128u) >> 8;
 					const uint32_t mg = (((texel >> 8) & 0xffu) * cg + 128u) >> 8;
-					const uint32_t mb = (((texel >> 16) & 0xffu) * cb + 128u) >> 8;
+					const uint32_t mb = ((texel & 0xffu) * cb + 128u) >> 8;
 					const int salpha = (int)min(255u, (((texel >> 24) & 0xffu) * ca + 128u) >> 8);
 					if (salpha == 0)
 						goto advance;
@@ -2007,9 +2007,9 @@ static void span_raster_flex_triangle(const flex_screen_vertex_t a, const flex_s
 					{
 						const uint32_t dst = fb_row[idx];
 						fb_row[idx] = SW_RGBA(
-							(byte)min(255u, (min(255u, mr) * salpha + (dst & 0xffu) * 255u) / 255u),
+							(byte)min(255u, (min(255u, mr) * salpha + ((dst >> 16) & 0xffu) * 255u) / 255u),
 							(byte)min(255u, (min(255u, mg) * salpha + ((dst >> 8) & 0xffu) * 255u) / 255u),
-							(byte)min(255u, (min(255u, mb) * salpha + ((dst >> 16) & 0xffu) * 255u) / 255u), 255);
+							(byte)min(255u, (min(255u, mb) * salpha + (dst & 0xffu) * 255u) / 255u), 255);
 					}
 					else if (salpha == 255)
 					{
@@ -2025,9 +2025,9 @@ static void span_raster_flex_triangle(const flex_screen_vertex_t a, const flex_s
 						const uint32_t dst = fb_row[idx];
 						const int dw = 255 - salpha;
 						fb_row[idx] = SW_RGBA(
-							(byte)min(255u, (min(255u, mr) * salpha + (dst & 0xffu) * dw) / 255u),
+							(byte)min(255u, (min(255u, mr) * salpha + ((dst >> 16) & 0xffu) * dw) / 255u),
 							(byte)min(255u, (min(255u, mg) * salpha + ((dst >> 8) & 0xffu) * dw) / 255u),
-							(byte)min(255u, (min(255u, mb) * salpha + ((dst >> 16) & 0xffu) * dw) / 255u), 255);
+							(byte)min(255u, (min(255u, mb) * salpha + (dst & 0xffu) * dw) / 255u), 255);
 					}
 				}
 advance:
