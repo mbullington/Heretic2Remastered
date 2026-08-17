@@ -7,6 +7,8 @@ cd "$(dirname "$0")"
 
 NIXPKGS="github:NixOS/nixpkgs/f2b17eb1b90f6a359082035b4538d4c63017aec3"
 JOBS="${CMAKE_BUILD_PARALLEL_LEVEL:-8}"
+# Only SILVER participates in the benchmark; building H2DOS doubles the
+# 376-step gamex86 rebuild after .ninja_deps loss and wastes ~10 min/run.
 APP_BUILD=".dos-build/heretic2-dos"
 
 TIMEOUT_CMD="$(command -v gtimeout || command -v timeout || true)"
@@ -18,7 +20,7 @@ build_dos() {
     CMAKE_BUILD_PARALLEL_LEVEL="$JOBS" bash scripts/build-dos-bootstrap.sh > /tmp/h2-ar-build.log 2>&1
   else
     nix shell "$NIXPKGS#djgpp_i586" "$NIXPKGS#cmake" "$NIXPKGS#ninja" -c \
-      cmake --build "$APP_BUILD" --parallel "$JOBS" --target H2DOS SILVER \
+      cmake --build "$APP_BUILD" --parallel "$JOBS" --target SILVER \
       > /tmp/h2-ar-build.log 2>&1
   fi
 }
