@@ -1,7 +1,12 @@
 # Autoresearch: minimize DOS soft-renderer frame time
 
 ## Objective and Workload
-Minimize `frame_us` (bench-avg-us-frame) of the Heretic II DOS software
+Minimize `total_us` = `bench-avg-us-frame` + `bench-avg-us-present` +
+`bench-avg-us-clear` of the Heretic II DOS software
+(render+present per frame; bench times present/clear outside the frame window —
+intent was always render+present; scope corrected 2026-08-17 when the
+framebuffer-layout flip exposed the seam by moving −11.7ms of memcpy through it).
+Legacy series: pre-fix experiments logged frame_us only; old totals = frame+present+clear.
 renderer measured by the fixed benchmark: DOSBox Staging headless,
 `cycles=fixed 120000` (≈ Pentium-90-class), real production PAKs
 (gameplay UNVERIFIED; renderer benchmark only). The workload renders 64
@@ -9,7 +14,8 @@ fixed frames of a flex-model-heavy tutorial scene (99 models, ~5.2K tris,
 rotating sky) via `.dos-data/` real-data mode.
 
 ## Metric Contract
-- **Primary**: frame_us (µs, lower is better) — per-frame render+present time.
+- **Primary**: total_us (µs, lower is better) — per-frame render+present+clear time.
+- **Also tracked**: frame_us (legacy primary; bench-avg-us-frame alone).
 - **Secondary guardrails**: benchmark must report `status=PASS`; RENDER.PPM
   and EFFECTS.PPM vs stored baselines must have ≤ 0.06% of pixels differing
   by > 2 LSB (only coincident-depth z-fight tie flips are allowed, and they
@@ -59,5 +65,5 @@ had been comparing a stale RENDER.PPM.)
 - C style: this file compiles as C99 under DJGPP gcc 12 with -Wall -Werror
 
 ## Stop Conditions
-- frame_us ≤ 60000 (≈ 4× from the 223 ms contract baseline)
+- total_us ≤ 85,000 (≈ frame_us 60,000 + present ~19,000 + clear ~6,000)
 - 3 consecutive discards with no credible mechanism left, or user's call
