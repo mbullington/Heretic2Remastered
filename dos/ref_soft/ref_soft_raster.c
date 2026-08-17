@@ -1053,8 +1053,14 @@ void SW_RasterSky(const refdef_t *fd)
 	if (!rotating && sky_cache != NULL && sky_cache_matches(fd, rotation_angle))
 	{
 		for (int y = minimum_y; y < maximum_y; ++y)
-			memcpy(sw_color + y * sw_width + minimum_x, sky_cache + y * sw_width + minimum_x,
-				(size_t)(maximum_x - minimum_x) * sizeof(*sw_color));
+		{
+			const uint32_t *zb_row = sw_depth + (size_t)y * sw_width;
+			const uint32_t *src = sky_cache + y * sw_width + minimum_x;
+			uint32_t *dst = sw_color + y * sw_width + minimum_x;
+			for (int x = 0; x < maximum_x - minimum_x; ++x)
+				if (zb_row[minimum_x + x] == 0)
+					dst[x] = src[x];
+		}
 		sw_stats.sky_pixels += (unsigned)drawn_pixels;
 		sw_stats.sky_face_mask |= sky_cache_face_mask;
 		return;
@@ -1095,6 +1101,7 @@ void SW_RasterSky(const refdef_t *fd)
 			step[component] = basis_right[component] * horizontal_step;
 		}
 		uint32_t *fb_row = sw_color + y * sw_width;
+		const uint32_t *zb_row = sw_depth + (size_t)y * sw_width;
 		uint32_t *cache_row = cache_dst != NULL ? cache_dst + y * sw_width : NULL;
 		int x = minimum_x;
 		while (x < maximum_x)
@@ -1122,12 +1129,15 @@ void SW_RasterSky(const refdef_t *fd)
 				const int x_end = x + block;
 				while (x < x_end)
 				{
-					const int texture_x = ClampI(is >> 16, 0, image->width - 1);
-					const int texture_y = ClampI(it >> 16, 0, image->height - 1);
-					const uint32_t color = image->pixels[texture_y * image->width + texture_x];
-					fb_row[x] = color;
-					if (cache_row != NULL)
-						cache_row[x] = color;
+					if (zb_row[x] == 0)
+					{
+						const int texture_x = ClampI(is >> 16, 0, image->width - 1);
+						const int texture_y = ClampI(it >> 16, 0, image->height - 1);
+						const uint32_t color = image->pixels[texture_y * image->width + texture_x];
+						fb_row[x] = color;
+						if (cache_row != NULL)
+							cache_row[x] = color;
+					}
 					is += ds; it += dt; ++x;
 				}
 				rendered_face_mask |= 1u << face0;
@@ -1136,16 +1146,19 @@ void SW_RasterSky(const refdef_t *fd)
 			{
 				for (int i = 0; i < block; ++i, ++x)
 				{
-					float s, t;
-					const int face = sky_coordinates(direction, &s, &t);
-					const sw_image_t *image = sw_sky_images[face];
-					const int texture_x = ClampI((int)(s * (image->width - 1)), 0, image->width - 1);
-					const int texture_y = ClampI((int)(t * (image->height - 1)), 0, image->height - 1);
-					const uint32_t color = image->pixels[texture_y * image->width + texture_x];
-					fb_row[x] = color;
-					if (cache_row != NULL)
-						cache_row[x] = color;
-					rendered_face_mask |= 1u << face;
+					if (zb_row[x] == 0)
+					{
+						float s, t;
+						const int face = sky_coordinates(direction, &s, &t);
+						const sw_image_t *image = sw_sky_images[face];
+						const int texture_x = ClampI((int)(s * (image->width - 1)), 0, image->width - 1);
+						const int texture_y = ClampI((int)(t * (image->height - 1)), 0, image->height - 1);
+						const uint32_t color = image->pixels[texture_y * image->width + texture_x];
+						fb_row[x] = color;
+						if (cache_row != NULL)
+							cache_row[x] = color;
+						rendered_face_mask |= 1u << face;
+					}
 					direction[0] += step[0];
 					direction[1] += step[1];
 					direction[2] += step[2];
@@ -2738,16 +2751,18 @@ int SW_RenderFrame(const refdef_t *fd)
 	setup_view(fd);
 	const uclock_t frame_start = uclock();
 	uclock_t mark = frame_start;
-	SW_RasterSky(fd);
-	{
-		const uclock_t next = uclock();
-		sw_stats.bench_us_sky += (unsigned long long)(next - mark);
-		mark = next;
-	}
+	// Sky runs AFTER the world pass and writes only where depth is still far
+	// (the sky draws no depth, so world-covered pixels cost one int compare).
 	SW_RasterWorld(fd);
 	{
 		const uclock_t next = uclock();
 		sw_stats.bench_us_world += (unsigned long long)(next - mark);
+		mark = next;
+	}
+	SW_RasterSky(fd);
+	{
+		const uclock_t next = uclock();
+		sw_stats.bench_us_sky += (unsigned long long)(next - mark);
 		mark = next;
 	}
 	SW_RasterEntities(fd);
