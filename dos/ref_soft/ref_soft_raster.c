@@ -1894,6 +1894,7 @@ static void span_raster_flex_triangle(const flex_screen_vertex_t a, const flex_s
 	float left_x = 0.0f, right_x = 0.0f, left_slope = 0.0f, right_slope = 0.0f;
 	for (int y = scan_first; y <= scan_last; ++y)
 	{
+		++sw_stats.bench_flex_spans;
 		const float y_center = y + 0.5f - a.y;
 		const int old_left_prev = left_prev, old_right_prev = right_prev;
 		while (left_cur != bottom && verts[left_cur]->y <= (y + 0.5f))
@@ -1941,6 +1942,7 @@ static void span_raster_flex_triangle(const flex_screen_vertex_t a, const flex_s
 		while (remaining > 0)
 		{
 			const int block = (x & (SW_SPAN_STEP - 1)) ? min(remaining, SW_SPAN_STEP - (x & (SW_SPAN_STEP - 1))) : min(remaining, SW_SPAN_STEP);
+			++sw_stats.bench_flex_blocks;
 			if (w <= 0.0f)
 				break;
 			const float w_end = w + gw_x * block;

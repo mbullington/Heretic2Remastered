@@ -826,7 +826,7 @@ static void log_bench_summary(void)
 		"bench-flex-tris=%u\nbench-flex-tris-fast=%u\nbench-flex-tris-clip=%u\n"
 		"bench-avg-us-flex-setup=%llu\nbench-avg-us-flex-dispatch=%llu\n"
 		"bench-flex-tris-bbox=%u\nbench-flex-tris-behind=%u\n"
-		"bench-avg-us-ent-brush=%llu\nbench-brush-faces=%u\nbench-brush-culled=%u\n",		stats->bench_frames, (unsigned long long)uclock(),
+		"bench-avg-us-ent-brush=%llu\nbench-brush-faces=%u\nbench-brush-culled=%u\nbench-flex-spans=%u\nbench-flex-blocks=%u\n",		stats->bench_frames, (unsigned long long)uclock(),
 		stats->bench_us_clear, stats->bench_us_sky, stats->bench_us_world,
 		stats->bench_us_entities, stats->bench_us_particles, stats->bench_us_lights,
 		stats->bench_us_blend, stats->bench_us_present, stats->bench_us_frame,
@@ -848,7 +848,8 @@ static void log_bench_summary(void)
 		stats->bench_flex_tris, stats->bench_flex_tris_fast, stats->bench_flex_tris_clip,
 		stats->bench_us_flex_setup / frames, stats->bench_us_flex_dispatch / frames,
 		stats->bench_flex_tris_bbox, stats->bench_flex_tris_behind,
-		stats->bench_us_ent_brush / frames, stats->bench_brush_faces, stats->bench_brush_culled);
+		stats->bench_us_ent_brush / frames, stats->bench_brush_faces, stats->bench_brush_culled,
+		stats->bench_flex_spans, stats->bench_flex_blocks);
 }
 
 static void begin_audio_proof(const qboolean realdata)
