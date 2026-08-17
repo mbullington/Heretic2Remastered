@@ -148,6 +148,7 @@ typedef struct model_s {
 	sw_bsp_t *bsp;
 	int first_face;
 	int num_faces;
+	vec3_t mins, maxs;
 	int num_frames;
 	sw_sprite_frame_t *sprite_frames;
 	book_t *book;

@@ -698,6 +698,11 @@ struct model_s *SW_RegisterModel(const char *name)
 		model->bsp = sw_world_bsp;
 		model->first_face = LittleLong(sw_world_bsp->submodels[index].firstface);
 		model->num_faces = LittleLong(sw_world_bsp->submodels[index].numfaces);
+		for (int axis = 0; axis < 3; ++axis)
+		{
+			model->mins[axis] = LittleFloat(sw_world_bsp->submodels[index].mins[axis]);
+			model->maxs[axis] = LittleFloat(sw_world_bsp->submodels[index].maxs[axis]);
+		}
 		return model;
 	}
 	const char *extension = strrchr(name, '.');

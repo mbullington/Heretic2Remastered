@@ -2488,8 +2488,35 @@ void SW_RasterEntities(const refdef_t *fd)
 			else if ((model->kind == SW_MODEL_INLINE || model->kind == SW_MODEL_BSP) && model->bsp != NULL)
 			{
 				const uclock_t tmark = uclock();
-				for (int face = 0; face < model->num_faces; ++face)
-					draw_face(model->bsp, model->first_face + face, entity->origin, entity->frame);
+				// Whole-model frustum reject via the submodel's bounding sphere.
+				// Rotation-safe and pixel-exact: every face lies inside the sphere, so
+				// a sphere fully outside a view-frustum half-space contains no face.
+				vec3_t center_local;
+				VectorAdd(model->mins, model->maxs, center_local);
+				VectorScale(center_local, 0.5f, center_local);
+				vec3_t extents;
+				VectorSubtract(model->maxs, model->mins, extents);
+				VectorScale(extents, 0.5f, extents);
+				const float radius = (float)sqrt(dot3(extents, extents));
+				vec3_t center_world;
+				VectorAdd(entity->origin, center_local, center_world);
+				const sw_vertex_t vc = world_to_view(center_world, 0.0f, 0.0f);
+				const float rx = sw_refdef.width * 0.5f / projection_x;
+				const float ry = sw_refdef.height * 0.5f / projection_y;
+				const float nx = (float)sqrt(1.0f + rx * rx);
+				const float ny = (float)sqrt(1.0f + ry * ry);
+				const float margin = radius + 0.01f;
+				if (vc.z < SW_NEAR_CLIP - radius ||
+					vc.x + vc.z * rx < -nx * margin || vc.z * rx - vc.x < -nx * margin ||
+					vc.y + vc.z * ry < -ny * margin || vc.z * ry - vc.y < -ny * margin)
+				{
+					++sw_stats.bench_brush_culled;
+				}
+				else
+				{
+					for (int face = 0; face < model->num_faces; ++face)
+						draw_face(model->bsp, model->first_face + face, entity->origin, entity->frame);
+				}
 				sw_stats.bench_us_ent_brush += (unsigned long long)(uclock() - tmark);
 				sw_stats.bench_brush_faces += (unsigned)model->num_faces;
 				++sw_stats.brush_entities;

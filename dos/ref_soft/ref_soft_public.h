@@ -67,6 +67,7 @@ typedef struct h2dos_soft_stats_s {
 	unsigned long long bench_us_ent_sprite; // entity pass: sprites
 	unsigned long long bench_us_ent_brush;  // entity pass: inline/bsp model faces
 	unsigned bench_brush_faces;             // brush/inline faces walked
+	unsigned bench_brush_culled;            // brush entities frustum-culled whole
 	unsigned bench_model_flex;              // flex models drawn (walked, not culled-early)
 	unsigned bench_model_sprite;            // sprite models drawn
 	unsigned bench_walked_flex;
