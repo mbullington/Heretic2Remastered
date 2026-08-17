@@ -54,6 +54,10 @@ typedef struct h2dos_soft_stats_s {
 	unsigned bench_world_lightbuild_px; // face-light miniature pixels rebuilt
 	unsigned long long bench_us_world_setup;  // draw_face work before span emission
 	unsigned long long bench_us_world_spans;  // span rasterization (draw_face_spans)
+	unsigned long long bench_us_ent_flex;   // entity pass: flex models
+	unsigned long long bench_us_ent_sprite; // entity pass: sprites
+	unsigned bench_model_flex;              // flex models drawn (walked, not culled-early)
+	unsigned bench_model_sprite;            // sprite models drawn
 	unsigned bench_walked_flex;
 	unsigned bench_walked_sprite;
 	unsigned long long bench_flex_vertex_lerps; // vertex posing work units in the entity pass

@@ -819,7 +819,9 @@ static void log_bench_summary(void)
 		"bench-avg-us-world-setup=%llu\nbench-avg-us-world-spans=%llu\n"
 		"bench-walked-flex-px=%u\nbench-inside-flex-px=%u\n"
 		"bench-world-walk-waste-pct=%u\nbench-flex-walk-waste-pct=%u\n"
-		"bench-flex-vertex-lerps=%llu\nbench-avg-us-flex-prologue=%llu\n",
+		"bench-flex-vertex-lerps=%llu\nbench-avg-us-flex-prologue=%llu\n"
+		"bench-avg-us-ent-flex=%llu\nbench-avg-us-ent-sprite=%llu\n"
+		"bench-model-flex=%u\nbench-model-sprite=%u\n",
 		stats->bench_frames, (unsigned long long)uclock(),
 		stats->bench_us_clear, stats->bench_us_sky, stats->bench_us_world,
 		stats->bench_us_entities, stats->bench_us_particles, stats->bench_us_lights,
@@ -835,7 +837,9 @@ static void log_bench_summary(void)
 		walked_flex, inside_flex,
 		walked_world > 0 ? (walked_world - inside_world) * 100u / walked_world : 0,
 		walked_flex > 0 ? (walked_flex - inside_flex) * 100u / walked_flex : 0,
-		stats->bench_flex_vertex_lerps, stats->bench_us_flex_prologue / frames);
+		stats->bench_flex_vertex_lerps, stats->bench_us_flex_prologue / frames,
+		stats->bench_us_ent_flex / frames, stats->bench_us_ent_sprite / frames,
+		stats->bench_model_flex, stats->bench_model_sprite);
 }
 
 static void begin_audio_proof(const qboolean realdata)

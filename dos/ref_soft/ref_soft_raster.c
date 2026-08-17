@@ -2434,15 +2434,25 @@ void SW_RasterEntities(const refdef_t *fd)
 					break;
 				default:
 					if (model != NULL)
+					{
+						const uclock_t tmark = uclock();
 						draw_sprite_entity(entity, model);
+						sw_stats.bench_us_ent_sprite += (unsigned long long)(uclock() - tmark);
+						++sw_stats.bench_model_sprite;
+					}
 					break;
 				}
 				continue;
 			}
 			if (model->kind == SW_MODEL_FLEX)
+			{
+				const uclock_t tmark = uclock();
 				SW_RasterFlexEntity(entity, model,
 					(entity->flags & (RF_FULLBRIGHT | RF_TRANSLUCENT | RF_ALPHA_TEXTURE)) ==
 					(RF_FULLBRIGHT | RF_TRANSLUCENT | RF_ALPHA_TEXTURE));
+				sw_stats.bench_us_ent_flex += (unsigned long long)(uclock() - tmark);
+				++sw_stats.bench_model_flex;
+			}
 			else if ((model->kind == SW_MODEL_INLINE || model->kind == SW_MODEL_BSP) && model->bsp != NULL)
 			{
 				for (int face = 0; face < model->num_faces; ++face)
