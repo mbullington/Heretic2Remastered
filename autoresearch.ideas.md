@@ -1,5 +1,29 @@
 # Untried hypotheses (remove when attempted)
 
+## Big structural swing (researched from q2DOS + Hammer of Thyrion, both GPL2 — see NOTICES.md)
+Both DOS ports ship Quake-family surface caches: composite texture*lightmap per
+face per frame (r_surf.c D_CacheSurface/R_BuildLightMap) so the span inner loop
+becomes a pure indexed fetch (~8 ops/px vs our ~30). World = our whale (108ms).
+PLAN (two slices, both gate-arbitrated):
+1. Surface cache for world faces (mip0 first): per visible face, smax x tmax
+   composite at 32bpp: span_modulate3(texel, light) built ONCE per texel. The
+   (stex,ttex) -> (ls,lt) map is exactly AFFINE per face (both are affine maps
+   of the face plane), steps derivable per face; light boundaries quantize a
+   hair differently vs the current screen-projected path -> ERROR BUDGET RISK
+   bounded to lumel edges; gate (46px) arbitrates, expected mostly-exact.
+   Inner loop becomes pbase[(it>>16)*cw + (iu>>16)] + zb test/write.
+   Est: world 110 -> 55-70ms. Cache pool: faces keyed by (face,generation),
+   evict LRU, big faces included (H2 faces are small: median block 16x16).
+2. Painter's-order world (drop per-px zb compare on opaque world faces; keep zb
+   WRITES for sky/entity gating + alpha/trans faces keep compare). BSP walk is
+   already back-to-front from the camera side; verify span overlap behavior.
+   Est: -3-5ms on top.
+Both slices preserve 32bpp RGB pipeline (cache composites in linear RGB space,
+which 8-bit palette Quake ports could not do - ours is actually CLEANER in 32bpp).
+Also noted from q2dos: -O2 enough, -fno-strict-aliasing, -fomit-frame-pointer
+(JJGPP bool: check our flags match), present path = straight memcpy to LFB
+(validates the layout-flip direction: finish the flip via per-subsystem PPM
+isolation, then direct-render).
 ## World pass (world_us ~128 ms — biggest target)
 - SPAN-SORTED front-to-back world rendering (Abrash-style span clipping per
   scanline from front-to-back BSP order): each world pixel shaded once, no
