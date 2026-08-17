@@ -2358,21 +2358,37 @@ void SW_RasterFlexEntity(const entity_t *entity, const sw_model_t *model, const 
 				flex_proj_cache_t projected[3];
 				int vertex_indices[3];
 				qboolean cache_ok = true;
-				const uclock_t tri_iter = uclock();
+				for (int corner = 0; corner < 3; ++corner)
+				{
+					const int command = command_start + command_vertices[corner] * 3;
+					const int vertex = flex->glcmds[command + 2];
+					vertex_indices[corner] = vertex;
+					if (vertex < 0 || vertex >= SW_MAX_FLEX_VERTS ||
+						!flex_proj_lookup(entity, lerped, cr, sr, cp, sp, cy, sy, vertex, &projected[corner]))
+						cache_ok = false;
+				}
+				// Early trivial-reject, identical to the checks inside
+				// span_raster_flex_triangle/draw_flex_triangle: these triangles produce
+				// no pixels, so skip colors/corner construction entirely.
+				if (cache_ok &&
+					((projected[0].x < 0.0f && projected[1].x < 0.0f && projected[2].x < 0.0f) ||
+					 (projected[0].x >= (float)sw_width && projected[1].x >= (float)sw_width && projected[2].x >= (float)sw_width) ||
+					 (projected[0].y < 0.0f && projected[1].y < 0.0f && projected[2].y < 0.0f) ||
+					 (projected[0].y >= (float)sw_height && projected[1].y >= (float)sw_height && projected[2].y >= (float)sw_height) ||
+					 (projected[0].inverse_z <= 0.0f && projected[1].inverse_z <= 0.0f && projected[2].inverse_z <= 0.0f)))
+				{
+					++sw_stats.bench_flex_tris_bbox;
+					continue;
+				}
 				for (int corner = 0; corner < 3; ++corner)
 				{
 					const int command = command_start + command_vertices[corner] * 3;
 					float s, t;
 					memcpy(&s, &flex->glcmds[command], 4);
 					memcpy(&t, &flex->glcmds[command + 1], 4);
-					const int vertex = flex->glcmds[command + 2];
-					vertex_indices[corner] = vertex;
-					if (vertex < 0 || vertex >= SW_MAX_FLEX_VERTS ||
-						!flex_proj_lookup(entity, lerped, cr, sr, cp, sp, cy, sy, vertex, &projected[corner]))
-						cache_ok = false;
 					uv[corner][0] = s;
 					uv[corner][1] = t;
-					const float intensity = use_color || (entity->flags & RF_FULLBRIGHT) ? 1.0f : intensities[vertex];
+					const float intensity = use_color || (entity->flags & RF_FULLBRIGHT) ? 1.0f : intensities[vertex_indices[corner]];
 					colors[corner][0] = use_color ? node_color[0] : base_light[0] * intensity;
 					colors[corner][1] = use_color ? node_color[1] : base_light[1] * intensity;
 					colors[corner][2] = use_color ? node_color[2] : base_light[2] * intensity;
@@ -2382,8 +2398,6 @@ void SW_RasterFlexEntity(const entity_t *entity, const sw_model_t *model, const 
 				++sw_stats.bench_flex_tris;
 				if (cache_ok && skin != NULL && skin->pixels != NULL)
 				{
-					sw_stats.bench_us_flex_setup += (unsigned long long)(uclock() - tri_iter);
-					const uclock_t dispatch_start = uclock();
 					flex_screen_vertex_t corners[3];
 					for (int corner = 0; corner < 3; ++corner)
 					{
@@ -2401,7 +2415,6 @@ void SW_RasterFlexEntity(const entity_t *entity, const sw_model_t *model, const 
 					dispatch_flex_screen_triangle(corners[0], corners[1], corners[2], skin,
 						opaque_depth && !skin->has_alpha, additive);
 					++sw_stats.bench_flex_tris_fast;
-					sw_stats.bench_us_flex_dispatch += (unsigned long long)(uclock() - dispatch_start);
 				}
 				else
 				{
