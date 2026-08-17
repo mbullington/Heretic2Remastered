@@ -68,6 +68,9 @@ def gates(ev: dict) -> int:
         print("FAIL: benchmark did not report status=PASS", flush=True)
         return 1
 
+    # Staleness guard: benchmark flow never rewrites RENDER/EFFECTS, so the
+    # PPMs must be refreshed (renderer proof) after the last SILVER.EXE build.
+    silver = RUN_DIR / "SILVER.EXE"
     for name in ("RENDER", "EFFECTS"):
         base = BASELINE_DIR / f"baseline-{name}.PPM"
         test = RUN_DIR / f"{name}.PPM"
@@ -76,6 +79,13 @@ def gates(ev: dict) -> int:
             return 1
         if not test.exists():
             print(f"FAIL: run output missing: {test}", flush=True)
+            return 1
+        if silver.exists() and test.stat().st_mtime < silver.stat().st_mtime:
+            print(
+                f"FAIL: {test.name} is older than SILVER.EXE (stale pixel artifact; "
+                "run scripts/run-dos-renderer.py to refresh)",
+                flush=True,
+            )
             return 1
         width, height, total, big = diff_stats(base, test)
         fraction = big / float(width * height)

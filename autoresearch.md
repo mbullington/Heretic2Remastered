@@ -25,7 +25,12 @@ rotating sky) via `.dos-data/` real-data mode.
 ## How to Run
 `./autoresearch.sh` — incremental DJGPP build (nix toolchain), then the
 THREE DOSBox benchmark runs, then prints per-metric MEDIAN lines. ~90s per verify.
-`autoresearch.checks.sh` runs the pixel/status gates on success.
+`autoresearch.checks.sh` refreshes guest RENDER/EFFECTS PPMs via
+`scripts/run-dos-renderer.py` (the bench only rewrites BENCH-EVIDENCE.TXT and
+BENCH-CLIENT.PPM) and then runs the pixel/status gates; `check-dos-bench.py`
+refuses PPMs older than guest SILVER.EXE so stale pixel artifacts can never
+pass or fail silently. (Added 2026-08-17 after a control run proved the gate
+had been comparing a stale RENDER.PPM.)
 
 ## Files in Scope
 - `dos/ref_soft/ref_soft_raster.c` — span engines, walkers, draw_* paths
