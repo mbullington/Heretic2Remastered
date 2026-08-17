@@ -61,11 +61,16 @@
 entities 36.3ms = flex ~20.5ms + brush 14.4ms + sprites ~0
 - flex: 320 tris/frame, 45% bbox-culled (now hoisted pre-fill), ALL fast-path; per-tri setup = float gradient tax (x87 emulation ~10-30cy/op). per-tri ~60us for ~6px.
 - brush: 175 draw_face calls/frame ~85us each (vs 18us for world faces). World-entity-cull kept (sphere, ~10% whole-model culls only). Per-face cost places in draw_face vertex loop + clip_near + light dims, ALL float.
+## CONFIRMED MODEL (2026-08-17): DOSBox = flat instruction count.
+x87 emulation is host-side cheap (int-key z conversion of the world inner loop changed NOTHING - kept as infrastructure). Wins come from REMOVING INSTRUCTIONS PER PX or SKIPPING PX/RUNS WHOLESALE:
+- sky-after-world z-gate: sky 38.2->16.8ms (-56%), frame -11% [KEPT, gates PASS]
+- int-key depth buffer (bits of non-negative floats = ordered uint32): NEUTRAL perf, kept as infra.
+## DONE / ruled out since
+- whole-model sphere cull for brush entities: kept (-0.4ms, only ~10% models offscreen)
+- flex early bbox reject hoisted: kept (~0.1ms)
 ## Ranked next levers
-1. FLEX: convert span_raster_flex_triangle edge-stepping + span-start eval to fixed point (gradients stay float once/tri). Est 5-8ms.
-2. BRUSH: per-face cheap cone cull DURING vertex loop in draw_face (bail before s/t mins + clip_near); entity faces skip min/max light scan when culled. Est 3-6ms.
-3. WORLD inner loop (THE whale, 111ms spans for 108K px @ ~92cy): hand-schedule the opaque pow2 block loop in C first (split z-test loop from texel loop: test wiz-run z-pass mask over the block, then unconditional texel run for pass-runs) to cut z-compare FPU ops (wiz float compare per px!). wiz is FLOAT: the per-px depth compare is x87 FCOM... convert depth compare keys to int (beware negative wiz values ordering = int compare with sign flip... use bias+unsigned trick exact for floats? sign-magnitude: f>=0 -> key = bits; f<0 -> key = ~bits. all floats comp exact via int). Est 10-25ms if FPU tax real.
-4. sky 38.2ms: flat-tile tagging via 8x8 tile attribute map written by clear, whole-tile fill where tags say uniform.
-5. present 20-24ms: already XRGB8888; SDL converter wins. Try SDL_BlitSurface vs manual? or render sw_color directly into surface (locks LFB); blocked by SW depth/color as static buffers - END maybe skip.
-## Ruled out (regressed on DOSBox flat-op model)
-light LUT, tw_shift, hand present shuffle, int16 depth, ABGR mode
+1. FLEX tiny-tri fast path: 320 tris/frame avg 3px/1.8 spans/1.1 blocks but ~25us per span-scale; bypass span engine for bbox<=8x8 with per-px barycentric stepping replicating EXACT conventions (ceil(x-0.5) coverage, block-linear uv seeds, ikey z). Est -10 to -14ms.
+2. BRUSH per-face cone cull during vertex loop in draw_face (bail before min/max light scan + clip_near). Est 3-6ms of 14.4ms.
+3. WORLD inner loop 118ms @ 92-120cy/px: split z-test run from texel run per 16px block (z-mask first, contiguous texel runs) to drop per-px branch+5-inc overhead on z-passed runs; or 2-row pairing. Instruction-count audited, not FPU.
+4. present 24.2ms: SDL converter on 320x200 windowed XRGB8888 pitch 1280; rows 200-239 black. Copy only 200 rows? surface is 240 but window shows 200? Measure partial convert [y0..200).
+

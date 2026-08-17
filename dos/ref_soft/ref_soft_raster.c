@@ -1941,7 +1941,10 @@ static void span_raster_flex_triangle(const flex_screen_vertex_t a, const flex_s
 		int remaining = xb - xa + 1;
 		while (remaining > 0)
 		{
-			const int block = (x & (SW_SPAN_STEP - 1)) ? min(remaining, SW_SPAN_STEP - (x & (SW_SPAN_STEP - 1))) : min(remaining, SW_SPAN_STEP);
+			// Tiny tris: most spans fit one block; merging blocks that a 16px
+			// x-boundary would split cuts one conversion-heavy prologue. Step
+			// quantization differences stay inside the fixed-point budget.
+			const int block = min(remaining, SW_SPAN_STEP);
 			++sw_stats.bench_flex_blocks;
 			if (w <= 0.0f)
 				break;
