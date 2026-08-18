@@ -155,6 +155,10 @@ def run_dosbox(
         "--noautoexec",
         "--set",
         f"memsize={DOSBOX_MEMORY_MB}",
+        "--set",
+        # Target machine is a Pentium MMX 233: expose MMX to the guest
+        # (DOSBox Staging >= 0.82 has real pentium_mmx emulation).
+        "cputype=pentium_mmx",
     ]
     for setting in extra_sets:
         command += ["--set", setting]
