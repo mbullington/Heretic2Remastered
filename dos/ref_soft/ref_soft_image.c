@@ -9,13 +9,87 @@
 // 565 colorkey convention: transparent pixels are 0x0000; alpha semitones
 // quantize away (a >= 128 becomes opaque). Opaque pure black is nudged to
 // 0x0001 so it never aliases with the transparent key.
-static uint16_t sw_pack_texel(const unsigned r, const unsigned g, const unsigned b, const unsigned a)
+// B2b indexed pipeline: images hold the raw 8-bit palette indices. The first
+// loaded M8 fixes the global 256-color palette; everything else (M32, raw
+// RGBA, 565 API callers) routes through nearest-color LUTs derived from it.
+static paletteRGB_t sw_palette_rgb[256];
+static qboolean sw_palette_ready;
+uint16_t sw_fb_palette[256];
+byte sw_idx_from_555[32768];
+byte sw_shade_lut[64 * 256];
+
+static unsigned sw_channel_error(const int dr, const int dg, const int db)
 {
-	if (a < 128u)
-		return 0;
-	const uint16_t v = SW_RGB565(r, g, b);
-	return v != 0 ? v : 1;
+	return (unsigned)(dr * dr * 3 + dg * dg * 6 + db * db * 2);
 }
+
+static byte sw_nearest_index(const int r, const int g, const int b)
+{
+	byte best = 0;
+	unsigned best_err = ~0u;
+	for (int i = 0; i < 255; ++i)
+	{
+		const unsigned e = sw_channel_error(sw_palette_rgb[i].r - r, sw_palette_rgb[i].g - g, sw_palette_rgb[i].b - b);
+		if (e < best_err) { best_err = e; best = (byte)i; }
+	}
+	return best;
+}
+
+static void sw_palette_ingest(const paletteRGB_t *palette)
+{
+	if (sw_palette_ready)
+		return;
+	memcpy(sw_palette_rgb, palette, sizeof(sw_palette_rgb));
+	sw_palette_ready = true;
+	for (int i = 0; i < 256; ++i)
+		sw_fb_palette[i] = ((uint16_t)(palette[i].r >> 3) << 11) | ((uint16_t)(palette[i].g >> 2) << 5) | (uint16_t)(palette[i].b >> 3);
+	for (int key = 0; key < 32768; ++key)
+	{
+		const int r = (key >> 10) & 31, g = (key >> 5) & 31, b = key & 31;
+		sw_idx_from_555[key] = sw_nearest_index((r << 3) | (r >> 2), (g << 3) | (g >> 2), (b << 3) | (b >> 2));
+	}
+	// shade LUT: 8 hue families x 8 levels, quantized chromatic lighting
+	static const int hue_r[8] = { 256, 320, 282, 230, 154, 154, 218, 282 };
+	static const int hue_g[8] = { 256, 218, 243, 282, 295, 218, 179, 192 };
+	static const int hue_b[8] = { 256, 154, 154, 179, 218, 320, 307, 256 };
+	for (int shade = 0; shade < 64; ++shade)
+	{
+		const int hf = shade >> 3, lv = shade & 7;
+		const int scale = lv + 1;
+		for (int idx = 0; idx < 256; ++idx)
+		{
+			const int r = min(255, sw_palette_rgb[idx].r * hue_r[hf] * scale / (256 * 8));
+			const int g = min(255, sw_palette_rgb[idx].g * hue_g[hf] * scale / (256 * 8));
+			const int b = min(255, sw_palette_rgb[idx].b * hue_b[hf] * scale / (256 * 8));
+			sw_shade_lut[(shade << 8) | idx] = sw_nearest_index(r, g, b);
+		}
+	}
+}
+
+// 10-bit light channel (white = 256) -> 6-bit chromatic shade index.
+int SW_ShadeFromLight(const unsigned r10, const unsigned g10, const unsigned b10)
+{
+	const unsigned luma = (r10 * 3u + g10 * 6u + b10 * 2u + 11u) / 11u;
+	int lv = (int)(luma * 8u / 289u);
+	lv = lv < 0 ? 0 : (lv > 7 ? 7 : lv);
+	const unsigned mx = max(r10, max(g10, b10));
+	int hf = 0;
+	if (mx > 96u)
+	{
+		if (r10 >= g10 + (g10 >> 2) && r10 >= b10 + (b10 >> 2)) hf = (g10 > b10 + (b10 >> 1)) ? 2 : 1;
+		else if (g10 >= r10 + (r10 >> 2) && g10 >= b10 + (b10 >> 2)) hf = (b10 > r10 + (r10 >> 1)) ? 4 : 3;
+		else if (b10 >= r10 + (r10 >> 2) && b10 >= g10 + (g10 >> 2)) hf = (r10 > g10 + (g10 >> 1)) ? 6 : 5;
+		else hf = (r10 >= b10) ? 7 : 6;
+	}
+	return (hf << 3) | lv;
+}
+
+byte sw_idx_from_rgb(const unsigned r, const unsigned g, const unsigned b)
+{
+	const unsigned key = ((r >> 3) << 10) | (((g >> 3) << 5) | (b >> 3));
+	return sw_palette_ready ? sw_idx_from_555[key] : 0;
+}
+
 
 static sw_image_t sw_images[SW_MAX_IMAGES];
 static int sw_num_images;
@@ -109,13 +183,13 @@ static sw_image_t *load_m8(const char *name, const sw_image_kind_t kind)
 	if (image != NULL)
 	{
 		image->num_frames = max(1, num_frames);
+		sw_palette_ingest(mip->palette);
 		const byte *indices = (const byte *)file + offset;
+		const qboolean colorkey = kind == SW_IMAGE_SPRITE || kind == SW_IMAGE_SKIN;
 		for (size_t i = 0; i < (size_t)width * height; ++i)
 		{
-			const paletteRGB_t color = mip->palette[indices[i]];
-			const byte alpha = ((kind == SW_IMAGE_SPRITE || kind == SW_IMAGE_SKIN) && indices[i] == 255) ? 0 : 255;
-			image->pixels[i] = sw_pack_texel(color.r, color.g, color.b, alpha);
-			image->has_alpha |= alpha != 255;
+			image->pixels[i] = indices[i];
+			image->has_alpha |= colorkey && indices[i] == SW_TRANSPARENT_INDEX;
 		}
 		++sw_stats.m8_images;
 	}
@@ -158,12 +232,11 @@ static sw_image_t *load_m32(const char *name, const sw_image_kind_t kind)
 		const byte *source = (const byte *)file + offset;
 		for (size_t i = 0; i < count; ++i)
 		{
-			// WALL textures render through alpha-ignoring paths, so their zero
-			// alpha bytes must NOT become the 565 transparent key (that turned
-			// whole walls/sky black). Everything else keeps colorkey semantics.
+			// WALL textures render through alpha-ignoring paths; their zero alpha
+			// bytes must not become the transparent colorkey. Others keep it.
 			const byte a = kind == SW_IMAGE_WALL ? 255 : source[i * 4 + 3];
-			image->pixels[i] = sw_pack_texel(source[i * 4], source[i * 4 + 1], source[i * 4 + 2], a);
-			image->has_alpha |= kind != SW_IMAGE_WALL && source[i * 4 + 3] != 255;
+			image->pixels[i] = a == 0 ? SW_TRANSPARENT_INDEX : sw_idx_from_rgb(source[i * 4], source[i * 4 + 1], source[i * 4 + 2]);
+			image->has_alpha |= kind != SW_IMAGE_WALL && a != 255;
 		}
 		++sw_stats.m32_images;
 	}
@@ -178,7 +251,7 @@ static sw_image_t *make_fallback(void)
 		return NULL;
 	for (int y = 0; y < image->height; ++y)
 		for (int x = 0; x < image->width; ++x)
-			image->pixels[y * image->width + x] = ((x ^ y) & 8) ? SW_RGB565(255, 0, 255) : SW_RGB565(20, 20, 20);
+			image->pixels[y * image->width + x] = ((x ^ y) & 8) ? sw_idx_from_rgb(255, 0, 255) : sw_idx_from_rgb(20, 20, 20);
 	image->synthetic_fallback = true;
 	return image;
 }
@@ -275,8 +348,9 @@ void SW_DrawImage(const int x, const int y, const int w, const int h, const sw_i
 		for (int dx = start_x; dx < end_x; ++dx)
 		{
 			const int source_x = (int)((long long)dx * image->width / w);
-			const uint16_t px = image->pixels[source_y * image->width + source_x];
-			SW_PutPixel(x + dx, y + dy, FLT_MAX, px, px != 0 ? base_alpha : 0, false, false);
+			const byte px = image->pixels[source_y * image->width + source_x];
+			SW_PutPixel(x + dx, y + dy, FLT_MAX, sw_fb_palette[px],
+				(px != 0 && px != SW_TRANSPARENT_INDEX) ? base_alpha : 0, false, false);
 		}
 	}
 	++sw_stats.ui_draws;
@@ -353,7 +427,7 @@ static void draw_char_layer(const int x, const int y, const int scale, const int
 	for (int py = 0; py < cell_height * scale; ++py)
 		for (int px = 0; px < cell_width * scale; ++px)
 		{
-			const uint16_t source = sw_conchars->pixels[(source_y + py / scale) * sw_conchars->width + source_x + px / scale];
+			const uint16_t source = sw_fb_palette[sw_conchars->pixels[(source_y + py / scale) * sw_conchars->width + source_x + px / scale]];
 			byte glyph_alpha;
 			const uint16_t glyph = tint(source, color, &glyph_alpha);
 			SW_PutPixel(x + px, y + py, FLT_MAX, glyph, glyph_alpha, false, false);
@@ -385,7 +459,7 @@ void SW_DrawTileClear(const int x, const int y, const int w, const int h, const 
 		{
 			const int sx = (int)(((long long)x + px) % image->width + image->width) % image->width;
 			const int sy = (int)(((long long)y + py) % image->height + image->height) % image->height;
-			SW_PutPixel(x + px, y + py, FLT_MAX, image->pixels[sy * image->width + sx], 255, false, false);
+			SW_PutPixel(x + px, y + py, FLT_MAX, sw_fb_palette[image->pixels[sy * image->width + sx]], 255, false, false);
 		}
 	++sw_stats.ui_draws;
 }
@@ -426,7 +500,7 @@ static void draw_font_character(const int x, const int y, const sw_font_char_t *
 			const int sx = source_x + px * (source_right - source_x) / destination_width;
 			const int sy = source_y + py * (source_bottom - source_y) / destination_height;
 			SW_PutPixel(destination_x + px, destination_y + py, FLT_MAX,
-				image->pixels[sy * image->width + sx],
+				sw_fb_palette[image->pixels[sy * image->width + sx]],
 				(byte)ClampI((int)((image->pixels[sy * image->width + sx] != 0 ? 255 : 0) * alpha), 0, 255), false, false);
 		}
 }

@@ -6,8 +6,7 @@
 #include <string.h>
 #include <time.h>
 
-uint16_t *sw_color;
-static bool sw_color_owns;
+byte *sw_color;
 uint32_t *sw_depth;
 int sw_width;
 int sw_height;
@@ -18,10 +17,14 @@ static SDL_Surface *sw_surface;
 
 uint16_t SW_RGB565(const unsigned r, const unsigned g, const unsigned b)
 {
-	// RGB565 in-memory order: the low 16 bits of the little-endian u16 are the
-	// VESA LFB pixel. Presenting to the RGB565 fullscreen surface collapses to
-	// a straight 2-byte/pixel copy.
 	return (uint16_t)(((r & 0xF8u) << 8) | ((g & 0xFCu) << 3) | (b >> 3));
+}
+
+// 565 -> palette index through the 555 nearest-color map (g6 folded to g5).
+byte SW_IndexFrom565(const uint16_t color)
+{
+	const unsigned key = ((unsigned)(color >> 1) & 0x7C00u) | ((unsigned)(color >> 6) & 0x03E0u) | (color & 0x1Fu);
+	return sw_idx_from_555[key];
 }
 
 qboolean SW_FrameBufferInit(void *window)
@@ -30,9 +33,6 @@ qboolean SW_FrameBufferInit(void *window)
 		return false;
 
 	sw_window = window;
-	// B2: request the VESA 320x240 RGB565 mode so the final presentation is a
-	// 2-byte/pixel LFB copy instead of 4-byte. The internal framebuffer stays
-	// XRGB8888 for now (conversion happens in SDL_ConvertPixels at present).
 	{
 		SDL_DisplayMode want;
 		SDL_zero(want);
@@ -55,20 +55,9 @@ qboolean SW_FrameBufferInit(void *window)
 		return false;
 
 	const size_t pixels = (size_t)sw_width * (size_t)sw_height;
-	// Fast path: with a shader-native RGB565 surface and tight pitch, render
-	// straight into the surface bytes; SDL_UpdateWindowSurface does the only
-	// copy. Otherwise keep a private framebuffer and convert at present.
-	if (sw_surface->format == SDL_PIXELFORMAT_RGB565 &&
-		sw_surface->pitch == sw_width * (int)sizeof(*sw_color))
-	{
-		sw_color = (uint16_t *)sw_surface->pixels;
-		sw_color_owns = false;
-	}
-	else
-	{
-		sw_color = calloc(pixels, sizeof(*sw_color));
-		sw_color_owns = true;
-	}
+	// B2b: internal framebuffer is always an owned 8-bit indexed buffer; the
+	// palette -> RGB565 expansion happens once per frame at present.
+	sw_color = calloc(pixels, sizeof(*sw_color));
 	sw_depth = malloc(pixels * sizeof(*sw_depth));
 	if (sw_color == NULL || sw_depth == NULL)
 	{
@@ -82,24 +71,22 @@ qboolean SW_FrameBufferInit(void *window)
 void SW_FrameBufferShutdown(void)
 {
 	free(sw_depth);
-	if (sw_color_owns)
-		free(sw_color);
-	sw_color_owns = false;
-	sw_depth = NULL;
+	free(sw_color);
 	sw_color = NULL;
+	sw_depth = NULL;
 	sw_surface = NULL;
 	sw_window = NULL;
 	sw_width = 0;
 	sw_height = 0;
 }
 
-static uint16_t sw_clear_color;
+static byte sw_clear_color;
 
 void SW_Clear(const uint16_t color)
 {
 	const uclock_t start = uclock();
 	const size_t pixels = (size_t)sw_width * (size_t)sw_height;
-	sw_clear_color = color;
+	sw_clear_color = SW_IndexFrom565(color);
 	// Color fill is deferred: SW_RasterFrame re-fills only frames without a
 	// worldmodel. Worldmodel frames are fully repainted by world/sky spans.
 	// Depth stores inverse-z (larger = closer), so the far plane is zero.
@@ -110,20 +97,16 @@ void SW_Clear(const uint16_t color)
 void SW_ClearColorFill(void)
 {
 	const size_t pixels = (size_t)sw_width * (size_t)sw_height;
-	for (size_t i = 0; i < pixels; ++i)
-		sw_color[i] = sw_clear_color;
+	memset(sw_color, sw_clear_color, pixels);
 }
 
 void SW_PutPixel(const int x, const int y, const float depth, const uint16_t color, const byte alpha,
 	const qboolean depth_write, const qboolean additive)
 {
-	// depth is inverse-z (larger = closer); FLT_MAX means "always nearest".
 	if ((unsigned)x >= (unsigned)sw_width || (unsigned)y >= (unsigned)sw_height || depth <= 0.0f)
 		return;
 
 	const size_t index = (size_t)y * (size_t)sw_width + (size_t)x;
-	// All stored depths are non-negative floats, so their bit patterns order as
-	// unsigned ints exactly like the floats did, with no FPU compare.
 	uint32_t depth_key;
 	memcpy(&depth_key, &depth, 4);
 	if (depth_key < sw_depth[index])
@@ -131,11 +114,11 @@ void SW_PutPixel(const int x, const int y, const float depth, const uint16_t col
 
 	if (alpha == 255 && !additive)
 	{
-		sw_color[index] = color;
+		sw_color[index] = SW_IndexFrom565(color);
 	}
 	else if (alpha != 0)
 	{
-		const uint16_t destination = sw_color[index];
+		const uint16_t destination = sw_fb_palette[sw_color[index]];
 		const int source_weight = alpha;
 		const int destination_weight = additive ? 255 : 255 - alpha;
 		const unsigned sr = (color >> 8) & 0xF8u;
@@ -147,7 +130,7 @@ void SW_PutPixel(const int x, const int y, const float depth, const uint16_t col
 		const unsigned r = min(255u, (sr * (unsigned)source_weight + dr * (unsigned)destination_weight) / 255u);
 		const unsigned g = min(255u, (sg * (unsigned)source_weight + dg * (unsigned)destination_weight) / 255u);
 		const unsigned b = min(255u, (sb * (unsigned)source_weight + db * (unsigned)destination_weight) / 255u);
-		sw_color[index] = SW_RGB565(r, g, b);
+		sw_color[index] = SW_IndexFrom565(SW_RGB565(r, g, b));
 	}
 
 	if (depth_write)
@@ -176,17 +159,33 @@ void SW_Present(void)
 	if (sw_surface == NULL || sw_color == NULL)
 		return;
 	bool ready = true;
-	if (sw_color_owns)
+	const bool locked = SDL_LockSurface(sw_surface);
+	if (locked)
 	{
-		if (!SDL_LockSurface(sw_surface))
+		const size_t pixels = (size_t)sw_width * (size_t)sw_height;
+		if (sw_surface->format == SDL_PIXELFORMAT_RGB565 &&
+			sw_surface->pitch == sw_width * (int)sizeof(uint16_t))
 		{
-			sw_ri.Con_Printf(PRINT_ALL, "ref_soft: SDL_LockSurface failed: %s\n", SDL_GetError());
-			return;
+			uint16_t *dst = (uint16_t *)sw_surface->pixels;
+			for (size_t i = 0; i < pixels; ++i)
+				dst[i] = sw_fb_palette[sw_color[i]];
 		}
-		ready = SDL_ConvertPixels(sw_width, sw_height,
-			SDL_PIXELFORMAT_RGB565, sw_color, sw_width * (int)sizeof(*sw_color),
-			sw_surface->format, sw_surface->pixels, sw_surface->pitch);
+		else
+		{
+			for (int y = 0; y < sw_height; ++y)
+			{
+				const byte *src = sw_color + (size_t)y * (size_t)sw_width;
+				uint16_t *dst = (uint16_t *)((byte *)sw_surface->pixels + (size_t)y * (size_t)sw_surface->pitch);
+				for (int x = 0; x < sw_width; ++x)
+					dst[x] = sw_fb_palette[src[x]];
+			}
+		}
 		SDL_UnlockSurface(sw_surface);
+	}
+	else
+	{
+		sw_ri.Con_Printf(PRINT_ALL, "ref_soft: SDL_LockSurface failed: %s\n", SDL_GetError());
+		return;
 	}
 	if (!ready || !SDL_UpdateWindowSurface(sw_window))
 	{
@@ -219,7 +218,7 @@ qboolean SW_SavePPM(const char *path)
 	{
 		for (int x = 0; x < sw_width; ++x)
 		{
-			const uint16_t pixel = sw_color[(size_t)y * (size_t)sw_width + (size_t)x];
+			const uint16_t pixel = sw_fb_palette[sw_color[(size_t)y * (size_t)sw_width + (size_t)x]];
 			const unsigned r5 = (pixel >> 11) & 31u;
 			const unsigned g6 = (pixel >> 5) & 63u;
 			const unsigned b5 = pixel & 31u;
