@@ -67,3 +67,13 @@ had been comparing a stale RENDER.PPM.)
 ## Stop Conditions
 - total_us ≤ 85,000 (≈ frame_us 60,000 + present ~19,000 + clear ~6,000)
 - 3 consecutive discards with no credible mechanism left, or user's call
+
+## Current state
+- SEGMENT 4 (2026-08-17): DOSBox cputype=pentium_mmx (9307dbd1) — new realistic ruler; seg-3 numbers not comparable.
+  Kept stack: commit 1797d154 (E42 span-step 32). Best total_us = 141,807 (frame 123,960, world 96,197,
+  sky 13,260 [ASI], entities 13,484, clear 1,182, present 16,665-bimodal).
+  Falsified seg-4: E39 pair-pack (+7.2ms), E43 step-64 (fidelity ceiling: 32<step<64; banked as opt-in turbo).
+  Stop line: total_us <= 85,000 unchanged.
+- MAIN EVENT NEXT: B1 edge-list world — staged plan at docs/plans/2026-08-17-b1-edge-list-world.md
+- Gated user sign-offs granted 2026-08-17: indexed 8-bit chromatic light vocab; Mode 13h 320x200
+  (must remain a mode sibling to 640x480). Stipple: NOT granted.

@@ -361,3 +361,11 @@ QUEUE (segment 4; single-experiment discipline):
  P1  B1 edge-list world = main event after queue [-18..25 world, -12 sky, kills clear]
  B2b indexed+chromatic lut [SIGN-OFF] [-35..45 projected]; mode13h 320x200 [SIGN-OFF] folds into it
  stipple [SIGN-OFF, after pool probe]
+
+## 2026-08-17 SEG-4 RESULTS: pair-pack FALSIFIED (E39: +7.2ms — bookkeeping costs 2x saved stores;
+micro-axis now 5x dead), SW_SPAN_STEP 32 KEPT (E40/#40, commit 1797d154: world -1.3ms sky -3.6ms,
+total 141,807 = new best on pentium_mmx ruler); STEP 64 = FIDELITY CEILING (E43: 0.138% >2LSB fail
+on otherwise -9ms; bank as user-gated "sw perf mode" turbo class with scan-doubling/mode13h, NOT default).
+Sky cost was CLASSIFICATION-bound, not px-bound (hits 12/misses 20 on bench; cache already pays).
+NEXT: B1 edge-list (docs/plans/2026-08-17-b1-edge-list-world.md — staged S1-S5), then z-tile (S5),
+then gated B2b chromatic 8-bit (mode-flexible 320x200 fast + 640x480 sibling).
