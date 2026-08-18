@@ -317,3 +317,47 @@ IPC gain, compiler can't schedule across asm), surface cache (#23), view damage 
   anecdote; PMMX CPU lacks MTRRs (FastVid/SetMtrr are PPro+), so this is a CHIPSET BIOS item.
   Present path (13.5ms emulated) should collapse ~4x on the real box with WC on.
 - Pairing (U/V) on real PMMX effectively halves the span loop CPI; nothing to code there, just note.
+
+## 2026-08-17 USER-PROVIDED CRIME LIST — ENGINEERING TRIAGE vs MEASURED DATA
+Ruler for all estimates: segment-4 pentium_mmx measurements (frame 137,816 / world 97,522 / present 13,496).
+Census reminder: ~25ops/px world core {zb 3-4, texel idx 6, texel load 1, lidx 5, modulate3&pack ~8, stores 2, accum adds 5}.
+
+1. 8-bit w/ 64-state CHROMATIC light vocab (8 brightness x 8 hue families, 16KB lut[shade<<8|texel],
+   quantize at surface build): ACCEPTED AS THE B2b DESIGN FIX — solves the monochrome-cheat
+   objection (Q2 used max(R,G,B)); quantize lidx cell -> 6-bit state at lightcache build, not per px.
+   STILL SIGN-OFF-GATED (palette line classes: fonts/HUD/sprites must be palette-consistent).
+2. Mode 13h 320x200: CONFLATE-with-caution. (a) world px volume -17% (-14ms class) YES;
+   (b) "58% fewer present bytes" UNPROVEN HERE: 8888 (307KB) == 565 (153KB) == ~14ms measured
+   => present path per-PIXEL or fixed-overhead bound, not byte-bound; 320x200 drops px 17% and may
+   drop only ~2ms present. Probe INDEX8 present directly before believing the byte math.
+   Output-class change -> sign-off (vertical FOV squash at equal FOV; menus re-letterbox).
+3. Entity-tile-gated z writes (8x8 bbox mask): SOUND, composable with everything: world z STORE pool
+   measured ~1-2 ops/px over 91.9K px => ~3-5ms total; tiles can cut ~60-80% => -2..4ms. Zero
+   fidelity risk (exact z where written; entities only z-test their own tiles). MEDIUM. 1 day.
+4. Half-res z: approximation, subset of #3 with correctness bleed at edges; prefer #3 first. PARK.
+5. Temporal z: flicker risk on a moving camera; park as measurement-of-max-win only. SKIP for now.
+6. Surface cache ("lighting in cache, never in raster"): FALSIFIED LOCALLY (#23) with our pow2
+   texel path + torch-flicker dynamics; Q1's shape != ours. Do NOT re-open except maybe inside the
+   indexed pipeline where cached stores halve (8-bit cached surfaces). Note dependency.
+7. Alternating relights (Abrash): only meaningful if #6 exists. PARK with it.
+8. Screen-door stipple for translucents: era-authentic (RoTT/Doom), exact win = kill dst-read+blend
+   on affected px; MUST measure pool first (world-trans + flex alpha px on bench; entities=13.4ms
+   quiescent total though). Output-class change -> sign-off. Cheap to prototype after pool probe.
+9. SW_SPAN_STEP 16->32: block setup amortized => est -1ms; cheap w/ 2LSB watch. LOW value, do
+   opportunistically with pair-pack.
+10. Affine-model mapping/LOD: entities quiescent (bench holds them nearly still); semantic change;
+    park until entities become the pool.
+11. Interlace/checkerboard: emergency lever; doc only. NO.
+12. No-clears: fb clear already tiny (1.18ms incl zb); B1 edge-list would make fb-clear removable
+    (exact cover). Attach to P1 scope note.
+13. Kernel specialization: partially present (pow2/opaque split); no branch-predict cost in harness;
+    skip further splits. Self-patching SMT: no.
+
+QUEUE (segment 4; single-experiment discipline):
+ E39 P2 scalar pair-pack dword store [calibrates new ruler, -3..5ms]
+ E40 F1 sky-cache hit counter + adaptive writes [-1.5ms, free]
+ E41 z-tile entity mask [-2..4ms, zero-risk]
+ E42 SW_SPAN_STEP 16->32 [~ -1ms, watch 2LSB]
+ P1  B1 edge-list world = main event after queue [-18..25 world, -12 sky, kills clear]
+ B2b indexed+chromatic lut [SIGN-OFF] [-35..45 projected]; mode13h 320x200 [SIGN-OFF] folds into it
+ stipple [SIGN-OFF, after pool probe]
