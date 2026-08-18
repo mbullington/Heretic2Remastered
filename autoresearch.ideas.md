@@ -262,3 +262,23 @@ Order: (1) mode/present experiments first (cheap, isolates present win), (2) tex
   packing (iu/it via combined stride), texel-row cache (t>>16&mask)*width hoisted per row-run.
 - B2b (8-bit colormap LUT, sign-off needed) would be -30ms-class on world; deferred.
 - STOP at 85ms looks hard without 8-bit; honest report cadence preserved.
+
+## 2026-08-17 FINAL closes this segment (#35,#36 falsified; #37 kept -> total 139,863)
+- #37 KEEP (ff3c5010): W5 direct-to-surface rendering. Window surface proven RGB565
+  tight-pitch system RAM (W4 probe) -> sw_color aliases SDL surface pixels, present drops
+  SDL_ConvertPixels. present 14.5->13.4ms. total 140,937 -> **139,863** (-19.8% vs 174,297).
+- W4 learning banked: SDL_UpdateWindowSurface blit = 14ms fixed, ~same at 8888 for 2x bytes
+  => VRAM store-bound ~11MB/s guest scale in vendored SDL DOS driver (not blitter logic).
+  Halving bytes again needs 8bpp => ties into B2b (sign-off gated).
+- #36 DISCARD: W3 sky 8px-tile coverage skip. sky -365us only, world marking +1.6ms,
+  plus 57px gate fail (partial-span hole class). Falsifies "covered-sky walk is expensive".
+- #35 DISCARD: W1 block-uniform light. per-px lidx already cached.
+- PLATEAU STATEMENT: world px-core 86.9ms @ ~25 ops/px over 91.9K px is the floor under
+  flat DOSBox (~27 instr/us) without changing per-px semantics. Modulate3 (3 muls) + zbuf
+  cmp/store + index + 5 fixed adds + texel load + fb store ~= 25. Three independent
+  micro-hoist angles falsified (B3b flex diet flat, W1, W3).
+## Remaining levers (ranked):
+  1) B2b 8-bit indexed + colormap LUT: world px ~10 ops + present blit bytes halved ->
+     projected -35..45ms total, needs USER palette-fidelity sign-off.
+  2) W2 zb eviction: saves ~1.7ms on this bench (overdraw ~1.2x), needs ordering; low value.
+  3) Sky per-px trim: cache_row store per sky px (~46K); classification exactness gap.
