@@ -192,7 +192,7 @@ static qboolean screen_vertex_valid(const screen_vertex_t vertex)
 // texture stepping (Quake2-style), integer fixed-point inner loops, and the
 // inverse-z depth convention. Replaces per-pixel barycentric division.
 
-#define SW_SPAN_STEP 16
+#define SW_SPAN_STEP 32
 // World faces: 32px subdivision quantum halves the FDIV+FIST-heavy block
 // prologue count (~11.4K/frame); perspective linearization drift stays inside
 // the documented 2-LSB budget (gate-verified).
