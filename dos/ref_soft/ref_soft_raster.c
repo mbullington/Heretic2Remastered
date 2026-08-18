@@ -196,7 +196,7 @@ static qboolean screen_vertex_valid(const screen_vertex_t vertex)
 // World faces: 32px subdivision quantum halves the FDIV+FIST-heavy block
 // prologue count (~11.4K/frame); perspective linearization drift stays inside
 // the documented 2-LSB budget (gate-verified).
-#define SW_WORLD_SPAN_STEP 64
+#define SW_WORLD_SPAN_STEP 128
 #define SW_LIGHT_CACHE_MAX 64
 // Dense build scratch (lw x lh) and the band-packed working buffer (lw+2 x lh+2).
 static uint32_t sw_face_light_dense[SW_LIGHT_CACHE_MAX * SW_LIGHT_CACHE_MAX];
