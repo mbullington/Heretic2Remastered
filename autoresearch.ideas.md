@@ -282,3 +282,38 @@ Order: (1) mode/present experiments first (cheap, isolates present win), (2) tex
      projected -35..45ms total, needs USER palette-fidelity sign-off.
   2) W2 zb eviction: saves ~1.7ms on this bench (overdraw ~1.2x), needs ordering; low value.
   3) Sky per-px trim: cache_row store per sky px (~46K); classification exactness gap.
+
+## 2026-08-17 CARMACK-HAT CRACKPOT LIST (segment 3 closed: #38 MMX falsified; harness now cputype=pentium_mmx)
+NEW RULER: pentium_mmx models real pipeline/stalls; #37 code re-measured frame 125,293 -> 137,816,
+world 95,056 -> 97,522, present 13,496, clear 1,184. SEGMENT 4 MUST re-init_experiment + re-baseline
+before next run_experiment (material contract change). px census: ~25 ops/px = zb(3-4) + texel idx(6)
++ texel load(1) + lidx(5) + modulate3≈10 + pack(3 folded) + fb store(1) + zb store(1) + 5 accum adds.
+FALSIFIED AXES (do not retry): light LUT (+8.8ms), tw_shift pow2 (+4.2ms), block-uniform light (#35),
+sky tile-masks (#36), pair-bookkeeping + asm MMX (#38: +6.4ms; harness models MMX at flat parity, no
+IPC gain, compiler can't schedule across asm), surface cache (#23), view damage rects (camera moves).
+
+### ACROSS PIXELS (save per-px work):
+- P2 **scalar pair-pack dword store** [SMALL/FIRST]: in-scalar-loop pair: share lidx when equal,
+  one u32 fb store per 2px. No asm/barrier. est -3..5ms new ruler. Opener experiment for segment 4.
+- P1 **B1 REDUX: Q2-style edge-list span-sorting world** [BIG, ~2-3 days]: ref impl public:
+  id-Software/Quake-2 ref_soft/r_edge.c+r_scan.c ("low depth complexity 1-3"; AEL scanned once per
+  row; spans emitted per surface in BSP-walk order). Kills zb load+cmp+store on ~92K world px
+  (-4..6 ops/px), sky zb walk entirely (16.8 -> ~5ms sentinel fill), depth-complexity exact 1.
+  Est on NEW ruler: total ~151 -> ~115ms. Gate risk: painter-vs-z only for exact coplanar ties
+  (2LSB budget absorbs). Prior #31 ordering attempt conflated machinery; edge list REPLACES it.
+- P3 **Hecker exact integer edge walking** (Gdmtex3): fractional-edge DDA with positive-mod error
+  terms; removes float from scan side-walk; correctness-crisp. est -1..2ms. LOW.
+- P5 span-level single-light-cell fast path: W1 mechanism at coarser grain; likely same fate. SKIP.
+- P6 **Descent-II scan doubling** (TMAP_P2 source: "scan doubling inner loop"): 2 rows per u,v walk.
+  -45% world class BUT output change -> opt-in performance mode switch (user gate). PARK.
+### ACROSS FRAMES (save per-frame work):
+- F1 **sky-cache hit accounting + adaptive write**: bench camera moves every frame => cache stores
+  (~46K stores, ~1.5ms) may be pure waste here, replay never hit. Measure hit counter; if 0, write
+  cache only when camera basis == previous frame (cheap compare), keeping static-camera replay win.
+- F2 viewleaf memo (1.8ms pool) / F3 face lightbuild (trivial): SKIP, bounded pools.
+- F4 surface cache: FALSIFIED #23. F5 world/present decoupled rates: interactive change. PARK.
+### REAL-HW (affects dad's PMMX-233 bench only, docs):
+- Socket-7 BIOS "linear framebuffer write-combining/USWC" toggle: mirror of VOGONS quake 15->37fps
+  anecdote; PMMX CPU lacks MTRRs (FastVid/SetMtrr are PPro+), so this is a CHIPSET BIOS item.
+  Present path (13.5ms emulated) should collapse ~4x on the real box with WC on.
+- Pairing (U/V) on real PMMX effectively halves the span loop CPI; nothing to code there, just note.
