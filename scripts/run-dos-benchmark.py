@@ -105,7 +105,7 @@ def main() -> int:
         run_dosbox(
             GuestStage(stage_path, None, set()),
             f"set H2DOS_RUN_ID={RUN_ID}\nset H2DOS_FRAMES={FRAME_LIMIT}\n"
-            "set H2DOS_RENDERER=1\nset H2DOS_AUDIO=1\nset H2DOS_REALDATA=1\nset H2DOS_BENCH=1\n"
+            "set H2DOS_RENDERER=1\nset H2DOS_AUDIO=1\nset H2DOS_REALDATA=1\nset H2DOS_BENCH=1\nset H2DOS_SW_WIDTH=320\nset H2DOS_SW_HEIGHT=200\n"
             "silver.exe -basedir H2REAL +set developer 1 +map tutorial2 > SWREAL.OUT",
             TIMEOUT_SECONDS,
             extra_sets=(f"cycles={CYCLES}",),

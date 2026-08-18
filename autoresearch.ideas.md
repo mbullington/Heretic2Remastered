@@ -1,5 +1,7 @@
 # Untried hypotheses (remove when attempted)
 
+CLOSED 2026-08-18 (#47, #48): B2b indexed internals falsified for real content — ~1 palette per m8 in the real PAKs (2016 distinct / Htic2-0; 195 of 199 silverspring), single 256-global = garbage; 565 fallback re-banked. B1 stage-2 hybrid clip falsified: unsorted = +11ms no payoff; sorted = gate-red 2.0% on coplanar z-ties (painter-semantic ties are order-dependent). World span level = architectural optimum under painter semantics; HZB/subtree world ideas share that fate. 320x200 (user-authorized mode sibling) = seg-5 agenda.
+
 ## Big structural swing (researched from q2DOS + Hammer of Thyrion, both GPL2 — see NOTICES.md)
 Both DOS ports ship Quake-family surface caches: composite texture*lightmap per
 face per frame (r_surf.c D_CacheSurface/R_BuildLightMap) so the span inner loop

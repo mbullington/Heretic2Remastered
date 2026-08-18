@@ -8,6 +8,7 @@
 
 uint16_t *sw_color;
 static bool sw_color_owns;
+static byte *sw_present_lut;
 uint32_t *sw_depth;
 int sw_width;
 int sw_height;
@@ -30,16 +31,54 @@ qboolean SW_FrameBufferInit(void *window)
 		return false;
 
 	sw_window = window;
+	{
+		int mode_count = 0;
+		SDL_DisplayMode **modes = SDL_GetFullscreenDisplayModes(SDL_GetPrimaryDisplay(), &mode_count);
+		for (int i = 0; modes != NULL && i < mode_count; ++i)
+			if (modes[i]->w <= 400)
+				sw_ri.Con_Printf(0, "ref_soft: vesa mode %dx%x fmt %x\n", modes[i]->w, modes[i]->h, modes[i]->format);
+		if (modes != NULL)
+			SDL_free(modes);
+	}
 	// B2: request the VESA 320x240 RGB565 mode so the final presentation is a
 	// 2-byte/pixel LFB copy instead of 4-byte. The internal framebuffer stays
 	// XRGB8888 for now (conversion happens in SDL_ConvertPixels at present).
 	{
+		// Mode probe: resolution overridable via harness env (avoids the
+		// engine +set token path); defaults stay 320x240.
+		int req_w = 320;
+		int req_h = 240;
+		{
+			const char *ew = getenv("H2DOS_SW_WIDTH");
+			const char *eh = getenv("H2DOS_SW_HEIGHT");
+			if (ew != NULL && eh != NULL)
+			{
+				const int tw = (int)strtol(ew, NULL, 10);
+				const int th = (int)strtol(eh, NULL, 10);
+				if (tw >= 160 && tw <= 1280 && th >= 100 && th <= 960)
+				{
+					req_w = tw;
+					req_h = th;
+				}
+			}
+		}
 		SDL_DisplayMode want;
 		SDL_zero(want);
-		want.format = SDL_PIXELFORMAT_RGB565;
-		want.w = 320;
-		want.h = 240;
-		if (SDL_SetWindowFullscreenMode(sw_window, &want))
+		want.format = req_w == 320 && req_h == 240 ? SDL_PIXELFORMAT_RGB565 : SDL_PIXELFORMAT_INDEX8;
+		want.w = req_w;
+		want.h = req_h;
+		sw_ri.Con_Printf(0, "ref_soft: sw mode request %dx%d\n", want.w, want.h);
+		// Probe ladder: the DOS VESA driver's mode list is sparse; try 32/24-bit
+		// at the requested resolution, then RGB565 at the classic 320x240.
+		if (!SDL_SetWindowFullscreenMode(sw_window, &want))
+		{
+			want.format = SDL_PIXELFORMAT_RGB565;
+			want.w = 320;
+			want.h = 240;
+			if (!SDL_SetWindowFullscreenMode(sw_window, &want))
+				want.format = 0;
+		}
+		if (want.format != 0)
 			(void)SDL_SetWindowFullscreen(sw_window, true);
 	}
 	sw_surface = SDL_GetWindowSurface(sw_window);
@@ -55,6 +94,30 @@ qboolean SW_FrameBufferInit(void *window)
 		return false;
 
 	const size_t pixels = (size_t)sw_width * (size_t)sw_height;
+	if (sw_surface->format == SDL_PIXELFORMAT_INDEX8)
+	{
+		// Palettized present (320x200 sibling mode): fixed 3-3-2 palette and a
+		// 64KB 565->index LUT; conversion happens per row at present.
+		sw_present_lut = malloc(65536);
+		for (int i = 0; i < 65536; ++i)
+			sw_present_lut[i] = (byte)(((i >> 7) & 0xE0) | ((i >> 6) & 0x1C) | (i & 0x03));
+		SDL_Palette *pal = SDL_CreatePalette(256);
+		if (pal != NULL && sw_present_lut != NULL)
+		{
+			SDL_Color colors[256];
+			for (int i = 0; i < 256; ++i)
+			{
+				colors[i].r = (Uint8)(((i >> 5) & 7) * 255 / 7);
+				colors[i].g = (Uint8)(((i >> 2) & 7) * 255 / 7);
+				colors[i].b = (Uint8)((i & 3) * 85);
+				colors[i].a = 255;
+			}
+			SDL_SetPaletteColors(pal, colors, 0, 256);
+			SDL_SetSurfacePalette(sw_surface, pal);
+			SDL_DestroyPalette(pal);
+			sw_ri.Con_Printf(PRINT_ALL, "ref_soft: indexed present active (332 palette)\n");
+		}
+	}
 	// Fast path: with a shader-native RGB565 surface and tight pitch, render
 	// straight into the surface bytes; SDL_UpdateWindowSurface does the only
 	// copy. Otherwise keep a private framebuffer and convert at present.
@@ -176,7 +239,23 @@ void SW_Present(void)
 	if (sw_surface == NULL || sw_color == NULL)
 		return;
 	bool ready = true;
-	if (sw_color_owns)
+	if (sw_surface->format == SDL_PIXELFORMAT_INDEX8 && sw_present_lut != NULL)
+	{
+		if (!SDL_LockSurface(sw_surface))
+		{
+			sw_ri.Con_Printf(PRINT_ALL, "ref_soft: SDL_LockSurface failed: %s\n", SDL_GetError());
+			return;
+		}
+		for (int y = 0; y < sw_height; ++y)
+		{
+			const uint16_t *src = sw_color + (size_t)y * (size_t)sw_width;
+			byte *dst = (byte *)sw_surface->pixels + (size_t)y * (size_t)sw_surface->pitch;
+			for (int x = 0; x < sw_width; ++x)
+				dst[x] = sw_present_lut[src[x]];
+		}
+		SDL_UnlockSurface(sw_surface);
+	}
+	else if (sw_color_owns)
 	{
 		if (!SDL_LockSurface(sw_surface))
 		{
