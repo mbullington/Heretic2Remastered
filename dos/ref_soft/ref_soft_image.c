@@ -12,7 +12,7 @@
 // B2b indexed pipeline: images hold the raw 8-bit palette indices. The first
 // loaded M8 fixes the global 256-color palette; everything else (M32, raw
 // RGBA, 565 API callers) routes through nearest-color LUTs derived from it.
-static paletteRGB_t sw_palette_rgb[256];
+paletteRGB_t sw_palette_rgb[256];
 static qboolean sw_palette_ready;
 unsigned sw_palette_version;
 uint16_t sw_fb_palette[256];

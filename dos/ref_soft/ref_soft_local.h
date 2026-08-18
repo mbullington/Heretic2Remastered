@@ -171,6 +171,7 @@ extern byte *sw_color;
 // Indexed B2b pipeline: palette + conversion/shading LUTs (built once palette is known).
 extern uint16_t sw_fb_palette[256];
 extern unsigned sw_palette_version;
+extern paletteRGB_t sw_palette_rgb[256];
 extern byte sw_idx_from_555[32768];
 extern byte sw_shade_lut[64 * 256];
 #define SW_TRANSPARENT_INDEX 255

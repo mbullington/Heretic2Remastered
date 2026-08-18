@@ -23,7 +23,7 @@ uint16_t SW_RGB565(const unsigned r, const unsigned g, const unsigned b)
 // 565 -> palette index through the 555 nearest-color map (g6 folded to g5).
 byte SW_IndexFrom565(const uint16_t color)
 {
-	const unsigned key = ((unsigned)(color >> 1) & 0x7C00u) | ((unsigned)(color >> 6) & 0x03E0u) | (color & 0x1Fu);
+	const unsigned key = ((unsigned)(color >> 1) & 0x7C00u) | ((unsigned)(color >> 1) & 0x03E0u) | (color & 0x1Fu);
 	return sw_idx_from_555[key];
 }
 
@@ -36,11 +36,18 @@ qboolean SW_FrameBufferInit(void *window)
 	{
 		SDL_DisplayMode want;
 		SDL_zero(want);
-		want.format = SDL_PIXELFORMAT_RGB565;
+		want.format = SDL_PIXELFORMAT_INDEX8;
 		want.w = 320;
 		want.h = 240;
 		if (SDL_SetWindowFullscreenMode(sw_window, &want))
-			(void)SDL_SetWindowFullscreen(sw_window, true);
+		{
+			SDL_zero(want);
+			want.format = SDL_PIXELFORMAT_RGB565;
+			want.w = 320;
+			want.h = 240;
+			if (SDL_SetWindowFullscreenMode(sw_window, &want))
+				(void)SDL_SetWindowFullscreen(sw_window, true);
+		}
 	}
 	sw_surface = SDL_GetWindowSurface(sw_window);
 	if (sw_surface == NULL)
@@ -51,6 +58,8 @@ qboolean SW_FrameBufferInit(void *window)
 
 	sw_width = sw_surface->w;
 	sw_height = sw_surface->h;
+	sw_ri.Con_Printf(PRINT_ALL, "ref_soft: present surface format %08x pitch %d size %dx%d\n",
+		(unsigned)sw_surface->format, sw_surface->pitch, sw_surface->w, sw_surface->h);
 	if (sw_width <= 0 || sw_height <= 0 || (size_t)sw_width > SIZE_MAX / (size_t)sw_height)
 		return false;
 
@@ -159,11 +168,39 @@ void SW_Present(void)
 	if (sw_surface == NULL || sw_color == NULL)
 		return;
 	bool ready = true;
+	static SDL_Palette *sw_sdl_palette;
+	static unsigned sw_applied_palette_version;
+	if (sw_surface->format == SDL_PIXELFORMAT_INDEX8 &&
+		sw_applied_palette_version != sw_palette_version)
+	{
+		SDL_Color colors[256];
+		if (sw_sdl_palette == NULL)
+			sw_sdl_palette = SDL_CreatePalette(256);
+		if (sw_sdl_palette != NULL)
+		{
+			for (int i = 0; i < 256; ++i)
+				colors[i] = (SDL_Color){ sw_palette_rgb[i].r, sw_palette_rgb[i].g, sw_palette_rgb[i].b, 255 };
+			if (SDL_SetPaletteColors(sw_sdl_palette, colors, 0, 256) &&
+				SDL_SetSurfacePalette(sw_surface, sw_sdl_palette))
+				sw_applied_palette_version = sw_palette_version;
+		}
+	}
 	const bool locked = SDL_LockSurface(sw_surface);
 	if (locked)
 	{
 		const size_t pixels = (size_t)sw_width * (size_t)sw_height;
-		if (sw_surface->format == SDL_PIXELFORMAT_RGB565 &&
+		if (sw_surface->format == SDL_PIXELFORMAT_INDEX8 &&
+			sw_surface->pitch == sw_width)
+		{
+			memcpy(sw_surface->pixels, sw_color, pixels);
+		}
+		else if (sw_surface->format == SDL_PIXELFORMAT_INDEX8)
+		{
+			for (int y = 0; y < sw_height; ++y)
+				memcpy((byte *)sw_surface->pixels + (size_t)y * (size_t)sw_surface->pitch,
+					sw_color + (size_t)y * (size_t)sw_width, (size_t)sw_width);
+		}
+		else if (sw_surface->format == SDL_PIXELFORMAT_RGB565 &&
 			sw_surface->pitch == sw_width * (int)sizeof(uint16_t))
 		{
 			uint16_t *dst = (uint16_t *)sw_surface->pixels;
