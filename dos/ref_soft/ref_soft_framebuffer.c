@@ -7,6 +7,7 @@
 #include <time.h>
 
 uint16_t *sw_color;
+static bool sw_color_owns;
 uint32_t *sw_depth;
 int sw_width;
 int sw_height;
@@ -54,7 +55,20 @@ qboolean SW_FrameBufferInit(void *window)
 		return false;
 
 	const size_t pixels = (size_t)sw_width * (size_t)sw_height;
-	sw_color = calloc(pixels, sizeof(*sw_color));
+	// Fast path: with a shader-native RGB565 surface and tight pitch, render
+	// straight into the surface bytes; SDL_UpdateWindowSurface does the only
+	// copy. Otherwise keep a private framebuffer and convert at present.
+	if (sw_surface->format == SDL_PIXELFORMAT_RGB565 &&
+		sw_surface->pitch == sw_width * (int)sizeof(*sw_color))
+	{
+		sw_color = (uint16_t *)sw_surface->pixels;
+		sw_color_owns = false;
+	}
+	else
+	{
+		sw_color = calloc(pixels, sizeof(*sw_color));
+		sw_color_owns = true;
+	}
 	sw_depth = malloc(pixels * sizeof(*sw_depth));
 	if (sw_color == NULL || sw_depth == NULL)
 	{
@@ -68,7 +82,9 @@ qboolean SW_FrameBufferInit(void *window)
 void SW_FrameBufferShutdown(void)
 {
 	free(sw_depth);
-	free(sw_color);
+	if (sw_color_owns)
+		free(sw_color);
+	sw_color_owns = false;
 	sw_depth = NULL;
 	sw_color = NULL;
 	sw_surface = NULL;
@@ -159,16 +175,20 @@ void SW_Present(void)
 	const uclock_t start = uclock();
 	if (sw_surface == NULL || sw_color == NULL)
 		return;
-	if (!SDL_LockSurface(sw_surface))
+	bool ready = true;
+	if (sw_color_owns)
 	{
-		sw_ri.Con_Printf(PRINT_ALL, "ref_soft: SDL_LockSurface failed: %s\n", SDL_GetError());
-		return;
+		if (!SDL_LockSurface(sw_surface))
+		{
+			sw_ri.Con_Printf(PRINT_ALL, "ref_soft: SDL_LockSurface failed: %s\n", SDL_GetError());
+			return;
+		}
+		ready = SDL_ConvertPixels(sw_width, sw_height,
+			SDL_PIXELFORMAT_RGB565, sw_color, sw_width * (int)sizeof(*sw_color),
+			sw_surface->format, sw_surface->pixels, sw_surface->pitch);
+		SDL_UnlockSurface(sw_surface);
 	}
-	const bool converted = SDL_ConvertPixels(sw_width, sw_height,
-		SDL_PIXELFORMAT_RGB565, sw_color, sw_width * (int)sizeof(*sw_color),
-		sw_surface->format, sw_surface->pixels, sw_surface->pitch);
-	SDL_UnlockSurface(sw_surface);
-	if (!converted || !SDL_UpdateWindowSurface(sw_window))
+	if (!ready || !SDL_UpdateWindowSurface(sw_window))
 	{
 		sw_ri.Con_Printf(PRINT_ALL, "ref_soft: framebuffer presentation failed: %s\n", SDL_GetError());
 		return;
