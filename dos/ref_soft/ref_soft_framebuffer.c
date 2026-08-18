@@ -6,7 +6,7 @@
 #include <string.h>
 #include <time.h>
 
-uint32_t *sw_color;
+uint16_t *sw_color;
 uint32_t *sw_depth;
 int sw_width;
 int sw_height;
@@ -15,11 +15,12 @@ h2dos_soft_stats_t sw_stats;
 static SDL_Window *sw_window;
 static SDL_Surface *sw_surface;
 
-uint32_t SW_RGBA(const byte r, const byte g, const byte b, const byte a)
+uint16_t SW_RGB565(const unsigned r, const unsigned g, const unsigned b)
 {
-	// XRGB8888 in-memory order (B,G,R,X little-endian): matches the window
-	// surface pixel format so presenting collapses to a straight copy.
-	return (uint32_t)b | ((uint32_t)g << 8) | ((uint32_t)r << 16) | ((uint32_t)a << 24);
+	// RGB565 in-memory order: the low 16 bits of the little-endian u16 are the
+	// VESA LFB pixel. Presenting to the RGB565 fullscreen surface collapses to
+	// a straight 2-byte/pixel copy.
+	return (uint16_t)(((r & 0xF8u) << 8) | ((g & 0xFCu) << 3) | (b >> 3));
 }
 
 qboolean SW_FrameBufferInit(void *window)
@@ -28,6 +29,18 @@ qboolean SW_FrameBufferInit(void *window)
 		return false;
 
 	sw_window = window;
+	// B2: request the VESA 320x240 RGB565 mode so the final presentation is a
+	// 2-byte/pixel LFB copy instead of 4-byte. The internal framebuffer stays
+	// XRGB8888 for now (conversion happens in SDL_ConvertPixels at present).
+	{
+		SDL_DisplayMode want;
+		SDL_zero(want);
+		want.format = SDL_PIXELFORMAT_RGB565;
+		want.w = 320;
+		want.h = 240;
+		if (SDL_SetWindowFullscreenMode(sw_window, &want))
+			(void)SDL_SetWindowFullscreen(sw_window, true);
+	}
 	sw_surface = SDL_GetWindowSurface(sw_window);
 	if (sw_surface == NULL)
 	{
@@ -48,7 +61,7 @@ qboolean SW_FrameBufferInit(void *window)
 		SW_FrameBufferShutdown();
 		return false;
 	}
-	SW_Clear(SW_RGBA(0, 0, 0, 255));
+	SW_Clear(SW_RGB565(0, 0, 0));
 	return true;
 }
 
@@ -64,9 +77,9 @@ void SW_FrameBufferShutdown(void)
 	sw_height = 0;
 }
 
-static uint32_t sw_clear_color;
+static uint16_t sw_clear_color;
 
-void SW_Clear(const uint32_t color)
+void SW_Clear(const uint16_t color)
 {
 	const uclock_t start = uclock();
 	const size_t pixels = (size_t)sw_width * (size_t)sw_height;
@@ -85,12 +98,7 @@ void SW_ClearColorFill(void)
 		sw_color[i] = sw_clear_color;
 }
 
-static byte channel(const uint32_t color, const int shift)
-{
-	return (byte)((color >> shift) & 255u);
-}
-
-void SW_PutPixel(const int x, const int y, const float depth, const uint32_t color,
+void SW_PutPixel(const int x, const int y, const float depth, const uint16_t color, const byte alpha,
 	const qboolean depth_write, const qboolean additive)
 {
 	// depth is inverse-z (larger = closer); FLT_MAX means "always nearest".
@@ -105,20 +113,25 @@ void SW_PutPixel(const int x, const int y, const float depth, const uint32_t col
 	if (depth_key < sw_depth[index])
 		return;
 
-	const byte alpha = channel(color, 24);
 	if (alpha == 255 && !additive)
 	{
 		sw_color[index] = color;
 	}
 	else if (alpha != 0)
 	{
-		const uint32_t destination = sw_color[index];
+		const uint16_t destination = sw_color[index];
 		const int source_weight = alpha;
 		const int destination_weight = additive ? 255 : 255 - alpha;
-		const byte r = (byte)min(255, (channel(color, 16) * source_weight + channel(destination, 16) * destination_weight) / 255);
-		const byte g = (byte)min(255, (channel(color, 8) * source_weight + channel(destination, 8) * destination_weight) / 255);
-		const byte b = (byte)min(255, (channel(color, 0) * source_weight + channel(destination, 0) * destination_weight) / 255);
-		sw_color[index] = SW_RGBA(r, g, b, 255);
+		const unsigned sr = (color >> 8) & 0xF8u;
+		const unsigned sg = (color >> 3) & 0xFCu;
+		const unsigned sb = (color << 3) & 0xF8u;
+		const unsigned dr = (destination >> 8) & 0xF8u;
+		const unsigned dg = (destination >> 3) & 0xFCu;
+		const unsigned db = (destination << 3) & 0xF8u;
+		const unsigned r = min(255u, (sr * (unsigned)source_weight + dr * (unsigned)destination_weight) / 255u);
+		const unsigned g = min(255u, (sg * (unsigned)source_weight + dg * (unsigned)destination_weight) / 255u);
+		const unsigned b = min(255u, (sb * (unsigned)source_weight + db * (unsigned)destination_weight) / 255u);
+		sw_color[index] = SW_RGB565(r, g, b);
 	}
 
 	if (depth_write)
@@ -128,7 +141,7 @@ void SW_PutPixel(const int x, const int y, const float depth, const uint32_t col
 	}
 }
 
-void SW_BlendRect(const int x, const int y, const int w, const int h, const uint32_t color)
+void SW_BlendRect(const int x, const int y, const int w, const int h, const uint16_t color, const byte alpha)
 {
 	if (w <= 0 || h <= 0)
 		return;
@@ -138,7 +151,7 @@ void SW_BlendRect(const int x, const int y, const int w, const int h, const uint
 	const int end_y = (int)min((long long)h, (long long)sw_height - y);
 	for (int row = start_y; row < end_y; ++row)
 		for (int column = start_x; column < end_x; ++column)
-			SW_PutPixel(x + column, y + row, FLT_MAX, color, false, false);
+			SW_PutPixel(x + column, y + row, FLT_MAX, color, alpha, false, false);
 }
 
 void SW_Present(void)
@@ -152,7 +165,7 @@ void SW_Present(void)
 		return;
 	}
 	const bool converted = SDL_ConvertPixels(sw_width, sw_height,
-		SDL_PIXELFORMAT_XRGB8888, sw_color, sw_width * (int)sizeof(*sw_color),
+		SDL_PIXELFORMAT_RGB565, sw_color, sw_width * (int)sizeof(*sw_color),
 		sw_surface->format, sw_surface->pixels, sw_surface->pitch);
 	SDL_UnlockSurface(sw_surface);
 	if (!converted || !SDL_UpdateWindowSurface(sw_window))
@@ -186,8 +199,14 @@ qboolean SW_SavePPM(const char *path)
 	{
 		for (int x = 0; x < sw_width; ++x)
 		{
-			const uint32_t pixel = sw_color[(size_t)y * (size_t)sw_width + (size_t)x];
-			const byte rgb[3] = { channel(pixel, 16), channel(pixel, 8), channel(pixel, 0) };
+			const uint16_t pixel = sw_color[(size_t)y * (size_t)sw_width + (size_t)x];
+			const unsigned r5 = (pixel >> 11) & 31u;
+			const unsigned g6 = (pixel >> 5) & 63u;
+			const unsigned b5 = pixel & 31u;
+			const byte rgb[3] = {
+				(byte)((r5 << 3) | (r5 >> 2)),
+				(byte)((g6 << 2) | (g6 >> 4)),
+				(byte)((b5 << 3) | (b5 >> 2)) };
 			if (fwrite(rgb, 1, sizeof(rgb), file) != sizeof(rgb))
 			{
 				fclose(file);

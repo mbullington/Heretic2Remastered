@@ -6,6 +6,17 @@
 #include <stdlib.h>
 #include <string.h>
 
+// 565 colorkey convention: transparent pixels are 0x0000; alpha semitones
+// quantize away (a >= 128 becomes opaque). Opaque pure black is nudged to
+// 0x0001 so it never aliases with the transparent key.
+static uint16_t sw_pack_texel(const unsigned r, const unsigned g, const unsigned b, const unsigned a)
+{
+	if (a < 128u)
+		return 0;
+	const uint16_t v = SW_RGB565(r, g, b);
+	return v != 0 ? v : 1;
+}
+
 static sw_image_t sw_images[SW_MAX_IMAGES];
 static int sw_num_images;
 static sw_image_t *sw_fallback;
@@ -103,7 +114,7 @@ static sw_image_t *load_m8(const char *name, const sw_image_kind_t kind)
 		{
 			const paletteRGB_t color = mip->palette[indices[i]];
 			const byte alpha = ((kind == SW_IMAGE_SPRITE || kind == SW_IMAGE_SKIN) && indices[i] == 255) ? 0 : 255;
-			image->pixels[i] = SW_RGBA(color.r, color.g, color.b, alpha);
+			image->pixels[i] = sw_pack_texel(color.r, color.g, color.b, alpha);
 			image->has_alpha |= alpha != 255;
 		}
 		++sw_stats.m8_images;
@@ -112,7 +123,7 @@ static sw_image_t *load_m8(const char *name, const sw_image_kind_t kind)
 	return image;
 }
 
-static sw_image_t *load_m32(const char *name)
+static sw_image_t *load_m32(const char *name, const sw_image_kind_t kind)
 {
 	void *file = NULL;
 	const int length = sw_ri.FS_LoadFile(name, &file);
@@ -147,8 +158,12 @@ static sw_image_t *load_m32(const char *name)
 		const byte *source = (const byte *)file + offset;
 		for (size_t i = 0; i < count; ++i)
 		{
-			image->pixels[i] = SW_RGBA(source[i * 4], source[i * 4 + 1], source[i * 4 + 2], source[i * 4 + 3]);
-			image->has_alpha |= source[i * 4 + 3] != 255;
+			// WALL textures render through alpha-ignoring paths, so their zero
+			// alpha bytes must NOT become the 565 transparent key (that turned
+			// whole walls/sky black). Everything else keeps colorkey semantics.
+			const byte a = kind == SW_IMAGE_WALL ? 255 : source[i * 4 + 3];
+			image->pixels[i] = sw_pack_texel(source[i * 4], source[i * 4 + 1], source[i * 4 + 2], a);
+			image->has_alpha |= kind != SW_IMAGE_WALL && source[i * 4 + 3] != 255;
 		}
 		++sw_stats.m32_images;
 	}
@@ -163,7 +178,7 @@ static sw_image_t *make_fallback(void)
 		return NULL;
 	for (int y = 0; y < image->height; ++y)
 		for (int x = 0; x < image->width; ++x)
-			image->pixels[y * image->width + x] = ((x ^ y) & 8) ? SW_RGBA(255, 0, 255, 255) : SW_RGBA(20, 20, 20, 255);
+			image->pixels[y * image->width + x] = ((x ^ y) & 8) ? SW_RGB565(255, 0, 255) : SW_RGB565(20, 20, 20);
 	image->synthetic_fallback = true;
 	return image;
 }
@@ -227,7 +242,7 @@ sw_image_t *SW_FindImage(const char *name, const sw_image_kind_t kind)
 	if (extension != NULL && Q_stricmp(extension, ".m8") == 0)
 		image = load_m8(name, kind);
 	else if (extension != NULL && Q_stricmp(extension, ".m32") == 0)
-		image = load_m32(name);
+		image = load_m32(name, kind);
 
 	if (image == NULL)
 	{
@@ -244,12 +259,6 @@ void SW_FreeUnusedImages(void)
 	/* Stable pointers are required by the client. Reclamation happens at shutdown. */
 }
 
-static uint32_t with_alpha(const uint32_t color, const float alpha)
-{
-	const int source_alpha = (int)((color >> 24) & 255u);
-	const int result = ClampI((int)(source_alpha * alpha), 0, 255);
-	return (color & 0x00ffffffu) | ((uint32_t)result << 24);
-}
 
 void SW_DrawImage(const int x, const int y, const int w, const int h, const sw_image_t *image, const float alpha)
 {
@@ -259,14 +268,15 @@ void SW_DrawImage(const int x, const int y, const int w, const int h, const sw_i
 	const int start_y = (int)max(0ll, -(long long)y);
 	const int end_x = (int)min((long long)w, (long long)sw_width - x);
 	const int end_y = (int)min((long long)h, (long long)sw_height - y);
+	const byte base_alpha = (byte)ClampI((int)(255.0f * min(alpha, 1.0f)), 0, 255);
 	for (int dy = start_y; dy < end_y; ++dy)
 	{
 		const int source_y = (int)((long long)dy * image->height / h);
 		for (int dx = start_x; dx < end_x; ++dx)
 		{
 			const int source_x = (int)((long long)dx * image->width / w);
-			SW_PutPixel(x + dx, y + dy, FLT_MAX,
-				with_alpha(image->pixels[source_y * image->width + source_x], min(alpha, 1.0f)), false, false);
+			const uint16_t px = image->pixels[source_y * image->width + source_x];
+			SW_PutPixel(x + dx, y + dy, FLT_MAX, px, px != 0 ? base_alpha : 0, false, false);
 		}
 	}
 	++sw_stats.ui_draws;
@@ -319,13 +329,14 @@ void SW_DrawStretchPic(int x, int y, int w, int h, const char *name, const float
 	SW_DrawImage(x, y, w, h, image, alpha);
 }
 
-static uint32_t tint(const uint32_t source, const paletteRGBA_t color)
+static uint16_t tint(const uint16_t source, const paletteRGBA_t color, byte *out_alpha)
 {
-	const byte r = (byte)(((source & 255u) * color.r) / 255u);
-	const byte g = (byte)((((source >> 8) & 255u) * color.g) / 255u);
-	const byte b = (byte)((((source >> 16) & 255u) * color.b) / 255u);
-	const byte a = (byte)((((source >> 24) & 255u) * color.a) / 255u);
-	return SW_RGBA(r, g, b, a);
+	const byte r = (byte)((((source >> 8) & 0xF8u) * color.r) / 255u);
+	const byte g = (byte)((((source >> 3) & 0xFCu) * color.g) / 255u);
+	const byte b = (byte)((((source << 3) & 0xF8u) * color.b) / 255u);
+	if (out_alpha != NULL)
+		*out_alpha = source != 0 ? color.a : 0;
+	return source != 0 ? SW_RGB565(r, g, b) : 0;
 }
 
 static void draw_char_layer(const int x, const int y, const int scale, const int character, const paletteRGBA_t color)
@@ -342,8 +353,10 @@ static void draw_char_layer(const int x, const int y, const int scale, const int
 	for (int py = 0; py < cell_height * scale; ++py)
 		for (int px = 0; px < cell_width * scale; ++px)
 		{
-			const uint32_t source = sw_conchars->pixels[(source_y + py / scale) * sw_conchars->width + source_x + px / scale];
-			SW_PutPixel(x + px, y + py, FLT_MAX, tint(source, color), false, false);
+			const uint16_t source = sw_conchars->pixels[(source_y + py / scale) * sw_conchars->width + source_x + px / scale];
+			byte glyph_alpha;
+			const uint16_t glyph = tint(source, color, &glyph_alpha);
+			SW_PutPixel(x + px, y + py, FLT_MAX, glyph, glyph_alpha, false, false);
 		}
 	++sw_stats.ui_draws;
 }
@@ -372,20 +385,20 @@ void SW_DrawTileClear(const int x, const int y, const int w, const int h, const 
 		{
 			const int sx = (int)(((long long)x + px) % image->width + image->width) % image->width;
 			const int sy = (int)(((long long)y + py) % image->height + image->height) % image->height;
-			SW_PutPixel(x + px, y + py, FLT_MAX, image->pixels[sy * image->width + sx], false, false);
+			SW_PutPixel(x + px, y + py, FLT_MAX, image->pixels[sy * image->width + sx], 255, false, false);
 		}
 	++sw_stats.ui_draws;
 }
 
 void SW_DrawFill(const int x, const int y, const int w, const int h, const paletteRGBA_t color)
 {
-	SW_BlendRect(x, y, w, h, SW_RGBA(color.r, color.g, color.b, color.a));
+	SW_BlendRect(x, y, w, h, SW_RGB565(color.r, color.g, color.b), color.a);
 	++sw_stats.ui_draws;
 }
 
 void SW_DrawFadeScreen(const paletteRGBA_t color)
 {
-	SW_BlendRect(0, 0, sw_width, sw_height, SW_RGBA(color.r, color.g, color.b, color.a));
+	SW_BlendRect(0, 0, sw_width, sw_height, SW_RGB565(color.r, color.g, color.b), color.a);
 }
 
 static const sw_font_char_t *font_character(const sw_font_char_t *font, const byte character)
@@ -413,7 +426,8 @@ static void draw_font_character(const int x, const int y, const sw_font_char_t *
 			const int sx = source_x + px * (source_right - source_x) / destination_width;
 			const int sy = source_y + py * (source_bottom - source_y) / destination_height;
 			SW_PutPixel(destination_x + px, destination_y + py, FLT_MAX,
-				with_alpha(image->pixels[sy * image->width + sx], alpha), false, false);
+				image->pixels[sy * image->width + sx],
+				(byte)ClampI((int)((image->pixels[sy * image->width + sx] != 0 ? 255 : 0) * alpha), 0, 255), false, false);
 		}
 }
 
@@ -538,6 +552,6 @@ void SW_DrawCinematic(const byte *data, const paletteRGB_t *palette)
 		for (int x = 0; x < sw_width; ++x)
 		{
 			const byte index = data[(y * cinematic_height / sw_height) * cinematic_width + x * cinematic_width / sw_width];
-			SW_PutPixel(x, y, FLT_MAX, SW_RGBA(palette[index].r, palette[index].g, palette[index].b, 255), false, false);
+			SW_PutPixel(x, y, FLT_MAX, SW_RGB565(palette[index].r, palette[index].g, palette[index].b), 255, false, false);
 		}
 }

@@ -105,7 +105,7 @@ static void SW_SetSky(const char *name, const float rotate, const vec3_t axis)
 static void SW_BeginFrame(const float camera_separation)
 {
 	(void)camera_separation;
-	SW_Clear(SW_RGBA(2, 2, 8, 255));
+	SW_Clear(SW_RGB565(2, 2, 8));
 }
 
 static void SW_EndFrame(void)

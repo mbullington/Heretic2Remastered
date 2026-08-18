@@ -128,18 +128,21 @@ static float edge(const screen_vertex_t a, const screen_vertex_t b, const float 
 	return (x - a.x) * (b.y - a.y) - (y - a.y) * (b.x - a.x);
 }
 
-static byte color_channel(const uint32_t color, const int shift)
+static uint16_t modulate(const uint16_t color, const float red, const float green, const float blue,
+	const float alpha, byte *out_alpha)
 {
-	return (byte)((color >> shift) & 255u);
-}
-
-static uint32_t modulate(const uint32_t color, const float red, const float green, const float blue, const float alpha)
-{
-	return SW_RGBA(
-		(byte)ClampI((int)(color_channel(color, 16) * red), 0, 255),
-		(byte)ClampI((int)(color_channel(color, 8) * green), 0, 255),
-		(byte)ClampI((int)(color_channel(color, 0) * blue), 0, 255),
-		(byte)ClampI((int)(color_channel(color, 24) * alpha), 0, 255));
+	// 565 colorkey: source 0x0000 is fully transparent; anything else has
+	// alpha 255, so the out alpha collapses to (255 * alpha) or zero.
+	if (color == 0)
+	{
+		*out_alpha = 0;
+		return 0;
+	}
+	*out_alpha = (byte)ClampI((int)(255.0f * alpha), 0, 255);
+	return SW_RGB565(
+		ClampI((int)(((color >> 8) & 0xF8u) * red), 0, 255),
+		ClampI((int)(((color >> 3) & 0xFCu) * green), 0, 255),
+		ClampI((int)(((color << 3) & 0xF8u) * blue), 0, 255));
 }
 
 static void lightmap_color(const sw_bsp_t *bsp, const dface_t *face, const float s, const float t,
@@ -285,19 +288,19 @@ static void band_pack_light(const uint32_t *dense, const int lw, const int lh, u
 
 // span_modulate with the light channels pre-unpacked (avoids re-extracting
 // them per pixel; the caller keeps them in registers per light cell).
-static inline uint32_t span_modulate3(const uint32_t texel, const unsigned lr, const unsigned lg,
+static inline uint16_t span_modulate3(const uint16_t texel, const unsigned lr, const unsigned lg,
 	const unsigned lb)
 {
 	// Truncating shift instead of +128 rounding: the <1-LSB difference per
 	// channel sits inside the engine's documented 2-LSB fixed-point budget, and
 	// three adds come out of the hot world inner loop.
-	uint32_t r = ((((texel) >> 16) & 0xffu) * lr) >> 8;
-	uint32_t g = ((((texel) >> 8) & 0xffu) * lg) >> 8;
-	uint32_t b = (((texel) & 0xffu) * lb) >> 8;
+	unsigned r = (((texel >> 8) & 0xF8u) * lr) >> 8;
+	unsigned g = (((texel >> 3) & 0xFCu) * lg) >> 8;
+	unsigned b = (((texel << 3) & 0xF8u) * lb) >> 8;
 	if (r > 255u) r = 255u;
 	if (g > 255u) g = 255u;
 	if (b > 255u) b = 255u;
-	return b | (g << 8) | (r << 16) | 0xff000000u;
+	return (uint16_t)(((r & 0xF8u) << 8) | ((g & 0xFCu) << 3) | (b >> 3));
 }
 
 static qboolean build_face_light(const sw_bsp_t *bsp, const dface_t *face, const int light_width,
@@ -364,15 +367,15 @@ static qboolean build_face_light(const sw_bsp_t *bsp, const dface_t *face, const
 	return true;
 }
 
-static inline uint32_t span_modulate(const uint32_t texel, const uint32_t light_packed)
+static inline uint16_t span_modulate(const uint16_t texel, const uint32_t light_packed)
 {
-	uint32_t r = ((((texel >> 16) & 0xffu) * ((light_packed >> 20) & 1023u)) + 128u) >> 8;
-	uint32_t g = ((((texel >> 8) & 0xffu) * ((light_packed >> 10) & 1023u)) + 128u) >> 8;
-	uint32_t b = (((texel & 0xffu) * (light_packed & 1023u)) + 128u) >> 8;
+	unsigned r = ((((texel >> 8) & 0xF8u) * ((light_packed >> 20) & 1023u)) + 128u) >> 8;
+	unsigned g = ((((texel >> 3) & 0xFCu) * ((light_packed >> 10) & 1023u)) + 128u) >> 8;
+	unsigned b = ((((texel << 3) & 0xF8u) * (light_packed & 1023u)) + 128u) >> 8;
 	if (r > 255u) r = 255u;
 	if (g > 255u) g = 255u;
 	if (b > 255u) b = 255u;
-	return b | (g << 8) | (r << 16) | 0xff000000u;
+	return (uint16_t)(((r & 0xF8u) << 8) | ((g & 0xFCu) << 3) | (b >> 3));
 }
 
 static void draw_face_spans(const screen_vertex_t *verts, const int n, const sw_image_t *image,
@@ -533,7 +536,7 @@ static void draw_face_spans(const screen_vertex_t *verts, const int n, const sw_
 		float lsz = v0->light_s_over_z + gradient_lsz_x * x_center + gradient_lsz_y * y_center;
 		float ltz = v0->light_t_over_z + gradient_ltz_x * x_center + gradient_ltz_y * y_center;
 
-		uint32_t *const fb_row = sw_color + (size_t)y * sw_width;
+		uint16_t *const fb_row = sw_color + (size_t)y * sw_width;
 		uint32_t *const zb_row = sw_depth + (size_t)y * sw_width;
 		int x = xa;
 		int remaining = xb - xa + 1;
@@ -591,7 +594,7 @@ static void draw_face_spans(const screen_vertex_t *verts, const int n, const sw_
 					const size_t idx = (size_t)x;
 					if (ikey >= zb_row[idx])
 					{
-						const uint32_t texel = image->pixels[((it >> 16) & mask_h) * image->width + ((iu >> 16) & mask_w)];
+						const uint16_t texel = image->pixels[((it >> 16) & mask_h) * image->width + ((iu >> 16) & mask_w)];
 						const int lidx = (int)((unsigned)ilt >> 20) * light_stride + (int)((unsigned)ils >> 20);
 						if (lidx != light_prev_idx)
 						{
@@ -612,7 +615,8 @@ static void draw_face_spans(const screen_vertex_t *verts, const int n, const sw_
 			}
 			else
 			{
-				const int alpha_fixed = (int)(alpha * 256.0f + 0.5f);
+				// Preserves the old (255 * alpha_fixed) >> 8 source-alpha scale.
+				const int sa_base = (int)((255u * (unsigned)(int)(alpha * 256.0f + 0.5f)) >> 8);
 				for (int i = 0; i < block; ++i, ++x)
 				{
 					const size_t idx = (size_t)x;
@@ -629,19 +633,24 @@ static void draw_face_spans(const screen_vertex_t *verts, const int n, const sw_
 						tx = ((int)floorf(fu) % image->width + image->width) % image->width;
 						ty = ((int)floorf(fv) % image->height + image->height) % image->height;
 					}
-					const uint32_t texel = image->pixels[ty * image->width + tx];
-					const uint32_t lit = span_modulate(texel,
+					const uint16_t texel = image->pixels[ty * image->width + tx];
+					const uint16_t lit = span_modulate(texel,
 						light_cache[(int)((unsigned)ilt >> 20) * light_stride + (int)((unsigned)ils >> 20)]);
-					int sa = ((lit >> 24) * alpha_fixed) >> 8;
-					if (sa > 255) sa = 255;
+					const int sa = lit != 0 ? sa_base : 0;
 					if (sa != 0 && ikey >= zb_row[idx])
 					{
-						const uint32_t dst = fb_row[idx];
+						const uint16_t dst = fb_row[idx];
 						const int dw = 255 - sa;
-						const uint32_t r = min(255u, (((lit >> 16) & 0xffu) * sa + ((dst >> 16) & 0xffu) * dw) / 255u);
-						const uint32_t g = min(255u, (((lit >> 8) & 0xffu) * sa + ((dst >> 8) & 0xffu) * dw) / 255u);
-						const uint32_t bb = min(255u, ((lit & 0xffu) * sa + (dst & 0xffu) * dw) / 255u);
-						fb_row[idx] = bb | (g << 8) | (r << 16) | 0xff000000u;
+						const unsigned lr8 = (lit >> 8) & 0xF8u;
+						const unsigned lg8 = (lit >> 3) & 0xFCu;
+						const unsigned lb8 = (lit << 3) & 0xF8u;
+						const unsigned dr8 = (dst >> 8) & 0xF8u;
+						const unsigned dg8 = (dst >> 3) & 0xFCu;
+						const unsigned db8 = (dst << 3) & 0xF8u;
+						const unsigned r = min(255u, (lr8 * (unsigned)sa + dr8 * (unsigned)dw) / 255u);
+						const unsigned g = min(255u, (lg8 * (unsigned)sa + dg8 * (unsigned)dw) / 255u);
+						const unsigned bb = min(255u, (lb8 * (unsigned)sa + db8 * (unsigned)dw) / 255u);
+						fb_row[idx] = SW_RGB565(r, g, bb);
 						if (sa == 255 && alpha >= 1.0f)
 						{
 							zb_row[idx] = ikey;
@@ -705,8 +714,9 @@ static void raster_triangle(const screen_vertex_t a, const screen_vertex_t b, co
 			const int ty = ((int)floorf(t) % image->height + image->height) % image->height;
 			float red, green, blue;
 			lightmap_color(bsp, face, light_s, light_t, texture_min_s, texture_min_t, light_width, light_height, &red, &green, &blue);
-			const uint32_t color = modulate(image->pixels[ty * image->width + tx], red, green, blue, alpha);
-			SW_PutPixel(x, y, inverse_z, color, alpha >= 1.0f && color_channel(color, 24) == 255, false);
+			byte brush_alpha;
+			const uint16_t color = modulate(image->pixels[ty * image->width + tx], red, green, blue, alpha, &brush_alpha);
+			SW_PutPixel(x, y, inverse_z, color, brush_alpha, alpha >= 1.0f && brush_alpha == 255, false);
 		}
 	}
 	++sw_stats.triangles;
@@ -1021,7 +1031,7 @@ typedef struct sky_cache_key_s {
 	qboolean valid;
 } sky_cache_key_t;
 
-static uint32_t *sky_cache;
+static uint16_t *sky_cache;
 static size_t sky_cache_pixels;
 static sky_cache_key_t sky_cache_key;
 static unsigned sky_cache_face_mask;
@@ -1066,7 +1076,7 @@ void SW_RasterSky(const refdef_t *fd)
 	const size_t required_pixels = (size_t)sw_width * (size_t)sw_height;
 	if (required_pixels > sky_cache_pixels)
 	{
-		uint32_t *replacement = realloc(sky_cache, required_pixels * sizeof(*replacement));
+		uint16_t *replacement = realloc(sky_cache, required_pixels * sizeof(*replacement));
 		if (replacement != NULL)
 		{
 			sky_cache = replacement;
@@ -1082,8 +1092,8 @@ void SW_RasterSky(const refdef_t *fd)
 		for (int y = minimum_y; y < maximum_y; ++y)
 		{
 			const uint32_t *zb_row = sw_depth + (size_t)y * sw_width;
-			const uint32_t *src = sky_cache + y * sw_width + minimum_x;
-			uint32_t *dst = sw_color + y * sw_width + minimum_x;
+			const uint16_t *src = sky_cache + y * sw_width + minimum_x;
+			uint16_t *dst = sw_color + y * sw_width + minimum_x;
 			for (int x = 0; x < maximum_x - minimum_x; ++x)
 				if (zb_row[minimum_x + x] == 0)
 					dst[x] = src[x];
@@ -1113,7 +1123,7 @@ void SW_RasterSky(const refdef_t *fd)
 	const float vertical_step = 1.0f / projection_y;
 	const float center_x = fd->x + fd->width * 0.5f;
 	const float center_y = fd->y + fd->height * 0.5f;
-	uint32_t *const cache_dst = (!rotating && sky_cache != NULL) ? sky_cache : NULL;
+	uint16_t *const cache_dst = (!rotating && sky_cache != NULL) ? sky_cache : NULL;
 	unsigned rendered_face_mask = 0;
 	for (int y = minimum_y; y < maximum_y; ++y)
 	{
@@ -1127,9 +1137,9 @@ void SW_RasterSky(const refdef_t *fd)
 				basis_up[component] * vertical;
 			step[component] = basis_right[component] * horizontal_step;
 		}
-		uint32_t *fb_row = sw_color + y * sw_width;
+		uint16_t *fb_row = sw_color + y * sw_width;
 		const uint32_t *zb_row = sw_depth + (size_t)y * sw_width;
-		uint32_t *cache_row = cache_dst != NULL ? cache_dst + y * sw_width : NULL;
+		uint16_t *cache_row = cache_dst != NULL ? cache_dst + y * sw_width : NULL;
 		int x = minimum_x;
 		while (x < maximum_x)
 		{
@@ -1160,7 +1170,7 @@ void SW_RasterSky(const refdef_t *fd)
 					{
 						const int texture_x = ClampI(is >> 16, 0, image->width - 1);
 						const int texture_y = ClampI(it >> 16, 0, image->height - 1);
-						const uint32_t color = image->pixels[texture_y * image->width + texture_x];
+						const uint16_t color = image->pixels[texture_y * image->width + texture_x];
 						fb_row[x] = color;
 						if (cache_row != NULL)
 							cache_row[x] = color;
@@ -1180,7 +1190,7 @@ void SW_RasterSky(const refdef_t *fd)
 						const sw_image_t *image = sw_sky_images[face];
 						const int texture_x = ClampI((int)(s * (image->width - 1)), 0, image->width - 1);
 						const int texture_y = ClampI((int)(t * (image->height - 1)), 0, image->height - 1);
-						const uint32_t color = image->pixels[texture_y * image->width + texture_x];
+						const uint16_t color = image->pixels[texture_y * image->width + texture_x];
 						fb_row[x] = color;
 						if (cache_row != NULL)
 							cache_row[x] = color;
@@ -1283,7 +1293,7 @@ static qboolean project_point(const vec3_t point, int *x, int *y, float *depth)
 // perspective-correct triangle path (draw_flex_triangle).
 // ---------------------------------------------------------------------------
 
-static uint32_t sw_white_pixel_storage;
+static uint16_t sw_white_pixel_storage;
 static sw_image_t sw_white_image = {
 	.name = "vertex-color",
 	.width = 1,
@@ -1370,7 +1380,7 @@ static const sw_image_t *sprite_variant_image(const entity_t *entity,
 		if (model->sprite_frames[frame].image != NULL)
 			return model->sprite_frames[frame].image;
 	}
-	sw_white_pixel_storage = SW_RGBA(entity->color.r, entity->color.g, entity->color.b, 255);
+	sw_white_pixel_storage = SW_RGB565(entity->color.r, entity->color.g, entity->color.b);
 	return &sw_white_image;
 }
 
@@ -2025,7 +2035,7 @@ static void span_raster_flex_triangle(const flex_screen_vertex_t a, const flex_s
 		float gz = a.green_over_z + gg_x * x_center + gg_y * y_center;
 		float bz = a.blue_over_z + gb_x * x_center + gb_y * y_center;
 		float az = a.alpha_over_z + ga_x * x_center + ga_y * y_center;
-		uint32_t *const fb_row = sw_color + (size_t)y * sw_width;
+		uint16_t *const fb_row = sw_color + (size_t)y * sw_width;
 		uint32_t *const zb_row = sw_depth + (size_t)y * sw_width;
 		int x = xa;
 		int remaining = xb - xa + 1;
@@ -2075,28 +2085,30 @@ static void span_raster_flex_triangle(const flex_screen_vertex_t a, const flex_s
 				{
 					const int tx = ClampI(iu >> 16, 0, image->width - 1);
 					const int ty = ClampI(it >> 16, 0, image->height - 1);
-					const uint32_t texel = image->pixels[ty * image->width + tx];
+					const uint16_t texel = image->pixels[ty * image->width + tx];
 					const int cr = min(512, max(0, ir >> 9)); // fixed [0..512]: 256 == 1.0
 					const int cg = min(512, max(0, ig >> 9));
 					const int cb = min(512, max(0, ib >> 9));
 					const int ca = min(512, max(0, ia >> 9));
-					const uint32_t mr = (((texel >> 16) & 0xffu) * cr + 128u) >> 8;
-					const uint32_t mg = (((texel >> 8) & 0xffu) * cg + 128u) >> 8;
-					const uint32_t mb = ((texel & 0xffu) * cb + 128u) >> 8;
-					const int salpha = (int)min(255u, (((texel >> 24) & 0xffu) * ca + 128u) >> 8);
+					const unsigned mr = ((((texel >> 8) & 0xF8u) * (unsigned)cr + 128u) >> 8);
+					const unsigned mg = ((((texel >> 3) & 0xFCu) * (unsigned)cg + 128u) >> 8);
+					const unsigned mb = ((((texel << 3) & 0xF8u) * (unsigned)cb + 128u) >> 8);
+					// 565 colorkey: texel 0x0000 is transparent; otherwise alpha is the
+					// old (255 * ca + 128) >> 8 scale.
+					const int salpha = texel != 0 ? (int)min(255u, (255u * (unsigned)ca + 128u) >> 8) : 0;
 					if (salpha == 0)
 						goto advance;
 					if (additive)
 					{
-						const uint32_t dst = fb_row[idx];
-						fb_row[idx] = SW_RGBA(
-							(byte)min(255u, (min(255u, mr) * salpha + ((dst >> 16) & 0xffu) * 255u) / 255u),
-							(byte)min(255u, (min(255u, mg) * salpha + ((dst >> 8) & 0xffu) * 255u) / 255u),
-							(byte)min(255u, (min(255u, mb) * salpha + (dst & 0xffu) * 255u) / 255u), 255);
+						const uint16_t dst = fb_row[idx];
+						fb_row[idx] = SW_RGB565(
+							min(255u, (min(255u, mr) * (unsigned)salpha + (((unsigned)dst >> 8) & 0xF8u) * 255u) / 255u),
+							min(255u, (min(255u, mg) * (unsigned)salpha + (((unsigned)dst >> 3) & 0xFCu) * 255u) / 255u),
+							min(255u, (min(255u, mb) * (unsigned)salpha + (((unsigned)dst << 3) & 0xF8u) * 255u) / 255u));
 					}
 					else if (salpha == 255)
 					{
-						fb_row[idx] = SW_RGBA((byte)min(255u, mr), (byte)min(255u, mg), (byte)min(255u, mb), 255);
+						fb_row[idx] = SW_RGB565(min(255u, mr), min(255u, mg), min(255u, mb));
 						if (depth_write && !no_depth_test)
 						{
 							zb_row[idx] = ikey;
@@ -2105,12 +2117,12 @@ static void span_raster_flex_triangle(const flex_screen_vertex_t a, const flex_s
 					}
 					else
 					{
-						const uint32_t dst = fb_row[idx];
-						const int dw = 255 - salpha;
-						fb_row[idx] = SW_RGBA(
-							(byte)min(255u, (min(255u, mr) * salpha + ((dst >> 16) & 0xffu) * dw) / 255u),
-							(byte)min(255u, (min(255u, mg) * salpha + ((dst >> 8) & 0xffu) * dw) / 255u),
-							(byte)min(255u, (min(255u, mb) * salpha + (dst & 0xffu) * dw) / 255u), 255);
+						const uint16_t dst = fb_row[idx];
+						const unsigned dw = 255u - (unsigned)salpha;
+						fb_row[idx] = SW_RGB565(
+							min(255u, (min(255u, mr) * (unsigned)salpha + (((unsigned)dst >> 8) & 0xF8u) * dw) / 255u),
+							min(255u, (min(255u, mg) * (unsigned)salpha + (((unsigned)dst >> 3) & 0xFCu) * dw) / 255u),
+							min(255u, (min(255u, mb) * (unsigned)salpha + (((unsigned)dst << 3) & 0xF8u) * dw) / 255u));
 					}
 				}
 advance:
@@ -2173,10 +2185,11 @@ static void raster_flex_triangle(const flex_screen_vertex_t a, const flex_screen
 			const float alpha = (wa * a.alpha_over_z + wb * b.alpha_over_z + wc * c.alpha_over_z) * z;
 			const int tx = ClampI((int)floorf(s), 0, image->width - 1);
 			const int ty = ClampI((int)floorf(t), 0, image->height - 1);
-			const uint32_t color = modulate(image->pixels[ty * image->width + tx], red, green, blue, alpha);
-			if (color_channel(color, 24) != 0)
-				SW_PutPixel(x, y, sw_sprite_no_depth_test ? FLT_MAX : inverse_z, color,
-					depth_write && color_channel(color, 24) == 255 && !sw_sprite_no_depth_test, additive);
+			byte sprite_alpha;
+			const uint16_t color = modulate(image->pixels[ty * image->width + tx], red, green, blue, alpha, &sprite_alpha);
+			if (sprite_alpha != 0)
+				SW_PutPixel(x, y, sw_sprite_no_depth_test ? FLT_MAX : inverse_z, color, sprite_alpha,
+					depth_write && sprite_alpha == 255 && !sw_sprite_no_depth_test, additive);
 		}
 	++sw_stats.triangles;
 	++sw_stats.flex_triangles;
@@ -2764,10 +2777,10 @@ void SW_ParticleTexturesShutdown(void)
 	sw_aparticle_tex = NULL;
 }
 
-static uint32_t particle_atlas_sample(const sw_image_t *image, const byte type_index, const float u, const float v)
+static uint16_t particle_atlas_sample(const sw_image_t *image, const byte type_index, const float u, const float v)
 {
 	if (image == NULL)
-		return SW_RGBA(255, 255, 255, 255);
+		return SW_RGB565(255, 255, 255);
 	const float *st = sw_particle_st[type_index];
 	const float s = st[0] + (st[2] - st[0]) * u;
 	const float t = st[1] + (st[3] - st[1]) * v;
@@ -2813,7 +2826,7 @@ static void draw_particle(const particle_t *particle, const qboolean additive)
 		for (int py = -radius; py <= radius; ++py)
 			for (int px = -radius; px <= radius; ++px)
 				if (px * px + py * py <= radius * radius)
-					SW_PutPixel(x + px, y + py, depth, SW_RGBA(color.r, color.g, color.b, color.a), false, additive);
+					SW_PutPixel(x + px, y + py, depth, SW_RGB565(color.r, color.g, color.b), color.a, false, additive);
 		++sw_stats.particles;
 		return;
 	}
@@ -2821,13 +2834,14 @@ static void draw_particle(const particle_t *particle, const qboolean additive)
 	for (int py = -radius; py < radius; ++py)
 		for (int px = -radius; px < radius; ++px)
 		{
-			const uint32_t source = particle_atlas_sample(image, type_index, (float)(px + radius) / (radius * 2),
+			const uint16_t source = particle_atlas_sample(image, type_index, (float)(px + radius) / (radius * 2),
 				(float)(py + radius) / (radius * 2));
-			const uint32_t out = modulate(source, color.r / 255.0f, color.g / 255.0f, color.b / 255.0f,
-				color.a / 255.0f);
-			if (color_channel(out, 24) == 0 && !additive)
+			byte quad_alpha;
+			const uint16_t out = modulate(source, color.r / 255.0f, color.g / 255.0f, color.b / 255.0f,
+				color.a / 255.0f, &quad_alpha);
+			if (quad_alpha == 0 && !additive)
 				continue;
-			SW_PutPixel(x + px, y + py, depth, out, false, additive);
+			SW_PutPixel(x + px, y + py, depth, out, quad_alpha, false, additive);
 		}
 	sw_stats.texture_particles += (type_index >= 22 && type_index < 36) ? 2 : 1;
 	++sw_stats.particles;
@@ -2862,7 +2876,7 @@ void SW_RasterLights(const refdef_t *fd)
 				if (distance > radius)
 					continue;
 				const byte alpha = (byte)((1.0f - distance / radius) * light->color.a * 0.35f);
-				SW_PutPixel(x + px, y + py, depth, SW_RGBA(light->color.r, light->color.g, light->color.b, alpha), false, true);
+				SW_PutPixel(x + px, y + py, depth, SW_RGB565(light->color.r, light->color.g, light->color.b), alpha, false, true);
 			}
 		++sw_stats.dynamic_lights;
 	}
@@ -2912,11 +2926,11 @@ int SW_RenderFrame(const refdef_t *fd)
 		mark = next;
 	}
 	if (fd->blend[3] > 0.0f)
-		SW_BlendRect(0, 0, sw_width, sw_height, SW_RGBA(
-			(byte)ClampI((int)(fd->blend[0] * 255.0f), 0, 255),
-			(byte)ClampI((int)(fd->blend[1] * 255.0f), 0, 255),
-			(byte)ClampI((int)(fd->blend[2] * 255.0f), 0, 255),
-			(byte)ClampI((int)(fd->blend[3] * 255.0f), 0, 255)));
+		SW_BlendRect(0, 0, sw_width, sw_height, SW_RGB565(
+			ClampI((int)(fd->blend[0] * 255.0f), 0, 255),
+			ClampI((int)(fd->blend[1] * 255.0f), 0, 255),
+			ClampI((int)(fd->blend[2] * 255.0f), 0, 255)),
+			(byte)ClampI((int)(fd->blend[3] * 255.0f), 0, 255));
 	{
 		const uclock_t next = uclock();
 		sw_stats.bench_us_blend += (unsigned long long)(next - mark);

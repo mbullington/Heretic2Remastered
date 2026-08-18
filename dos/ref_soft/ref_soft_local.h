@@ -39,7 +39,7 @@ typedef struct image_s {
 	int width;
 	int height;
 	int num_frames;
-	uint32_t *pixels;
+	uint16_t *pixels;
 	qboolean has_alpha;
 	qboolean synthetic_fallback;
 	int registration_sequence;
@@ -167,7 +167,7 @@ typedef struct sw_vertex_s {
 } sw_vertex_t;
 
 extern refimport_t sw_ri;
-extern uint32_t *sw_color;
+extern uint16_t *sw_color;
 extern uint32_t *sw_depth; // depth as non-negative float bits (ordered as int)
 extern int sw_width;
 extern int sw_height;
@@ -183,11 +183,14 @@ extern h2dos_soft_stats_t sw_stats;
 
 qboolean SW_FrameBufferInit(void *window);
 void SW_FrameBufferShutdown(void);
-void SW_Clear(uint32_t color);
+void SW_Clear(uint16_t color);
 void SW_Present(void);
-uint32_t SW_RGBA(byte r, byte g, byte b, byte a);
-void SW_PutPixel(int x, int y, float depth, uint32_t color, qboolean depth_write, qboolean additive);
-void SW_BlendRect(int x, int y, int w, int h, uint32_t color);
+// B2: the internal framebuffer and all textures are RGB565. SW_RGB565 packs
+// a pixel; transparent texels are encoded as 0x0000 (opaque pure black is
+// nudged to 0x0001 at decode time).
+uint16_t SW_RGB565(unsigned r, unsigned g, unsigned b);
+void SW_PutPixel(int x, int y, float depth, uint16_t color, byte alpha, qboolean depth_write, qboolean additive);
+void SW_BlendRect(int x, int y, int w, int h, uint16_t color, byte alpha);
 qboolean SW_SavePPM(const char *path);
 
 void SW_ImageInit(void);

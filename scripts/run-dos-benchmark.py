@@ -151,6 +151,8 @@ def main() -> int:
         )
         if (stage_path / "CLIENT.PPM").is_file():
             shutil.copyfile(stage_path / "CLIENT.PPM", ARTIFACT_DIR / "BENCH-CLIENT.PPM")
+        if (stage_path / "SWREAL.OUT").is_file():
+            shutil.copyfile(stage_path / "SWREAL.OUT", ARTIFACT_DIR / "BENCH-SWREAL.OUT")
 
         print("bench-lines=")
         for line in bench_lines:
