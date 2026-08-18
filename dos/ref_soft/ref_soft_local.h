@@ -39,7 +39,7 @@ typedef struct image_s {
 	int width;
 	int height;
 	int num_frames;
-	byte *pixels;
+	uint16_t *pixels;
 	qboolean has_alpha;
 	qboolean synthetic_fallback;
 	int registration_sequence;
@@ -167,17 +167,7 @@ typedef struct sw_vertex_s {
 } sw_vertex_t;
 
 extern refimport_t sw_ri;
-extern byte *sw_color;
-// Indexed B2b pipeline: palette + conversion/shading LUTs (built once palette is known).
-extern uint16_t sw_fb_palette[256];
-extern unsigned sw_palette_version;
-extern paletteRGB_t sw_palette_rgb[256];
-extern byte sw_idx_from_555[32768];
-extern byte sw_shade_lut[64 * 256];
-#define SW_TRANSPARENT_INDEX 255
-int SW_ShadeFromLight(unsigned r10, unsigned g10, unsigned b10);
-byte SW_IndexFrom565(uint16_t color);
-byte sw_idx_from_rgb(const unsigned r, const unsigned g, const unsigned b);
+extern uint16_t *sw_color;
 extern uint32_t *sw_depth; // depth as non-negative float bits (ordered as int)
 extern int sw_width;
 extern int sw_height;

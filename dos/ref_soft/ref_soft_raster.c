@@ -286,8 +286,22 @@ static void band_pack_light(const uint32_t *dense, const int lw, const int lh, u
 	memcpy(band + (lh + 1) * bw, band + lh * bw, sizeof(uint32_t) * (size_t)bw);
 }
 
-// Indexed shading: light cells hold a 6-bit chromatic shade (hue family x
-// level); one 16KB LUT maps shade+texel straight to the final palette index.
+// span_modulate with the light channels pre-unpacked (avoids re-extracting
+// them per pixel; the caller keeps them in registers per light cell).
+static inline uint16_t span_modulate3(const uint16_t texel, const unsigned lr, const unsigned lg,
+	const unsigned lb)
+{
+	// Truncating shift instead of +128 rounding: the <1-LSB difference per
+	// channel sits inside the engine's documented 2-LSB fixed-point budget, and
+	// three adds come out of the hot world inner loop.
+	unsigned r = (((texel >> 8) & 0xF8u) * lr) >> 8;
+	unsigned g = (((texel >> 3) & 0xFCu) * lg) >> 8;
+	unsigned b = (((texel << 3) & 0xF8u) * lb) >> 8;
+	if (r > 255u) r = 255u;
+	if (g > 255u) g = 255u;
+	if (b > 255u) b = 255u;
+	return (uint16_t)(((r & 0xF8u) << 8) | ((g & 0xFCu) << 3) | (b >> 3));
+}
 
 static qboolean build_face_light(const sw_bsp_t *bsp, const dface_t *face, const int light_width,
 	const int light_height, uint32_t *target)
@@ -353,9 +367,15 @@ static qboolean build_face_light(const sw_bsp_t *bsp, const dface_t *face, const
 	return true;
 }
 
-static inline uint16_t span_modulate(const uint16_t texel, const uint32_t shade)
+static inline uint16_t span_modulate(const uint16_t texel, const uint32_t light_packed)
 {
-	return sw_fb_palette[sw_shade_lut[((shade & 63u) << 8) | (byte)texel]];
+	unsigned r = ((((texel >> 8) & 0xF8u) * ((light_packed >> 20) & 1023u)) + 128u) >> 8;
+	unsigned g = ((((texel >> 3) & 0xFCu) * ((light_packed >> 10) & 1023u)) + 128u) >> 8;
+	unsigned b = ((((texel << 3) & 0xF8u) * (light_packed & 1023u)) + 128u) >> 8;
+	if (r > 255u) r = 255u;
+	if (g > 255u) g = 255u;
+	if (b > 255u) b = 255u;
+	return (uint16_t)(((r & 0xF8u) << 8) | ((g & 0xFCu) << 3) | (b >> 3));
 }
 
 static void draw_face_spans(const screen_vertex_t *verts, const int n, const sw_image_t *image,
@@ -516,7 +536,7 @@ static void draw_face_spans(const screen_vertex_t *verts, const int n, const sw_
 		float lsz = v0->light_s_over_z + gradient_lsz_x * x_center + gradient_lsz_y * y_center;
 		float ltz = v0->light_t_over_z + gradient_ltz_x * x_center + gradient_ltz_y * y_center;
 
-		byte *const fb_row = sw_color + (size_t)y * sw_width;
+		uint16_t *const fb_row = sw_color + (size_t)y * sw_width;
 		uint32_t *const zb_row = sw_depth + (size_t)y * sw_width;
 		int x = xa;
 		int remaining = xb - xa + 1;
@@ -568,6 +588,7 @@ static void draw_face_spans(const screen_vertex_t *verts, const int n, const sw_
 				unsigned depth_writes = 0;
 				int light_prev_idx = -1;
 				unsigned light_prev = 0;
+				unsigned light_r = 256u, light_g = 256u, light_b = 256u;
 				for (int i = 0; i < block; ++i, ++x)
 				{
 					const size_t idx = (size_t)x;
@@ -579,8 +600,11 @@ static void draw_face_spans(const screen_vertex_t *verts, const int n, const sw_
 						{
 							light_prev_idx = lidx;
 							light_prev = light_cache[lidx];
+							light_r = (light_prev >> 20) & 1023u;
+							light_g = (light_prev >> 10) & 1023u;
+							light_b = light_prev & 1023u;
 						}
-						fb_row[idx] = sw_shade_lut[((light_prev & 63u) << 8) | texel];
+						fb_row[idx] = span_modulate3(texel, light_r, light_g, light_b);
 						zb_row[idx] = ikey;
 						++depth_writes;
 					}
@@ -612,10 +636,10 @@ static void draw_face_spans(const screen_vertex_t *verts, const int n, const sw_
 					const uint16_t texel = image->pixels[ty * image->width + tx];
 					const uint16_t lit = span_modulate(texel,
 						light_cache[(int)((unsigned)ilt >> 20) * light_stride + (int)((unsigned)ils >> 20)]);
-					const int sa = (texel != 0 && texel != SW_TRANSPARENT_INDEX) ? sa_base : 0;
+					const int sa = lit != 0 ? sa_base : 0;
 					if (sa != 0 && ikey >= zb_row[idx])
 					{
-						const uint16_t dst = sw_fb_palette[fb_row[idx]];
+						const uint16_t dst = fb_row[idx];
 						const int dw = 255 - sa;
 						const unsigned lr8 = (lit >> 8) & 0xF8u;
 						const unsigned lg8 = (lit >> 3) & 0xFCu;
@@ -626,7 +650,7 @@ static void draw_face_spans(const screen_vertex_t *verts, const int n, const sw_
 						const unsigned r = min(255u, (lr8 * (unsigned)sa + dr8 * (unsigned)dw) / 255u);
 						const unsigned g = min(255u, (lg8 * (unsigned)sa + dg8 * (unsigned)dw) / 255u);
 						const unsigned bb = min(255u, (lb8 * (unsigned)sa + db8 * (unsigned)dw) / 255u);
-						fb_row[idx] = SW_IndexFrom565(SW_RGB565(r, g, bb));
+						fb_row[idx] = SW_RGB565(r, g, bb);
 						if (sa == 255 && alpha >= 1.0f)
 						{
 							zb_row[idx] = ikey;
@@ -1007,7 +1031,7 @@ typedef struct sky_cache_key_s {
 	qboolean valid;
 } sky_cache_key_t;
 
-static byte *sky_cache;
+static uint16_t *sky_cache;
 static size_t sky_cache_pixels;
 static sky_cache_key_t sky_cache_key;
 static unsigned sky_cache_face_mask;
@@ -1052,7 +1076,7 @@ void SW_RasterSky(const refdef_t *fd)
 	const size_t required_pixels = (size_t)sw_width * (size_t)sw_height;
 	if (required_pixels > sky_cache_pixels)
 	{
-		byte *replacement = realloc(sky_cache, required_pixels * sizeof(*replacement));
+		uint16_t *replacement = realloc(sky_cache, required_pixels * sizeof(*replacement));
 		if (replacement != NULL)
 		{
 			sky_cache = replacement;
@@ -1068,8 +1092,8 @@ void SW_RasterSky(const refdef_t *fd)
 		for (int y = minimum_y; y < maximum_y; ++y)
 		{
 			const uint32_t *zb_row = sw_depth + (size_t)y * sw_width;
-			const byte *src = sky_cache + y * sw_width + minimum_x;
-			byte *dst = sw_color + y * sw_width + minimum_x;
+			const uint16_t *src = sky_cache + y * sw_width + minimum_x;
+			uint16_t *dst = sw_color + y * sw_width + minimum_x;
 			for (int x = 0; x < maximum_x - minimum_x; ++x)
 				if (zb_row[minimum_x + x] == 0)
 					dst[x] = src[x];
@@ -1099,7 +1123,7 @@ void SW_RasterSky(const refdef_t *fd)
 	const float vertical_step = 1.0f / projection_y;
 	const float center_x = fd->x + fd->width * 0.5f;
 	const float center_y = fd->y + fd->height * 0.5f;
-	byte *const cache_dst = (!rotating && sky_cache != NULL) ? sky_cache : NULL;
+	uint16_t *const cache_dst = (!rotating && sky_cache != NULL) ? sky_cache : NULL;
 	unsigned rendered_face_mask = 0;
 	for (int y = minimum_y; y < maximum_y; ++y)
 	{
@@ -1113,9 +1137,9 @@ void SW_RasterSky(const refdef_t *fd)
 				basis_up[component] * vertical;
 			step[component] = basis_right[component] * horizontal_step;
 		}
-		byte *fb_row = sw_color + y * sw_width;
+		uint16_t *fb_row = sw_color + y * sw_width;
 		const uint32_t *zb_row = sw_depth + (size_t)y * sw_width;
-		byte *cache_row = cache_dst != NULL ? cache_dst + y * sw_width : NULL;
+		uint16_t *cache_row = cache_dst != NULL ? cache_dst + y * sw_width : NULL;
 		int x = minimum_x;
 		while (x < maximum_x)
 		{
@@ -2011,7 +2035,7 @@ static void span_raster_flex_triangle(const flex_screen_vertex_t a, const flex_s
 		float gz = a.green_over_z + gg_x * x_center + gg_y * y_center;
 		float bz = a.blue_over_z + gb_x * x_center + gb_y * y_center;
 		float az = a.alpha_over_z + ga_x * x_center + ga_y * y_center;
-		byte *const fb_row = sw_color + (size_t)y * sw_width;
+		uint16_t *const fb_row = sw_color + (size_t)y * sw_width;
 		uint32_t *const zb_row = sw_depth + (size_t)y * sw_width;
 		int x = xa;
 		int remaining = xb - xa + 1;
@@ -2047,12 +2071,6 @@ static void span_raster_flex_triangle(const flex_screen_vertex_t a, const flex_s
 			const int dg = (int)((g1 - g0) * 131072.0f * SW_INV_WIDTH(block));
 			const int db = (int)((b1c - b0c) * 131072.0f * SW_INV_WIDTH(block));
 			const int da = (int)((a1c - a0c) * 131072.0f * SW_INV_WIDTH(block));
-			// B2b: quantize the block's start gouraud light to a chromatic shade;
-			// per-pixel modulation collapses to one LUT fetch.
-			const int flex_cr = ClampI(ir >> 9, 0, 512), flex_cg = ClampI(ig >> 9, 0, 512), flex_cb = ClampI(ib >> 9, 0, 512);
-			const unsigned flex_shade = ((unsigned)SW_ShadeFromLight(
-				(unsigned)min(1023, flex_cr * 2), (unsigned)min(1023, flex_cg * 2),
-				(unsigned)min(1023, flex_cb * 2)) << 8);
 			uint32_t ikey;
 			uint32_t ikey_end;
 			memcpy(&ikey, &w, 4);
@@ -2067,26 +2085,30 @@ static void span_raster_flex_triangle(const flex_screen_vertex_t a, const flex_s
 				{
 					const int tx = ClampI(iu >> 16, 0, image->width - 1);
 					const int ty = ClampI(it >> 16, 0, image->height - 1);
-					const byte texel = image->pixels[ty * image->width + tx];
+					const uint16_t texel = image->pixels[ty * image->width + tx];
+					const int cr = min(512, max(0, ir >> 9)); // fixed [0..512]: 256 == 1.0
+					const int cg = min(512, max(0, ig >> 9));
+					const int cb = min(512, max(0, ib >> 9));
 					const int ca = min(512, max(0, ia >> 9));
-					const byte shaded = sw_shade_lut[flex_shade | texel];
-					const uint16_t mrgb = sw_fb_palette[shaded];
-					const unsigned mr = (mrgb >> 8) & 0xF8u, mg = (mrgb >> 3) & 0xFCu, mb = (mrgb << 3) & 0xF8u;
-					// Indexed colorkey: texel 255 (or 0) is transparent.
-					const int salpha = (texel != SW_TRANSPARENT_INDEX && texel != 0) ? (int)min(255u, (255u * (unsigned)ca + 128u) >> 8) : 0;
+					const unsigned mr = ((((texel >> 8) & 0xF8u) * (unsigned)cr + 128u) >> 8);
+					const unsigned mg = ((((texel >> 3) & 0xFCu) * (unsigned)cg + 128u) >> 8);
+					const unsigned mb = ((((texel << 3) & 0xF8u) * (unsigned)cb + 128u) >> 8);
+					// 565 colorkey: texel 0x0000 is transparent; otherwise alpha is the
+					// old (255 * ca + 128) >> 8 scale.
+					const int salpha = texel != 0 ? (int)min(255u, (255u * (unsigned)ca + 128u) >> 8) : 0;
 					if (salpha == 0)
 						goto advance;
 					if (additive)
 					{
-						const uint16_t dst = sw_fb_palette[fb_row[idx]];
-						fb_row[idx] = SW_IndexFrom565(SW_RGB565(
+						const uint16_t dst = fb_row[idx];
+						fb_row[idx] = SW_RGB565(
 							min(255u, (min(255u, mr) * (unsigned)salpha + (((unsigned)dst >> 8) & 0xF8u) * 255u) / 255u),
 							min(255u, (min(255u, mg) * (unsigned)salpha + (((unsigned)dst >> 3) & 0xFCu) * 255u) / 255u),
-							min(255u, (min(255u, mb) * (unsigned)salpha + (((unsigned)dst << 3) & 0xF8u) * 255u) / 255u)));
+							min(255u, (min(255u, mb) * (unsigned)salpha + (((unsigned)dst << 3) & 0xF8u) * 255u) / 255u));
 					}
 					else if (salpha == 255)
 					{
-						fb_row[idx] = shaded;
+						fb_row[idx] = SW_RGB565(min(255u, mr), min(255u, mg), min(255u, mb));
 						if (depth_write && !no_depth_test)
 						{
 							zb_row[idx] = ikey;
@@ -2095,12 +2117,12 @@ static void span_raster_flex_triangle(const flex_screen_vertex_t a, const flex_s
 					}
 					else
 					{
-						const uint16_t dst = sw_fb_palette[fb_row[idx]];
+						const uint16_t dst = fb_row[idx];
 						const unsigned dw = 255u - (unsigned)salpha;
-						fb_row[idx] = SW_IndexFrom565(SW_RGB565(
+						fb_row[idx] = SW_RGB565(
 							min(255u, (min(255u, mr) * (unsigned)salpha + (((unsigned)dst >> 8) & 0xF8u) * dw) / 255u),
 							min(255u, (min(255u, mg) * (unsigned)salpha + (((unsigned)dst >> 3) & 0xFCu) * dw) / 255u),
-							min(255u, (min(255u, mb) * (unsigned)salpha + (((unsigned)dst << 3) & 0xF8u) * dw) / 255u)));
+							min(255u, (min(255u, mb) * (unsigned)salpha + (((unsigned)dst << 3) & 0xF8u) * dw) / 255u));
 					}
 				}
 advance:
@@ -2758,7 +2780,7 @@ void SW_ParticleTexturesShutdown(void)
 static uint16_t particle_atlas_sample(const sw_image_t *image, const byte type_index, const float u, const float v)
 {
 	if (image == NULL)
-		return (uint16_t)sw_idx_from_rgb(255, 255, 255);
+		return SW_RGB565(255, 255, 255);
 	const float *st = sw_particle_st[type_index];
 	const float s = st[0] + (st[2] - st[0]) * u;
 	const float t = st[1] + (st[3] - st[1]) * v;
