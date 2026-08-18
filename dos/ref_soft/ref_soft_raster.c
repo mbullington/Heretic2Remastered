@@ -2514,6 +2514,15 @@ void SW_RasterFlexEntity(const entity_t *entity, const sw_model_t *model, const 
 					++sw_stats.bench_flex_tris_bbox;
 					continue;
 				}
+				// Screen-space winding cull: degenerate or back-facing triangles
+				// cannot contribute pixels on single-sided content; the gate
+				// verdicts whether the content set honors that.
+				{
+					const float area2 = (projected[1].x - projected[0].x) * (projected[2].y - projected[0].y) -
+						(projected[2].x - projected[0].x) * (projected[1].y - projected[0].y);
+					if (area2 <= 0.0f)
+						continue;
+				}
 				for (int corner = 0; corner < 3; ++corner)
 				{
 					const int command = command_start + command_vertices[corner] * 3;
