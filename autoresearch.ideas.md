@@ -232,3 +232,33 @@ Design decisions:
 - Modulate: tex565 * light565: split channels: r=(tr*lr)>>5... with light in [0..512] (2x overbright) → r6=(tr*lr+16)>>5... keep single-precision-ish, verify vs GL tolerance in new baselines.
 - DOSBox present: if SDL3/VESA mode stays 32-bit XRGB, present converts 565→8888 (lossless expand) OR switch mode; measure both (conversion = 76.8K px × ~6 ops ≈ 15ms — may kill it; if so, keep internal 565 only for MODULATE win? NO — modulate win exists only if textures 565. Present conversion cost likely swamps → prefer VESA 16-bit mode in h2dos_platform; check current mode set in h2dos_ui.c/platform).
 Order: (1) mode/present experiments first (cheap, isolates present win), (2) texture/fb format sweep, (3) baselines regen + visual sign-off, (4) log as one keep with refresh noted.
+
+## 2026-08-17 LATE: WORLD DECOMPOSITION + UNIT-CORRECTION (post-#34 565-keep, total 140,937)
+- BENCH UNITS: bench-frames=32. walked_world_px=2.94M is a TOTAL => 91.9K px/frame painted
+  (~1.2x screen coverage; overdraw ~nil confirmed). Sky px ~46K/frame at ~10 ops/px = 16.8ms.
+- WORLD 95,055us/frame = vis-walk 1.8ms (216 leaves, 494 marks, 401 draw_face visits)
+  + face front-matter 6.4ms (16us/face: clip+project+gradients+lightbuild) + ROW/PX CORE 86.9ms.
+  => px-loop runs ~25 ops/px. check-dos-bench BENCH-EVIDENCE kk per-frame avgs for us-values.
+- METHOD: uclock() inside draw_face = PIT port reads = 25x dilation (frame 125ms->3.15s,
+  32-frame cap). NEVER time inside hot fns; use counters + cvar ablations:
+  sw_probe_skip_world_draw (world->1,792), sw_probe_skip_face_spans, sw_probe_skip_span_rows
+  (world->8,238). NOTE: probes were reverted with experiment #35; add similar ones as needed.
+- NOSPANS (triangle fallback) world=625ms => span engine is ~6.5x faster than raster_triangle.
+- #35 W1 (block-uniform-light via monotone endpoint proof) DISCARDED: per-px lidx already
+  cached; uniform blocks rarer than modeled (+1.6ms).
+
+## REVISED QUEUE (by measured pool):
+- W2: evict zb cmp+store for OPAQUE world px (-3 ops/px ~= -10ms). Blocker: current leaf
+  visit order is arbitrary => without z-test overlap correctness breaks. Requires either
+  front-to-back ordering (#31 showed its recursive ordering costs +8.5ms w/ span sort;
+  ordering ALONE may be cheap if marks stay as-is and only draw order changes) OR per-block
+  zb-bypass only when face known non-overlapping (rare). MEDIUM RISK.
+- W3: sky per-px direction linearize: per-face-row s,t endpoints + linear inner step
+  (basically 2 FADD/px instead of 5; folds basis math into row setup). est -3..5ms. LOW RISK.
+- W4: present verification: 565 mode engagement + SDL same-format fast path (present bimodal
+  13.1-14.5 - may drop ~4ms with rep-movsd confirmed). TRIVIAL.
+- WORLD px-loop remaining: modulate3 (3 mul), texel row indexing, 5 fixed adds + ikey.
+  25 -> ~20 theoretical max -20ms without semantic change. Consider: single accumulator
+  packing (iu/it via combined stride), texel-row cache (t>>16&mask)*width hoisted per row-run.
+- B2b (8-bit colormap LUT, sign-off needed) would be -30ms-class on world; deferred.
+- STOP at 85ms looks hard without 8-bit; honest report cadence preserved.
