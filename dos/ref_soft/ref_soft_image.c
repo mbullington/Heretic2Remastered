@@ -14,6 +14,7 @@
 // RGBA, 565 API callers) routes through nearest-color LUTs derived from it.
 static paletteRGB_t sw_palette_rgb[256];
 static qboolean sw_palette_ready;
+unsigned sw_palette_version;
 uint16_t sw_fb_palette[256];
 byte sw_idx_from_555[32768];
 byte sw_shade_lut[64 * 256];
@@ -41,6 +42,7 @@ static void sw_palette_ingest(const paletteRGB_t *palette)
 		return;
 	memcpy(sw_palette_rgb, palette, sizeof(sw_palette_rgb));
 	sw_palette_ready = true;
+	++sw_palette_version;
 	for (int i = 0; i < 256; ++i)
 		sw_fb_palette[i] = ((uint16_t)(palette[i].r >> 3) << 11) | ((uint16_t)(palette[i].g >> 2) << 5) | (uint16_t)(palette[i].b >> 3);
 	for (int key = 0; key < 32768; ++key)
@@ -49,9 +51,11 @@ static void sw_palette_ingest(const paletteRGB_t *palette)
 		sw_idx_from_555[key] = sw_nearest_index((r << 3) | (r >> 2), (g << 3) | (g >> 2), (b << 3) | (b >> 2));
 	}
 	// shade LUT: 8 hue families x 8 levels, quantized chromatic lighting
-	static const int hue_r[8] = { 256, 320, 282, 230, 154, 154, 218, 282 };
-	static const int hue_g[8] = { 256, 218, 243, 282, 295, 218, 179, 192 };
-	static const int hue_b[8] = { 256, 154, 154, 179, 218, 320, 307, 256 };
+	// family 0 = achromatic axes (neutral white); 1-7 = hue families at
+	// half-saturation strength so mild tints stay mild.
+	static const int hue_r[8] = { 256, 288, 269, 243, 205, 205, 237, 269 };
+	static const int hue_g[8] = { 256, 237, 250, 269, 276, 237, 218, 224 };
+	static const int hue_b[8] = { 256, 205, 205, 218, 237, 288, 282, 256 };
 	for (int shade = 0; shade < 64; ++shade)
 	{
 		const int hf = shade >> 3, lv = shade & 7;
