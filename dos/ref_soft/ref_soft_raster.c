@@ -371,6 +371,7 @@ extern uint32_t sw_covermask[480][SW_COVER_WORDS];
 extern uint64_t sw_scissor_row[SW_SCISSOR_TILES_Y];
 extern qboolean sw_scissor_active;
 extern qboolean sw_world_repair_pass;
+extern qboolean sw_temporal_warp_now;
 static qboolean project_point(const vec3_t point, int *x, int *y, float *depth);
 
 static int sw_tag_face_paint_count;
@@ -1440,6 +1441,20 @@ void SW_RasterSky(const refdef_t *fd)
 	unsigned rendered_face_mask = 0;
 	for (int y = minimum_y; y < maximum_y; ++y)
 	{
+		if (!sw_temporal_warp_now)
+		{
+			// S-buffer row-coverage proof: every pixel painted => no sky px here
+			const uint32_t *cw = sw_covermask[y];
+			qboolean full = true;
+			for (int w = minimum_x >> 5; w <= (maximum_x - 1) >> 5; ++w)
+				if (cw[w] != 0xFFFFFFFFu)
+				{
+					full = false;
+					break;
+				}
+			if (full)
+				continue;
+		}
 		const float vertical = (center_y - (y + 0.5f)) * vertical_step;
 		vec3_t direction;
 		vec3_t step;
@@ -3468,7 +3483,7 @@ static int sw_snap_width, sw_snap_height, sw_snap_x, sw_snap_y;
 static const sw_model_t *sw_snap_world;
 static qboolean sw_snap_valid;
 static int sw_temporal_warp_budget;
-static qboolean sw_temporal_warp_now;
+qboolean sw_temporal_warp_now;
 static cvar_t *sw_cvar_temporal;
 
 // Hole-repair scissor: after the homography warp, the world pass is re-run
