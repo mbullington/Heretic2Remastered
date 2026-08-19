@@ -244,9 +244,56 @@ sw_image_t *SW_FindImage(const char *name, const sw_image_kind_t kind)
 	else if (extension != NULL && Q_stricmp(extension, ".m32") == 0)
 		image = load_m32(name, kind);
 
+	// Extension-sibling fallback: real H2 content ships some pics as .m8 that
+	// the remastered client requests as .m32 (menu/num_X, misc/textback, ...)
+	// and vice versa (misc/particle shipped m32, requested m8). Without this,
+	// every such pic surfaced as the magenta fallback checkerboard.
+	if (image == NULL && extension != NULL &&
+		(Q_stricmp(extension, ".m8") == 0 || Q_stricmp(extension, ".m32") == 0))
+	{
+		char sibling[MAX_QPATH];
+		const size_t stem = (size_t)(extension - name);
+		if (stem + 5 <= sizeof(sibling))
+		{
+			memcpy(sibling, name, stem);
+			strcpy_s(sibling + stem, sizeof(sibling) - stem,
+				Q_stricmp(extension, ".m8") == 0 ? ".m32" : ".m8");
+			image = Q_stricmp(extension, ".m8") == 0 ? load_m32(sibling, kind) : load_m8(sibling, kind);
+			if (image != NULL)
+				strcpy_s(image->name, sizeof(image->name), name);
+		}
+	}
+	// Alias table for art that exists in the original H2 paks only under the
+	// retail layout while the remastered client requests remaster-layout paths.
+	// The paks are read-only, so aliasing is the only mechanism available.
+	static const struct {
+		const char *requested;
+		const char *alias;
+	} k_skin_aliases[] = {
+		{ "players/male/Corvus.m8",		"models/player/c_watcher/!skin.m8" },
+		{ "players/male/CorvusDmg.m8",	"models/player/c_watcher/!skindmg.m8" },
+		{ "players/male/reflect.m8",		"pics/misc/reflect.m32" },
+	};
 	if (image == NULL)
 	{
-		++sw_stats.missing_assets;
+		for (size_t i = 0; i < SDL_arraysize(k_skin_aliases); ++i)
+		{
+			if (Q_stricmp(name, k_skin_aliases[i].requested) == 0)
+			{
+				const char *alias_ext = strrchr(k_skin_aliases[i].alias, '.');
+				if (alias_ext != NULL && Q_stricmp(alias_ext, ".m8") == 0)
+					image = load_m8(k_skin_aliases[i].alias, kind);
+				else if (alias_ext != NULL && Q_stricmp(alias_ext, ".m32") == 0)
+					image = load_m32(k_skin_aliases[i].alias, kind);
+				if (image != NULL)
+					strcpy_s(image->name, sizeof(image->name), name);
+				break;
+			}
+		}
+	}
+
+	if (image == NULL)
+	{
 		sw_ri.Con_Printf(PRINT_ALL, "ref_soft: missing or unsupported image '%s'%s\n", name,
 			sw_synthetic_fixture ? " (using labeled synthetic fallback)" : "");
 		return sw_fallback;

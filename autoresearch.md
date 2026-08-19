@@ -73,7 +73,9 @@ had been comparing a stale RENDER.PPM.)
   Kept stack: commit 1797d154 (E42 span-step 32). Best total_us = 141,807 (frame 123,960, world 96,197,
   sky 13,260 [ASI], entities 13,484, clear 1,182, present 16,665-bimodal).
   Falsified seg-4: E39 pair-pack (+7.2ms), E43 step-64 (fidelity ceiling: 32<step<64; banked as opt-in turbo).
-  Stop line: total_us <= 85,000 unchanged.
-- MAIN EVENT NEXT: B1 edge-list world — staged plan at docs/plans/2026-08-17-b1-edge-list-world.md
+  SEG-4 CLOSE-OUT 2026-08-18 @ commit 56a18b61: final 565 total_us = 138,676. **B2b indexed internals reverted**: structurally unfittable for real H2 content (measured PAK evidence: ~1 palette per m8; 2016 distinct palettes in Htic2-0, silverspring 195/199) — no single 256-entry global palette can represent the game; user visual gate red twice (magenta = demote-path channel bug fixed, then structural finding). Learnings banked in jsonl: light-LUT chromatic vocab works; 565->565 memcpy present floor 17ms @240. B1 stage-2 hybrid clip falsified (#47): unsorted +11ms no payoff; sorted = gate-red 2.0% on coplanar painter ties (E44+E47). World span level = architectural optimum under painter semantics; HZB/subtree world ideas share that fate.
+- SEGMENT 5 (2026-08-18): user-authorized 320x200 sibling mode (env-driven: H2DOS_SW_WIDTH/HEIGHT; DOS VESA driver offers 320x200 ONLY as INDEX8 -> fixed 3-3-2 palette present with 64KB 565->index LUT; ladder falls back to 565 @320x240). Baseline 116,940 (7466deaf). Kept: E50 flex screen-space backface cull (entities -1.2ms; flex px -17.5%), E51 world span-step 128 (world -446us, gate-green, no walked-px inflation). Best: 115,301 (0ae08484).
+- Meter reading for target iron (PMMX-233): harness cycles 120000 ~= P120-class; PMMX-233 ~= 2.2x that: seg-5 115ms @320x200 projects to ~53ms ~= 19fps on real 233MHz hardware at Mode-13h-class settings.
+- Stop condition total_us <= 85,000 (seg-3 contract, subsumed): seg-5 floor analysis says px-bound 565 world + LFB-write-bound present cannot reach it at 320x200 without a resolution/format break; campaign at credible-hypothesis exhaustion pending user call.
 - Gated user sign-offs granted 2026-08-17: indexed 8-bit chromatic light vocab; Mode 13h 320x200
   (must remain a mode sibling to 640x480). Stipple: NOT granted.

@@ -31,15 +31,6 @@ qboolean SW_FrameBufferInit(void *window)
 		return false;
 
 	sw_window = window;
-	{
-		int mode_count = 0;
-		SDL_DisplayMode **modes = SDL_GetFullscreenDisplayModes(SDL_GetPrimaryDisplay(), &mode_count);
-		for (int i = 0; modes != NULL && i < mode_count; ++i)
-			if (modes[i]->w <= 400)
-				sw_ri.Con_Printf(0, "ref_soft: vesa mode %dx%x fmt %x\n", modes[i]->w, modes[i]->h, modes[i]->format);
-		if (modes != NULL)
-			SDL_free(modes);
-	}
 	// B2: request the VESA 320x240 RGB565 mode so the final presentation is a
 	// 2-byte/pixel LFB copy instead of 4-byte. The internal framebuffer stays
 	// XRGB8888 for now (conversion happens in SDL_ConvertPixels at present).
@@ -100,7 +91,7 @@ qboolean SW_FrameBufferInit(void *window)
 		// 64KB 565->index LUT; conversion happens per row at present.
 		sw_present_lut = malloc(65536);
 		for (int i = 0; i < 65536; ++i)
-			sw_present_lut[i] = (byte)(((i >> 7) & 0xE0) | ((i >> 6) & 0x1C) | (i & 0x03));
+			sw_present_lut[i] = (byte)((((i >> 8) & 0xE0) | ((i >> 6) & 0x1C) | ((i >> 3) & 0x03)));
 		SDL_Palette *pal = SDL_CreatePalette(256);
 		if (pal != NULL && sw_present_lut != NULL)
 		{
