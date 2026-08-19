@@ -3409,6 +3409,132 @@ void SW_RasterLights(const refdef_t *fd)
 	}
 }
 
+// ---------------------------------------------------------------------------
+// E61 temporal world reuse (turbo, r_swtemporal / H2DOS_SW_TEMPORAL=1).
+// Even frames render the world normally and snapshot the WORLD-ONLY color +
+// depth (no entities) after the sky pass. Odd frames skip the world pass and
+// forward-warp the snapshot under the new camera: per source pixel, rebuild
+// the view-space ray, scale by true z (the inverse-z key), transform into the
+// destination camera, depth-splat nearest-wins. Destination depth starts
+// zeroed so disocclusions stay zb==0 and the unchanged sky pass fills them
+// (the accepted turbo artifact: disoccluded world reads as sky). Entities,
+// brush models, particles, lights all render fresh per frame over the warped
+// depth. Bit-exact when the cvar is off: the only shared-state change is one
+// parity counter.
+static uint16_t *sw_snap_color;
+static uint32_t *sw_snap_zb;
+static size_t sw_snap_pixels;
+static vec3_t sw_snap_vieworg, sw_snap_forward, sw_snap_right, sw_snap_up;
+static float sw_snap_projection_x, sw_snap_projection_y;
+static int sw_snap_width, sw_snap_height, sw_snap_x, sw_snap_y;
+static const sw_model_t *sw_snap_world;
+static qboolean sw_snap_valid;
+static int sw_temporal_parity;
+static qboolean sw_temporal_warp_now;
+static cvar_t *sw_cvar_temporal;
+
+static void sw_temporal_invalidate(void)
+{
+	sw_snap_valid = false;
+	sw_snap_world = NULL;
+}
+
+static qboolean sw_temporal_enabled(void)
+{
+	if (sw_cvar_temporal == NULL)
+		sw_cvar_temporal = sw_ri.Cvar_Get("r_swtemporal",
+			getenv("H2DOS_SW_TEMPORAL") != NULL ? "1" : "0", 0);
+	return sw_cvar_temporal != NULL && sw_cvar_temporal->value != 0.0f;
+}
+
+static void sw_temporal_snapshot(const refdef_t *fd)
+{
+	const size_t pixels = (size_t)sw_width * (size_t)sw_height;
+	if (pixels > sw_snap_pixels)
+	{
+		uint16_t *new_color = realloc(sw_snap_color, pixels * sizeof(*sw_snap_color));
+		uint32_t *new_zb = realloc(sw_snap_zb, pixels * sizeof(*sw_snap_zb));
+		if (new_color == NULL || new_zb == NULL)
+		{
+			free(new_color != NULL ? new_color : sw_snap_color);
+			free(new_zb != NULL ? new_zb : sw_snap_zb);
+			sw_snap_color = NULL;
+			sw_snap_zb = NULL;
+			sw_snap_pixels = 0;
+			sw_temporal_invalidate();
+			return;
+		}
+		sw_snap_color = new_color;
+		sw_snap_zb = new_zb;
+		sw_snap_pixels = pixels;
+	}
+	memcpy(sw_snap_color, sw_color, pixels * sizeof(*sw_snap_color));
+	memcpy(sw_snap_zb, sw_depth, pixels * sizeof(*sw_snap_zb));
+	VectorCopy(fd->vieworg, sw_snap_vieworg);
+	VectorCopy(view_forward, sw_snap_forward);
+	VectorCopy(view_right, sw_snap_right);
+	VectorCopy(view_up, sw_snap_up);
+	sw_snap_projection_x = projection_x;
+	sw_snap_projection_y = projection_y;
+	sw_snap_width = sw_width;
+	sw_snap_height = sw_height;
+	sw_snap_x = fd->x;
+	sw_snap_y = fd->y;
+	sw_snap_world = sw_world_model;
+	sw_snap_valid = true;
+}
+
+static void sw_temporal_warp(const refdef_t *fd)
+{
+	// Destination depth restarts at far; disocclusions become sky holes.
+	const size_t pixels = (size_t)sw_width * (size_t)sw_height;
+	memset(sw_depth, 0, pixels * sizeof(*sw_depth));
+	const float hstep_s = 1.0f / sw_snap_projection_x;
+	const float vstep_s = 1.0f / sw_snap_projection_y;
+	const float cx_s = sw_snap_x + sw_snap_width * 0.5f;
+	const float cy_s = sw_snap_y + sw_snap_height * 0.5f;
+	const int max_index = sw_width * sw_height;
+	for (int y = 0; y < sw_height; ++y)
+	{
+		float dir_x = (0.5f - cx_s) * hstep_s;
+		const float dir_y = (cy_s - (y + 0.5f)) * vstep_s;
+		const uint32_t *szb_row = sw_snap_zb + (size_t)y * (size_t)sw_width;
+		const uint16_t *scol_row = sw_snap_color + (size_t)y * (size_t)sw_width;
+		for (int x = 0; x < sw_width; ++x, dir_x += hstep_s)
+		{
+			const uint32_t key_s = szb_row[x];
+			if (key_s == 0)
+				continue; // source sky pixel: leave dest hole for the sky pass
+			const float z_s = SW_DEPTH_SCALE / (float)key_s;
+			const float vx = dir_x * z_s;
+			const float vy = dir_y * z_s;
+			const float wx = sw_snap_vieworg[0] + vx * sw_snap_right[0] + vy * sw_snap_up[0] + z_s * sw_snap_forward[0];
+			const float wy = sw_snap_vieworg[1] + vx * sw_snap_right[1] + vy * sw_snap_up[1] + z_s * sw_snap_forward[1];
+			const float wz = sw_snap_vieworg[2] + vx * sw_snap_right[2] + vy * sw_snap_up[2] + z_s * sw_snap_forward[2];
+			const vec3_t mv = { wx - fd->vieworg[0], wy - fd->vieworg[1], wz - fd->vieworg[2] };
+			const float dx = dot3(mv, view_right);
+			const float dy = dot3(mv, view_up);
+			const float dz = dot3(mv, view_forward);
+			if (dz <= 1e-6f)
+				continue;
+			const float iz = 1.0f / dz;
+			const int xd = (int)(fd->x + fd->width * 0.5f + dx * projection_x * iz);
+			const int yd = (int)(fd->y + fd->height * 0.5f - dy * projection_y * iz);
+			if (xd < 0 || xd >= sw_width || yd < 0 || yd >= sw_height)
+				continue;
+			const size_t idx = (size_t)yd * (size_t)sw_width + (size_t)xd;
+			if (idx >= (size_t)max_index)
+				continue;
+			const uint32_t key_d = (uint32_t)(iz * SW_DEPTH_SCALE);
+			if (key_d >= sw_depth[idx])
+			{
+				sw_depth[idx] = key_d;
+				sw_color[idx] = scol_row[x];
+			}
+		}
+	}
+}
+
 int SW_RenderFrame(const refdef_t *fd)
 {
 	if (fd == NULL || sw_color == NULL || fd->width <= 0 || fd->height <= 0 ||
@@ -3453,11 +3579,22 @@ int SW_RenderFrame(const refdef_t *fd)
 	setup_view(fd);
 	if (fd->rdflags & RDF_NOWORLDMODEL)
 		SW_ClearColorFill();
+	sw_temporal_warp_now = false;
+	if (!(fd->rdflags & RDF_NOWORLDMODEL) && sw_temporal_enabled())
+	{
+		if (sw_snap_world != sw_world_model || sw_snap_width != sw_width || sw_snap_height != sw_height)
+			sw_temporal_invalidate();
+		if ((sw_temporal_parity & 1) != 0 && sw_snap_valid)
+			sw_temporal_warp_now = true;
+	}
 	const uclock_t frame_start = uclock();
 	uclock_t mark = frame_start;
 	// Sky runs AFTER the world pass and writes only where depth is still far
 	// (the sky draws no depth, so world-covered pixels cost one int compare).
-	SW_RasterWorld(fd);
+	if (sw_temporal_warp_now)
+		sw_temporal_warp(fd);
+	else
+		SW_RasterWorld(fd);
 	{
 		const uclock_t next = uclock();
 		sw_stats.bench_us_world += (unsigned long long)(next - mark);
@@ -3469,6 +3606,8 @@ int SW_RenderFrame(const refdef_t *fd)
 		sw_stats.bench_us_sky += (unsigned long long)(next - mark);
 		mark = next;
 	}
+	if (!sw_temporal_warp_now && sw_snap_width == sw_width && sw_temporal_enabled())
+		sw_temporal_snapshot(fd); // world+sky only: entities never enter the snapshot
 	SW_RasterEntities(fd);
 	{
 		const uclock_t next = uclock();
@@ -3517,6 +3656,7 @@ int SW_RenderFrame(const refdef_t *fd)
 		(void)mark;
 		sw_stats.bench_us_frame += (unsigned long long)(uclock() - frame_start);
 		++sw_stats.bench_frames;
+		++sw_temporal_parity;
 	}
 	return 0;
 }
