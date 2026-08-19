@@ -481,11 +481,33 @@ static void draw_face_spans(const screen_vertex_t *verts, const int n, const sw_
 		out_x = (p10 * y20 - p20 * y10) * inv_denom; \
 		out_y = (p20 * x10 - p10 * x20) * inv_denom; \
 	} while (0)
+	// E17/ideas#17: draw_face sets vertex.light_s/light_t = base_s/base_t for
+	// every face class (only SURF_WARP diverges), and the clipper lerps both
+	// attribute pairs with the same fractions, so when the projected verts
+	// carry light == texture coords bitwise, the two light gradient chains
+	// are bit-identical to the texture chains and alias away (FLOWING's
+	// constant scroll breaks the equality and keeps the full path).
+	qboolean light_alias = true;
+	for (int i = 0; i < n; ++i)
+		if (verts[i].s_over_z != verts[i].light_s_over_z ||
+			verts[i].t_over_z != verts[i].light_t_over_z)
+		{
+			light_alias = false;
+			break;
+		}
 	SW_GRADIENT(s_over_z, gradient_uz_x, gradient_uz_y);
 	SW_GRADIENT(t_over_z, gradient_vz_x, gradient_vz_y);
 	SW_GRADIENT(inverse_z, gradient_w_x, gradient_w_y);
-	SW_GRADIENT(light_s_over_z, gradient_lsz_x, gradient_lsz_y);
-	SW_GRADIENT(light_t_over_z, gradient_ltz_x, gradient_ltz_y);
+	if (light_alias)
+	{
+		gradient_lsz_x = gradient_uz_x; gradient_lsz_y = gradient_uz_y;
+		gradient_ltz_x = gradient_vz_x; gradient_ltz_y = gradient_vz_y;
+	}
+	else
+	{
+		SW_GRADIENT(light_s_over_z, gradient_lsz_x, gradient_lsz_y);
+		SW_GRADIENT(light_t_over_z, gradient_ltz_x, gradient_ltz_y);
+	}
 #undef SW_GRADIENT
 
 	// Lighting miniature for this face, persisted across frames while the
@@ -625,8 +647,17 @@ static void draw_face_spans(const screen_vertex_t *verts, const int n, const sw_
 		float uz = v0->s_over_z + gradient_uz_x * x_center + gradient_uz_y * y_center;
 		float vz = v0->t_over_z + gradient_vz_x * x_center + gradient_vz_y * y_center;
 		float w = v0->inverse_z + gradient_w_x * x_center + gradient_w_y * y_center;
-		float lsz = v0->light_s_over_z + gradient_lsz_x * x_center + gradient_lsz_y * y_center;
-		float ltz = v0->light_t_over_z + gradient_ltz_x * x_center + gradient_ltz_y * y_center;
+		float lsz, ltz;
+		if (light_alias)
+		{
+			lsz = uz;
+			ltz = vz;
+		}
+		else
+		{
+			lsz = v0->light_s_over_z + gradient_lsz_x * x_center + gradient_lsz_y * y_center;
+			ltz = v0->light_t_over_z + gradient_ltz_x * x_center + gradient_ltz_y * y_center;
+		}
 
 		uint16_t *const fb_row = sw_color + (size_t)y * sw_width;
 		uint32_t *const zb_row = sw_depth + (size_t)y * sw_width;
@@ -648,21 +679,33 @@ static void draw_face_spans(const screen_vertex_t *verts, const int n, const sw_
 			const float iz1 = 1.0f / max(w_end, 1e-20f);
 			const float u0 = uz * iz0;
 			const float v0b = vz * iz0;
-			const float ls0 = lsz * iz0;
-			const float lt0 = ltz * iz0;
 			const float u1 = (uz + gradient_uz_x * block) * iz1;
 			const float v1b = (vz + gradient_vz_x * block) * iz1;
-			const float ls1 = (lsz + gradient_lsz_x * block) * iz1;
-			const float lt1 = (ltz + gradient_ltz_x * block) * iz1;
 			int iu = (int)(u0 * 65536.0f);
 			int it = (int)(v0b * 65536.0f);
-			// +1 cell bias into the band-packed light map => no per-pixel clamps
-			int ils = (int)(ls0 * 65536.0f) - (light_min_s << 16) + (1 << 20);
-			int ilt = (int)(lt0 * 65536.0f) - (light_min_t << 16) + (1 << 20);
 			const int iu_step = (int)((u1 - u0) * 65536.0f * SW_INV_WIDTH(block));
 			const int it_step = (int)((v1b - v0b) * 65536.0f * SW_INV_WIDTH(block));
-			const int ils_step = (int)((ls1 - ls0) * 65536.0f * SW_INV_WIDTH(block));
-			const int ilt_step = (int)((lt1 - lt0) * 65536.0f * SW_INV_WIDTH(block));
+			// +1 cell bias into the band-packed light map => no per-pixel clamps
+			int ils, ilt, ils_step, ilt_step;
+			if (light_alias)
+			{
+				// identical ints to the ls0/ls1-chain form: ls0 == u0 bitwise.
+				ils = iu - (light_min_s << 16) + (1 << 20);
+				ilt = it - (light_min_t << 16) + (1 << 20);
+				ils_step = iu_step;
+				ilt_step = it_step;
+			}
+			else
+			{
+				const float ls0 = lsz * iz0;
+				const float lt0 = ltz * iz0;
+				const float ls1 = (lsz + gradient_lsz_x * block) * iz1;
+				const float lt1 = (ltz + gradient_ltz_x * block) * iz1;
+				ils = (int)(ls0 * 65536.0f) - (light_min_s << 16) + (1 << 20);
+				ilt = (int)(lt0 * 65536.0f) - (light_min_t << 16) + (1 << 20);
+				ils_step = (int)((ls1 - ls0) * 65536.0f * SW_INV_WIDTH(block));
+				ilt_step = (int)((lt1 - lt0) * 65536.0f * SW_INV_WIDTH(block));
+			}
 			const int light_max_s_fixed = ((light_width + 2) << 20) - 1;
 			const int light_max_t_fixed = ((light_height + 2) << 20) - 1;
 			if (ils > light_max_s_fixed) ils = light_max_s_fixed;
@@ -804,8 +847,11 @@ static void draw_face_spans(const screen_vertex_t *verts, const int n, const sw_
 			(void)gradient_w_x;
 			uz += gradient_uz_x * block;
 			vz += gradient_vz_x * block;
-			lsz += gradient_lsz_x * block;
-			ltz += gradient_ltz_x * block;
+			if (!light_alias)
+			{
+				lsz += gradient_lsz_x * block;
+				ltz += gradient_ltz_x * block;
+			}
 			w = w_end;
 			remaining -= block;
 		}
