@@ -1,0 +1,49 @@
+{
+ "version": "pm-mca-0.2.0",
+ "db": "6b15b0174f1f-pm-mca-0.2.0",
+ "frames": 160,
+ "loops": {
+  "flex_vertex_gradient": {
+   "cpi": 89,
+   "trips": 886.65,
+   "est_cycles": 78911.8,
+   "n_instr": 56,
+   "stalls": {
+    "fp-operand": 34.0,
+    "store-early": 4.0
+   },
+   "bank_unknown": 0.0,
+   "mem_ops": 17.0,
+   "bytes_rw": 44.0
+  },
+  "flex_variant_b": {
+   "cpi": 79,
+   "trips": 831.09375,
+   "est_cycles": 65656.4,
+   "n_instr": 54,
+   "stalls": {
+    "agi-in-pair": 1.0,
+    "fp-operand": 30.0,
+    "store-early": 3.0
+   },
+   "bank_unknown": 2.0,
+   "mem_ops": 17.0,
+   "bytes_rw": 50.0
+  },
+  "world_struct_clear": {
+   "cpi": 3,
+   "trips": 380.21875,
+   "est_cycles": 1140.7,
+   "n_instr": 4,
+   "stalls": {
+    "agi": 0.92
+   },
+   "bank_unknown": 0.0,
+   "mem_ops": 1.0,
+   "bytes_rw": 4.0
+  }
+ },
+ "total_cycles": 145709.0,
+ "est_us_pmmx233": 625.0,
+ "problems": []
+}

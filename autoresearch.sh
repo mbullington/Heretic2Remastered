@@ -39,7 +39,7 @@ run_boxed bash -c build_dos || { echo "build attempt 1 failed/hung, retrying" >&
 RUNS=3
 PMCA_BASELINE=autoresearch.pmca-baseline.json
 if [ -f scripts/pm_mca.py ] && [ -f scripts/pm_mca_manifest.json ]; then
-  CHANGED=$(git diff --name-only HEAD 2>/dev/null | grep -v '^$' || true)
+  CHANGED=$(git diff --name-only HEAD -- dos src scripts include lib CMakeLists.txt 2>/dev/null | grep -v '^$' || true)
   OUT_OF_COVERAGE=$(python3 - "$CHANGED" <<'PYEOF'
 import json, sys
 changed = [c for c in sys.argv[1].splitlines() if c]
@@ -103,7 +103,10 @@ for path in sys.argv[1:]:
             key, _, value = line.partition("=")
             key = key.strip()
             if key.startswith("bench-"):
-                series.setdefault(key, []).append(float(value.strip()))
+                try:
+                    series.setdefault(key, []).append(float(value.strip()))
+                except ValueError:
+                    pass  # bench-combat-* diagnostic strings are not metrics
 
 EMIT = {
     "frame_us": "bench-avg-us-frame",
@@ -122,6 +125,16 @@ EMIT = {
     "inside_flex_px": "bench-inside-flex-px",
     "flex_vertex_lerps": "bench-flex-vertex-lerps",
 }
+
+def as_number(v):
+    try:
+        return float(v)
+    except ValueError:
+        return None
+
+numeric = {k: [n for n in (as_number(v) for v in vs) if n is not None]
+           for k, vs in series.items()}
+series = {k: v for k, v in numeric.items() if v}
 for name, key in EMIT.items():
     if key in series:
         print(f"METRIC {name}={int(statistics.median(series[key]))}", flush=True)
