@@ -358,6 +358,15 @@ static inline uint16_t span_modulate(const uint16_t texel, const uint32_t light_
 	return (uint16_t)(((r & 0xF8u) << 8) | ((g & 0xFCu) << 3) | (b >> 3));
 }
 
+// E59b S-buffer coverage mask: one bit per pixel, set when a world pixel
+// accepts. Because world faces draw front-to-back (BSP plane order = depth
+// order for disjoint convex content), a set bit MEANS 'the z-buffer value
+// here is >= this candidate key' — so the mask test is bit-exactly the
+// z-test outcome, and the world loop never reads zb at all. zb writes stay
+// for entities/warp/sky. Alpha-test faces take the per-px lane instead.
+#define SW_COVER_WORDS 20 // 640 px max / 32
+extern uint32_t sw_covermask[480][SW_COVER_WORDS];
+
 #define SW_SCISSOR_TILES_Y 60
 extern uint64_t sw_scissor_row[SW_SCISSOR_TILES_Y];
 extern qboolean sw_scissor_active;
@@ -655,44 +664,70 @@ static void draw_face_spans(const screen_vertex_t *verts, const int n, const sw_
 
 			if (alpha >= 1.0f && twist_pow2 && theight_pow2)
 			{
+				uint32_t *const cw = sw_covermask[y];
 				unsigned depth_writes = 0;
 				int light_prev_idx = -1;
 				unsigned light_prev = 0;
 				unsigned light_r = 256u, light_g = 256u, light_b = 256u;
-				for (int i = 0; i < block; ++i, ++x)
+				int i = 0;
+				while (i < block)
 				{
-					const size_t idx = (size_t)x;
-					if (ikey >= zb_row[idx])
+					const int run = min(block - i, 32 - (x & 31));
+					const uint32_t runmask = (run == 32) ? 0xFFFFFFFFu : (((1u << run) - 1u) << (x & 31));
+					uint32_t *const word = &cw[x >> 5];
+					const uint32_t covered = *word & runmask;
+					if (covered == runmask)
 					{
-						const uint16_t texel = image->pixels[((it >> 16) & mask_h) * image->width + ((iu >> 16) & mask_w)];
-						// Alpha-test faces (SURF_ALPHA_TEXTURE): texel 0x0000 is the
-						// colorkey. Writing it produced a black occluder that also
-						// stomped the z-buffer behind genuine geometry.
-						if (!alpha_test || texel != 0)
-						{
-						const int lidx = (int)((unsigned)ilt >> 20) * light_stride + (int)((unsigned)ils >> 20);
-						if (lidx != light_prev_idx)
-						{
-							light_prev_idx = lidx;
-							light_prev = light_cache[lidx];
-							light_r = (light_prev >> 20) & 1023u;
-							light_g = (light_prev >> 10) & 1023u;
-							light_b = light_prev & 1023u;
-						}
-							const uint16_t wpx = span_modulate3(texel, light_r, light_g, light_b);
-							sw_stats.bench_mag_world += (wpx == 0xF81Fu);
-							sw_tag_face_paint_last = face_index;
-							++sw_tag_face_paint_count;
-							if (sw_dbg_tag_x == x && sw_dbg_tag_y == y)
-								sw_ri.Con_Printf(PRINT_ALL, "tagxy worldspan bf=%u face=%d texel=%04x out=%04x key=%u zb=%u light=%08x\n",
-									sw_stats.bench_frames, face_index, texel, wpx, ikey, zb_row[idx], light_prev);
-							fb_row[idx] = wpx;
-							zb_row[idx] = ikey;
-							++depth_writes;
-							++sw_stats.bench_world_zaccepted;
-						}
+						sw_stats.bench_world_zreject += (unsigned)run; // the z-test would have rejected all of these
+						iu += iu_step * run; it += it_step * run; ils += ils_step * run; ilt += ilt_step * run;
+						ikey += (uint32_t)(ikey_step * run);
+						x += run;
+						i += run;
+						continue;
 					}
-					iu += iu_step; it += it_step; ils += ils_step; ilt += ilt_step; ikey += (uint32_t)ikey_step;
+					const uint32_t per_px_mask = (covered == 0) ? 0u : covered;
+					uint32_t outmask = 0;
+					for (int k = 0; k < run; ++k, ++i, ++x)
+					{
+						const size_t idx = (size_t)x;
+						// per-px coverage bit: in a mixed word, only empty bits paint
+						const uint32_t bit = 1u << (x & 31);
+						if ((per_px_mask & bit) == 0)
+						{
+							const uint16_t texel = image->pixels[((it >> 16) & mask_h) * image->width + ((iu >> 16) & mask_w)];
+							// Alpha-test faces (SURF_ALPHA_TEXTURE): texel 0x0000 is the
+							// colorkey. Writing it produced a black occluder that also
+							// stomped the z-buffer behind genuine geometry.
+							if (!alpha_test || texel != 0)
+							{
+							const int lidx = (int)((unsigned)ilt >> 20) * light_stride + (int)((unsigned)ils >> 20);
+							if (lidx != light_prev_idx)
+							{
+								light_prev_idx = lidx;
+								light_prev = light_cache[lidx];
+								light_r = (light_prev >> 20) & 1023u;
+								light_g = (light_prev >> 10) & 1023u;
+								light_b = light_prev & 1023u;
+							}
+								const uint16_t wpx = span_modulate3(texel, light_r, light_g, light_b);
+								sw_stats.bench_mag_world += (wpx == 0xF81Fu);
+								sw_tag_face_paint_last = face_index;
+								++sw_tag_face_paint_count;
+								if (sw_dbg_tag_x == x && sw_dbg_tag_y == y)
+									sw_ri.Con_Printf(PRINT_ALL, "tagxy worldspan bf=%u face=%d texel=%04x out=%04x key=%u zb=%u light=%08x\n",
+										sw_stats.bench_frames, face_index, texel, wpx, ikey, zb_row[idx], light_prev);
+								fb_row[idx] = wpx;
+								zb_row[idx] = ikey;
+								++depth_writes;
+								++sw_stats.bench_world_zaccepted;
+								outmask |= bit;
+							}
+						}
+						else
+							++sw_stats.bench_world_zreject;
+						iu += iu_step; it += it_step; ils += ils_step; ilt += ilt_step; ikey += (uint32_t)ikey_step;
+					}
+					*word |= outmask;
 				}
 				sw_stats.depth_writes += depth_writes;
 				sw_stats.bench_pixels_world += (unsigned)block;
@@ -1560,6 +1595,8 @@ void SW_RasterWorld(const refdef_t *fd)
 {
 	if (sw_world_model == NULL || sw_world_model->bsp == NULL || (fd->rdflags & RDF_NOWORLDMODEL))
 		return;
+	if (!sw_world_repair_pass)
+		memset(sw_covermask, 0, (size_t)sw_height * sizeof(sw_covermask[0])); // fresh frame vs repair-continuation
 	// Per-face stores are keyed by face index into this BSP; invalidate all of
 	// them when the world changes so a new map cannot reuse stale light.
 	if (sw_face_light_world != sw_world_model->bsp)
@@ -3473,6 +3510,7 @@ static cvar_t *sw_cvar_temporal;
 #define SW_SCISSOR_TILES_Y 60
 uint64_t sw_scissor_row[SW_SCISSOR_TILES_Y];
 qboolean sw_scissor_active;
+uint32_t sw_covermask[480][SW_COVER_WORDS];
 qboolean sw_world_repair_pass;
 
 static void sw_temporal_invalidate(void)
