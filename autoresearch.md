@@ -1,5 +1,17 @@
 # Autoresearch: minimize DOS soft-renderer frame time
 
+## SEG-6 (active): 320x240 RGB565 + correctness overhaul
+
+Bench/display contract changed at the user's request: 320x200 INDEX8
+(quantized, palettized) -> 320x240 RGB565 (direct color). Seg-5 numbers are
+not comparable. Baseline #54 (df1a0562): total 178,391 / frame 161,394 /
+world 99,071 / entities 47,325 (flex 39.2 from now-visible player model,
+640 tris/frame) / sky 15,164 / present 15,816 / clear 1,181.
+Gates baselines refreshed once because the overhaul is intentional visual
+change (z-domain rewrite, deferred trans pass, alpha-test colorkey guard,
+lightmap layer index, flex iz1/scan-typo/cutout-depth, local brush texcoords,
+exact sky cache, E50 removed, player-model alias); real visuals = user's eyes.
+
 ## Objective and Workload
 Minimize `total_us` = `bench-avg-us-frame` + `bench-avg-us-present` +
 `bench-avg-us-clear` of the Heretic II DOS software
