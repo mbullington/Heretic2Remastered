@@ -342,13 +342,64 @@ void SW_BlendRect(const int x, const int y, const int w, const int h, const uint
 {
 	if (w <= 0 || h <= 0)
 		return;
+	sw_debug_env_init();
 	const int start_x = (int)max(0ll, -(long long)x);
 	const int start_y = (int)max(0ll, -(long long)y);
 	const int end_x = (int)min((long long)w, (long long)sw_width - x);
 	const int end_y = (int)min((long long)h, (long long)sw_height - y);
+	// Diagnostics (TAGXY prints, ZCOLLIDE counters, ZVIZ markers, ZSTRICT
+	// compare mode) keep the general per-pixel path so their behavior is
+	// byte-identical to before; production runs take the specialized loops.
+	if (sw_dbg_tag_x >= 0 || sw_dbg_zcollide || sw_dbg_zviz || sw_dbg_zstrict)
+	{
+		for (int row = start_y; row < end_y; ++row)
+			for (int column = start_x; column < end_x; ++column)
+				SW_PutPixel(x + column, y + row, FLT_MAX, color, alpha, false, false);
+		return;
+	}
+	// In the specialized loops: FLT_MAX depth keys always pass the z
+	// comparison (0xFFFFFFFF is never below a stored 31-bit key), no depth is
+	// written (depth_write=false), additive=false.
+	if (alpha == 0)
+		return;
+	if (alpha == 255)
+	{
+		for (int row = start_y; row < end_y; ++row)
+		{
+			uint16_t *const dst = sw_color + (size_t)(y + row) * (size_t)sw_width + x;
+			for (int column = start_x; column < end_x; ++column)
+				dst[column] = color;
+		}
+		sw_stats.bench_mag_putpixel +=
+			(color == 0xF81Fu) ? (unsigned)((end_x - start_x) * (end_y - start_y)) : 0u;
+		return;
+	}
+	// n = sr*alpha + dr*(255-alpha) reaches at most 248*255 = 63240 because
+	// the 565 channel masks cap sr/dr at 0xF8/0xFC, and (n*0x8081)>>23 is
+	// n/255 exactly for every n <= 63240 (swept exhaustively; 0x8081 =
+	// ceil(2^23/255)). SW_PutPixel's min(255, ...) is dead on this range
+	// (max quotient 248). Bit-identical to the per-pixel path it replaces.
+	const unsigned src_weight = alpha;
+	const unsigned dst_weight = 255u - alpha;
+	const unsigned sr = ((color >> 8) & 0xF8u) * src_weight;
+	const unsigned sg = ((color >> 3) & 0xFCu) * src_weight;
+	const unsigned sb = ((color << 3) & 0xF8u) * src_weight;
+	unsigned mag = 0;
 	for (int row = start_y; row < end_y; ++row)
+	{
+		uint16_t *const dst = sw_color + (size_t)(y + row) * (size_t)sw_width + x;
 		for (int column = start_x; column < end_x; ++column)
-			SW_PutPixel(x + column, y + row, FLT_MAX, color, alpha, false, false);
+		{
+			const uint16_t d = dst[column];
+			const unsigned r = ((sr + ((d >> 8) & 0xF8u) * dst_weight) * 0x8081u) >> 23;
+			const unsigned g = ((sg + ((d >> 3) & 0xFCu) * dst_weight) * 0x8081u) >> 23;
+			const unsigned b = ((sb + ((d << 3) & 0xF8u) * dst_weight) * 0x8081u) >> 23;
+			const uint16_t out = SW_RGB565(r, g, b);
+			dst[column] = out;
+			mag += (out == 0xF81Fu);
+		}
+	}
+	sw_stats.bench_mag_putpixel += mag;
 }
 
 void SW_Present(void)
