@@ -2410,6 +2410,168 @@ advance:
 	++sw_stats.flex_triangles;
 }
 
+// E55c: opaque fast path for skeleton-flex triangles, BIT-EXACT with the
+// general span path wherever bits are observable: s/t/inverse_z and the
+// gouraud r/g/b keep the identical per-block perspective float chain (same
+// z-divided corner values, same endpoint math, same fixed-point conversion).
+// Dropped: the alpha attribute entirely (entity is provably opaque solid —
+// salpha evaluates to 255 deterministically), the colorkey blend branches
+// (texel==0 test kept, semantics equal to salpha==0), and the per-triangle
+// colors[][] rebuild (base_light*intensity premultiplied once per vertex —
+// same two-operand product, bit-identical). Caller guarantees: entity
+// opaque_depth && !additive, no per-node USE_COLOR, every corner in front of
+// the near plane, skin non-NULL.
+static void span_raster_flex_opaque(const flex_screen_vertex_t a, const flex_screen_vertex_t b,
+	const flex_screen_vertex_t c, const sw_image_t *image)
+{
+	const float x10 = b.x - a.x, y10 = b.y - a.y;
+	const float x20 = c.x - a.x, y20 = c.y - a.y;
+	const float denom = x10 * y20 - x20 * y10;
+	if (!isfinite(denom) || fabsf(denom) < 0.0001f)
+		return;
+	const float inv = 1.0f / denom;
+	float guz_x, guz_y, gvz_x, gvz_y, gw_x, gw_y;
+	float gr_x, gr_y, gg_x, gg_y, gb_x, gb_y;
+#define SWO_GRAD(attr, ox, oy) do { \
+		const float p10 = b.attr - a.attr; \
+		const float p20 = c.attr - a.attr; \
+		ox = (p10 * y20 - p20 * y10) * inv; \
+		oy = (p20 * x10 - p10 * x20) * inv; \
+	} while (0)
+	SWO_GRAD(s_over_z, guz_x, guz_y);
+	SWO_GRAD(t_over_z, gvz_x, gvz_y);
+	SWO_GRAD(inverse_z, gw_x, gw_y);
+	SWO_GRAD(red_over_z, gr_x, gr_y);
+	SWO_GRAD(green_over_z, gg_x, gg_y);
+	SWO_GRAD(blue_over_z, gb_x, gb_y);
+#undef SWO_GRAD
+
+	const flex_screen_vertex_t *verts[3] = { &a, &b, &c };
+	int top = 0, bottom = 0;
+	for (int i = 1; i < 3; ++i)
+	{
+		if (verts[i]->y < verts[top]->y) top = i;
+		if (verts[i]->y > verts[bottom]->y) bottom = i;
+	}
+	const int scan_first = ClampI((int)ceilf(verts[top]->y - 0.5f), 0, sw_height - 1);
+	const int scan_last = ClampI((int)ceilf(verts[bottom]->y - 0.5f) - 1, 0, sw_height - 1);
+	int left_prev = top, left_cur = top, right_prev = top, right_cur = top;
+	float left_x = 0.0f, right_x = 0.0f, left_slope = 0.0f, right_slope = 0.0f;
+	for (int y = scan_first; y <= scan_last; ++y)
+	{
+		++sw_stats.bench_flex_spans;
+		const float y_center = y + 0.5f - a.y;
+		const int old_left_prev = left_prev, old_right_prev = right_prev;
+		while (left_cur != bottom && verts[left_cur]->y <= (y + 0.5f))
+		{
+			left_prev = left_cur;
+			left_cur = (left_cur + 1) % 3;
+		}
+		while (right_cur != bottom && verts[right_cur]->y <= (y + 0.5f))
+		{
+			right_prev = right_cur;
+			right_cur = (right_cur + 3 - 1) % 3;
+		}
+		const flex_screen_vertex_t *lp0 = verts[left_prev], *lp1 = verts[left_cur];
+		const flex_screen_vertex_t *rp0 = verts[right_prev], *rp1 = verts[right_cur];
+		if (left_prev != old_left_prev || y == scan_first)
+		{
+			left_slope = (lp1->y > lp0->y) ? (lp1->x - lp0->x) / (lp1->y - lp0->y) : 0.0f;
+			left_x = lp0->x + (lp1->y > lp0->y ? ((y + 0.5f) - lp0->y) * left_slope : 0.0f);
+		}
+		else
+			left_x += left_slope;
+		if (right_prev != old_right_prev || y == scan_first)
+		{
+			right_slope = (rp1->y > rp0->y) ? (rp1->x - rp0->x) / (rp1->y - rp0->y) : 0.0f;
+			right_x = rp0->x + (rp1->y > rp0->y ? ((y + 0.5f) - rp0->y) * right_slope : 0.0f);
+		}
+		else
+			right_x += right_slope;
+		const int xa = ClampI((int)ceilf(min(left_x, right_x) - 0.5f), 0, sw_width - 1);
+		const int xb = ClampI((int)ceilf(max(left_x, right_x) - 0.5f) - 1, 0, sw_width - 1);
+		if (xa > xb)
+			continue;
+		const float x_center = xa + 0.5f - a.x;
+		float uz = a.s_over_z + guz_x * x_center + guz_y * y_center;
+		float vz = a.t_over_z + gvz_x * x_center + gvz_y * y_center;
+		float w = a.inverse_z + gw_x * x_center + gw_y * y_center;
+		float rz = a.red_over_z + gr_x * x_center + gr_y * y_center;
+		float gz = a.green_over_z + gg_x * x_center + gg_y * y_center;
+		float bz = a.blue_over_z + gb_x * x_center + gb_y * y_center;
+		uint16_t *const fb_row = sw_color + (size_t)y * sw_width;
+		uint32_t *const zb_row = sw_depth + (size_t)y * sw_width;
+		int x = xa;
+		int remaining = xb - xa + 1;
+		while (remaining > 0)
+		{
+			const int block = min(remaining, SW_SPAN_STEP);
+			++sw_stats.bench_flex_blocks;
+			if (w <= 0.0f)
+				break;
+			const float w_end = w + gw_x * block;
+			const float iz0 = 1.0f / w;
+			const float iz1 = 1.0f / max(w_end, 1e-20f);
+			const float u0 = uz * iz0, u1 = (uz + guz_x * block) * iz1;
+			const float v0b = vz * iz0, v1b = (vz + gvz_x * block) * iz1;
+			const float r0 = rz * iz0, r1 = (rz + gr_x * block) * iz1;
+			const float g0 = gz * iz0, g1 = (gz + gg_x * block) * iz1;
+			const float b0c = bz * iz0, b1c = (bz + gb_x * block) * iz1;
+			int iu = (int)(u0 * 65536.0f);
+			int it = (int)(v0b * 65536.0f);
+			int ir = (int)(r0 * 131072.0f);
+			int ig = (int)(g0 * 131072.0f);
+			int ib = (int)(b0c * 131072.0f);
+			const int du = (int)((u1 - u0) * 65536.0f * SW_INV_WIDTH(block));
+			const int dt = (int)((v1b - v0b) * 65536.0f * SW_INV_WIDTH(block));
+			const int dr = (int)((r1 - r0) * 131072.0f * SW_INV_WIDTH(block));
+			const int dg = (int)((g1 - g0) * 131072.0f * SW_INV_WIDTH(block));
+			const int db = (int)((b1c - b0c) * 131072.0f * SW_INV_WIDTH(block));
+			uint32_t ikey = (uint32_t)(w * SW_DEPTH_SCALE);
+			uint32_t ikey_end = (uint32_t)(max(w_end, 0.0f) * SW_DEPTH_SCALE);
+			const int ikey_step = ((int)ikey_end - (int)ikey) / block;
+			for (int i = 0; i < block; ++i, ++x)
+			{
+				++sw_stats.bench_pixels_flex;
+				const size_t idx = (size_t)x;
+				if (ikey >= zb_row[idx])
+				{
+					const int tx = ClampI(iu >> 16, 0, image->width - 1);
+					const int ty = ClampI(it >> 16, 0, image->height - 1);
+					const uint16_t texel = image->pixels[ty * image->width + tx];
+					// texel 0x0000 is the colorkey: identical semantics to the
+					// salpha==0 branch (no paint, no depth write).
+					if (texel != 0)
+					{
+						const int cr = min(512, max(0, ir >> 9)); // fixed [0..512]: 256 == 1.0
+						const int cg = min(512, max(0, ig >> 9));
+						const int cb = min(512, max(0, ib >> 9));
+						const unsigned mr = ((((texel >> 8) & 0xF8u) * (unsigned)cr + 128u) >> 8);
+						const unsigned mg = ((((texel >> 3) & 0xFCu) * (unsigned)cg + 128u) >> 8);
+						const unsigned mb = ((((texel << 3) & 0xF8u) * (unsigned)cb + 128u) >> 8);
+						const uint16_t fpx = SW_RGB565(min(255u, mr), min(255u, mg), min(255u, mb));
+						sw_stats.bench_mag_flex += (fpx == 0xF81Fu);
+						fb_row[idx] = fpx;
+						zb_row[idx] = ikey;
+						++sw_stats.depth_writes;
+					}
+				}
+				iu += du; it += dt; ir += dr; ig += dg; ib += db; ikey += (uint32_t)ikey_step;
+			}
+			uz += guz_x * block;
+			vz += gvz_x * block;
+			rz += gr_x * block;
+			gz += gg_x * block;
+			bz += gb_x * block;
+			w = w_end;
+			remaining -= block;
+		}
+	}
+	++sw_stats.triangles;
+	++sw_stats.flex_triangles;
+	++sw_stats.bench_flex_tris_affine;
+}
+
 static void raster_flex_triangle(const flex_screen_vertex_t a, const flex_screen_vertex_t b,
 	const flex_screen_vertex_t c, const sw_image_t *image, const qboolean depth_write, const qboolean additive)
 {
@@ -2716,6 +2878,22 @@ void SW_RasterFlexEntity(const entity_t *entity, const sw_model_t *model, const 
 	const qboolean additive = (entity->flags & (RF_TRANS_ADD | RF_TRANS_ADD_ALPHA)) != 0;
 	const float entity_alpha = (entity->flags & RF_TRANS_GHOST) ? base_light[0] * 0.5f : entity->color.a / 255.0f;
 	const qboolean opaque_depth = !(entity->flags & RF_TRANS_ANY) && entity->color.a == 255;
+	// E55c: premultiply per-vertex gouraud color (base_light * intensity) once
+	// per entity; the value per incident triangle corner is the same
+	// two-operand product the colors[][] loop would compute, bit-identical.
+	static float sw_flex_vcolor[SW_MAX_FLEX_VERTS][3];
+	const qboolean flex_opaque_ok = opaque_depth && !additive && !shadow_pass;
+	if (flex_opaque_ok && flex->render_num_xyz <= SW_MAX_FLEX_VERTS)
+	{
+		const qboolean fullbright = (entity->flags & RF_FULLBRIGHT) != 0;
+		for (int vertex = 0; vertex < flex->render_num_xyz; ++vertex)
+		{
+			const float intensity = fullbright ? 1.0f : intensities[vertex];
+			sw_flex_vcolor[vertex][0] = base_light[0] * intensity;
+			sw_flex_vcolor[vertex][1] = base_light[1] * intensity;
+			sw_flex_vcolor[vertex][2] = base_light[2] * intensity;
+		}
+	}
 	for (int mesh_index = 0; mesh_index < flex->header.num_mesh_nodes; ++mesh_index)
 	{
 		const fmnodeinfo_t *node = entity->fmnodeinfo != NULL ? &entity->fmnodeinfo[mesh_index] : NULL;
@@ -2794,6 +2972,8 @@ void SW_RasterFlexEntity(const entity_t *entity, const sw_model_t *model, const 
 					++sw_stats.bench_flex_tris_bbox;
 					continue;
 				}
+				const qboolean opaque_tri = flex_opaque_ok && !use_color && cache_ok &&
+					skin != NULL && skin->pixels != NULL;
 				for (int corner = 0; corner < 3; ++corner)
 				{
 					const int command = command_start + command_vertices[corner] * 3;
@@ -2802,11 +2982,14 @@ void SW_RasterFlexEntity(const entity_t *entity, const sw_model_t *model, const 
 					memcpy(&t, &flex->glcmds[command + 1], 4);
 					uv[corner][0] = s;
 					uv[corner][1] = t;
-					const float intensity = use_color || (entity->flags & RF_FULLBRIGHT) ? 1.0f : intensities[vertex_indices[corner]];
-					colors[corner][0] = use_color ? node_color[0] : base_light[0] * intensity;
-					colors[corner][1] = use_color ? node_color[1] : base_light[1] * intensity;
-					colors[corner][2] = use_color ? node_color[2] : base_light[2] * intensity;
-					colors[corner][3] = node_color[3];
+					if (!opaque_tri)
+					{
+						const float intensity = use_color || (entity->flags & RF_FULLBRIGHT) ? 1.0f : intensities[vertex_indices[corner]];
+						colors[corner][0] = use_color ? node_color[0] : base_light[0] * intensity;
+						colors[corner][1] = use_color ? node_color[1] : base_light[1] * intensity;
+						colors[corner][2] = use_color ? node_color[2] : base_light[2] * intensity;
+						colors[corner][3] = node_color[3];
+					}
 				}
 				sw_bench_tri_category = 1;
 				++sw_stats.bench_flex_tris;
@@ -2821,13 +3004,27 @@ void SW_RasterFlexEntity(const entity_t *entity, const sw_model_t *model, const 
 						corners[corner].inverse_z = w;
 						corners[corner].s_over_z = uv[corner][0] * (float)skin->width * w;
 						corners[corner].t_over_z = uv[corner][1] * (float)skin->height * w;
-						corners[corner].red_over_z = colors[corner][0] * w;
-						corners[corner].green_over_z = colors[corner][1] * w;
-						corners[corner].blue_over_z = colors[corner][2] * w;
-						corners[corner].alpha_over_z = colors[corner][3] * w;
+						if (opaque_tri)
+						{
+							// bit-identical: vcolor value == colors value (same product)
+							corners[corner].red_over_z = sw_flex_vcolor[vertex_indices[corner]][0] * w;
+							corners[corner].green_over_z = sw_flex_vcolor[vertex_indices[corner]][1] * w;
+							corners[corner].blue_over_z = sw_flex_vcolor[vertex_indices[corner]][2] * w;
+							corners[corner].alpha_over_z = 1.0f; // unused by the opaque path
+						}
+						else
+						{
+							corners[corner].red_over_z = colors[corner][0] * w;
+							corners[corner].green_over_z = colors[corner][1] * w;
+							corners[corner].blue_over_z = colors[corner][2] * w;
+							corners[corner].alpha_over_z = colors[corner][3] * w;
+						}
 					}
-					dispatch_flex_screen_triangle(corners[0], corners[1], corners[2], skin,
-						opaque_depth, additive);
+					if (opaque_tri)
+						span_raster_flex_opaque(corners[0], corners[1], corners[2], skin);
+					else
+						dispatch_flex_screen_triangle(corners[0], corners[1], corners[2], skin,
+							opaque_depth, additive);
 					++sw_stats.bench_flex_tris_fast;
 				}
 				else
