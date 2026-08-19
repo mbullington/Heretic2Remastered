@@ -26,4 +26,22 @@ of that bug: full 2nd world pass = 193ms). snapshot = world-only color+depth pos
 RENDER+EFFECTS diff=0 with temporal DEFAULT ON; bench total 157,858 (-23.7% vs 206,764 seg-7 base),
 world 78.5, fake-frame repair walked px ~1/3 of full. Backlog: zb-16 snapshot, warp block tune, combat
 scene for E65/E66, radius-2 dilate only for >1px reveal cracks.
+## SEG-9 night-run dispositions (2026-08-19)
+KEPT: SW_RegisterModel-glcmds flat pre-expansion (entities -0.44ms, rtri records).
+KEPT: sky free-rides S-buffer row coverage (sky 12.2->8.4, E57 finally landed free via E59b).
+KEPT: r_swscan2 stripe checkerboard infra, OFF +0.4 residue; ON measured -4.3 (turbo).
+FALSIFIED: post-transform BSP vertex cache (+4.6 world: tutorial2 verts ~10-15% dedup, cache cost > save).
+FALSIFIED: lazy-z + 16-bit-z (ablation: frame +49 with zb stores skipped: sky/warp/FTB need dense depth).
+480x200 measured loss (frame 152.6 vs 128.7: sky-hole dominance at band aspect + INDEX8 present).
+E55d/quadratic: closed with ledger math (divides ~1/span already; 128-block interiors already affine internally; rgb-affine is 565-quantum-cursed by physics).
+Mip selection: NOT BUILT (DOSBox has no cache model => intrinsic op-count delta ~0; real-iron cache effect only).
+MMX: SKIPPED (seg-4 #38 measured flat-parity regression: emulator models MMX ops at parity, compiler can't schedule across asm; hand asm inner loop likewise fails on this ruler).
+Screen-door: pool measured (blend_us=3us/frame in bench window; combat scene doesn't exist in this workload).
+Light-disc stamps: pool measured (lights_us=3us/frame; same quiescent finding as E65).
+Texture swizzle: UNMEASURABLE on flat ruler (no cache model); park for real-PMMX.
+Directional offline vis: documented as large toolchain project; E62 proved per-leaf PVS decode is not the cost center.
+QEM LOD / mesh-node frustum cull: pool measured near-zero on the present trace (player centered; 45% tris already bbox-culled pre-fill; multi-monster scenes would change that).
+E59 stripe note: post-S-buffer overdraw zreject measured 21.4% of candidates at FTB, coverage lane banks part of it.
+SECOND-ORDER LEARNINGS: (a) python bulk-edits need brace+arithmetic audits EVERY time (two separate 1-line dropouts costed ~2h); (b) run-bimodality (sky 12.2<->17.5, world +-0.5) poisoned several 3-run medians; per-run evidence files arbiter; (c) FM-reject spam + AddEntityToView spam are pre-existing game-side noise, not regressions; (d) gates recover bit-exactness through identity-warp + refresh architecture.
+
 
