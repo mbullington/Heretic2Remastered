@@ -1186,7 +1186,21 @@ int main(const int argc, char** argv)
 				const int n = sscanf(lookat, "%f,%f,%f,%f,%f,%f,%d", &fx, &fy, &fz, &tx, &ty, &tz, &at_frame);
 				if (n >= 6 && frame == at_frame)
 				{
-					cl.vieworg[0] = fx; cl.vieworg[1] = fy; cl.vieworg[2] = fz;
+					// The client rebuilds refdef.vieworg every frame from the server
+					// playerstate through the third-person camera chain, so the
+					// origin seam that survives to the next render is the server's
+					// pmove state (angles still ride cl.viewangles, H2DOS_SWEEP
+					// precedent). game.h guarantees gclient_s begins with
+					// player_state_t. Velocity cleared so one airborne frame of
+					// gravity cannot run away; s.origin seeded for the snapshot.
+					edict_t *pin = svs.clients != NULL ? svs.clients[0].edict : NULL;
+					if (pin != NULL && pin->client != NULL)
+					{
+						player_state_t *pps = (player_state_t *)pin->client;
+						pps->pmove.origin[0] = (short)fx; pps->pmove.origin[1] = (short)fy; pps->pmove.origin[2] = (short)fz;
+						pps->pmove.velocity[0] = 0; pps->pmove.velocity[1] = 0; pps->pmove.velocity[2] = 0;
+						pin->s.origin[0] = fx; pin->s.origin[1] = fy; pin->s.origin[2] = fz;
+					}
 					const float dx = tx - fx, dy = ty - fy, dz = tz - fz;
 					cl.viewangles[1] = (float)(atan2(dy, dx) * 180.0 / 3.14159265358979323846);
 					const float hd = (float)sqrt(dx*dx + dy*dy);

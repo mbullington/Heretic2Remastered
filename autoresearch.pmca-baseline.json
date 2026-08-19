@@ -7,8 +7,8 @@
    "cpi": 74,
    "trips": 886.65,
    "est_cycles": 65612.1,
-   "n_instr": 49,
-   "slice_id": "54bc0089c5510872",
+   "n_instr": 51,
+   "slice_id": "ed5a75c5d6b563f3",
    "stalls": {
     "fp-operand": 19.0,
     "store-early": 4.0
@@ -33,20 +33,18 @@
    "bytes_rw": 26.0
   },
   "world_struct_clear": {
-   "cpi": 3,
+   "cpi": 2,
    "trips": 380.21875,
-   "est_cycles": 1140.7,
+   "est_cycles": 760.4,
    "n_instr": 4,
    "slice_id": "282e42e950574aab",
-   "stalls": {
-    "agi": 0.92
-   },
+   "stalls": {},
    "bank_unknown": 0.0,
    "mem_ops": 1.0,
    "bytes_rw": 4.0
   }
  },
- "total_cycles": 123267.0,
- "est_us_pmmx233": 529.0,
+ "total_cycles": 122887.0,
+ "est_us_pmmx233": 527.0,
  "problems": []
 }

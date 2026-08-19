@@ -59,8 +59,18 @@ static void draw_flex_triangle(const vec3_t points[3], const float uv[3][2], con
 static void setup_view(const refdef_t *fd)
 {
 	AngleVectors(fd->viewangles, view_forward, view_right, view_up);
-	projection_x = fd->width * 0.5f / tanf(fd->fov_x * (float)M_PI / 360.0f);
-	projection_y = fd->height * 0.5f / tanf(fd->fov_y * (float)M_PI / 360.0f);
+	static int cached_width = -1, cached_height = -1;
+	static float cached_fov_x, cached_fov_y;
+	if (fd->width != cached_width || fd->height != cached_height ||
+		fd->fov_x != cached_fov_x || fd->fov_y != cached_fov_y)
+	{
+		projection_x = fd->width * 0.5f / tanf(fd->fov_x * (float)M_PI / 360.0f);
+		projection_y = fd->height * 0.5f / tanf(fd->fov_y * (float)M_PI / 360.0f);
+		cached_width = fd->width;
+		cached_height = fd->height;
+		cached_fov_x = fd->fov_x;
+		cached_fov_y = fd->fov_y;
+	}
 }
 
 static sw_vertex_t world_to_view(const vec3_t point, const float s, const float t)
@@ -205,7 +215,7 @@ static uint32_t sw_face_light_cache[(SW_LIGHT_CACHE_MAX + 2) * (SW_LIGHT_CACHE_M
 // Reciprocal table replaces the per-block integer divide of the span stepping
 // code ((u1-u0)*65536/len) with one float multiply: an fdiv is ~39 cycles on a
 // 486/Pentium and is worth hundreds of cycles per triangle on small spans.
-#define SW_INV_WIDTH_MAX 64
+#define SW_INV_WIDTH_MAX 128
 static float sw_inv_width[SW_INV_WIDTH_MAX + 1];
 static void sw_init_inv_width(void)
 {
@@ -372,6 +382,10 @@ extern uint64_t sw_scissor_row[SW_SCISSOR_TILES_Y];
 extern qboolean sw_scissor_active;
 extern qboolean sw_world_repair_pass;
 extern qboolean sw_temporal_warp_now;
+// The coverage mask is only equivalent to a z-test while the static world is
+// emitted in strict front-to-back BSP order. Brush entities and temporal
+// repair passes do not satisfy that invariant.
+static qboolean sw_world_ftb_mask_active;
 static qboolean project_point(const vec3_t point, int *x, int *y, float *depth);
 
 static int sw_tag_face_paint_count;
@@ -664,7 +678,7 @@ static void draw_face_spans(const screen_vertex_t *verts, const int n, const sw_
 			uint32_t ikey_end = (uint32_t)(max(w_end, 0.0f) * SW_DEPTH_SCALE);
 			const int ikey_step = ((int)ikey_end - (int)ikey) / block;
 
-			if (alpha >= 1.0f && twist_pow2 && theight_pow2)
+			if (sw_world_ftb_mask_active && alpha >= 1.0f && twist_pow2 && theight_pow2)
 			{
 				uint32_t *const cw = sw_covermask[y];
 				unsigned depth_writes = 0;
@@ -1217,38 +1231,42 @@ static int point_leaf(const sw_bsp_t *bsp, const vec3_t point)
 	return -1 - node_index;
 }
 
-static qboolean cluster_visible(const sw_bsp_t *bsp, const int view_cluster, const int cluster)
+static byte sw_pvs_row[(MAX_MAP_LEAFS + 7) / 8];
+static byte sw_visible_faces[MAX_MAP_FACES];
+
+static qboolean decompress_pvs_row(const sw_bsp_t *bsp, const int view_cluster,
+	byte *output, int *clusters_out)
 {
-	if (view_cluster < 0 || cluster < 0 || bsp->visibility_length < 4)
-		return true;
+	if (view_cluster < 0 || bsp->visibility_length < 4)
+		return false;
 	const int clusters = read_little_int(bsp->visibility);
 	if (clusters <= 0 || clusters > (bsp->visibility_length - 4) / 8 ||
-		view_cluster >= clusters || cluster >= clusters)
-		return true;
+		clusters > MAX_MAP_LEAFS || view_cluster >= clusters)
+		return false;
 	int offset = read_little_int(bsp->visibility + 4 + view_cluster * 8);
 	if (offset < 0 || offset >= bsp->visibility_length)
-		return true;
-	int output = 0;
+		return false;
+	int written = 0;
 	const int row = (clusters + 7) / 8;
-	while (output < row && offset < bsp->visibility_length)
+	while (written < row && offset < bsp->visibility_length)
 	{
 		const byte value = bsp->visibility[offset++];
 		if (value != 0)
-		{
-			if (cluster / 8 == output)
-				return (value & (1 << (cluster & 7))) != 0;
-			++output;
-		}
+			output[written++] = value;
 		else
 		{
 			if (offset >= bsp->visibility_length)
-				return true;
-			const int run = bsp->visibility[offset++];
-			if (cluster / 8 >= output && cluster / 8 < output + run)
 				return false;
-			output += run;
+			const int run = bsp->visibility[offset++];
+			if (run <= 0 || run > row - written)
+				return false;
+			memset(output + written, 0, (size_t)run);
+			written += run;
 		}
 	}
+	if (written != row)
+		return false;
+	*clusters_out = clusters;
 	return true;
 }
 
@@ -1343,6 +1361,12 @@ static float sw_canon_angle(const float a)
 	if (c < 0.0f)
 		c += 360.0f;
 	return c;
+}
+
+static float sw_angle_delta(const float a, const float b)
+{
+	float d = fabsf(sw_canon_angle(a) - sw_canon_angle(b));
+	return d > 180.0f ? 360.0f - d : d;
 }
 
 static qboolean sky_cache_matches(const refdef_t *fd, const float rotation_angle)
@@ -1628,17 +1652,19 @@ void SW_RasterWorld(const refdef_t *fd)
 		}
 	}
 	const sw_bsp_t *bsp = sw_world_model->bsp;
-	byte *visible_faces = calloc((size_t)max(1, bsp->num_faces), 1);
-	if (visible_faces == NULL)
-		return;
+	memset(sw_visible_faces, 0, (size_t)bsp->num_faces);
 	const int leaf_index = point_leaf(bsp, fd->vieworg);
 	const int view_cluster = leaf_index >= 0 && leaf_index < bsp->num_leaves ? LittleShort(bsp->leaves[leaf_index].cluster) : -1;
+	int pvs_clusters = 0;
+	const qboolean have_pvs = decompress_pvs_row(bsp, view_cluster, sw_pvs_row, &pvs_clusters);
 	for (int i = 0; i < bsp->num_leaves; ++i)
 	{
 		const dleaf_t *leaf = &bsp->leaves[i];
 		const int cluster = LittleShort(leaf->cluster);
 		const int area = LittleShort(leaf->area);
-		if (!cluster_visible(bsp, view_cluster, cluster) ||
+		const qboolean cluster_is_visible = !have_pvs || cluster < 0 || cluster >= pvs_clusters ||
+			(sw_pvs_row[cluster >> 3] & (1u << (cluster & 7))) != 0;
+		if (!cluster_is_visible ||
 			(fd->areabits != NULL && area >= 0 && !(fd->areabits[area >> 3] & (1 << (area & 7)))))
 			continue;
 		const int first = little_ushort(leaf->firstleafface);
@@ -1649,23 +1675,24 @@ void SW_RasterWorld(const refdef_t *fd)
 		{
 			const int index = little_ushort(bsp->leaffaces[first + face]);
 			if (index >= 0 && index < bsp->num_faces)
-				visible_faces[index] = 1;
+				sw_visible_faces[index] = 1;
 		}
 	}
 	if (bsp->submodels != NULL && bsp->num_submodels > 0)
 	{
+		sw_world_ftb_mask_active = !sw_world_repair_pass;
 		const int head_node = LittleLong(bsp->submodels[0].headnode);
 		if (head_node >= 0 && head_node < bsp->num_nodes)
-			draw_world_node_ftb(bsp, head_node, fd->vieworg, visible_faces, (int)(fd->time * 2.0f));
+			draw_world_node_ftb(bsp, head_node, fd->vieworg, sw_visible_faces, (int)(fd->time * 2.0f));
 		else
 		{
 			const vec3_t zero = { 0.0f, 0.0f, 0.0f };
 			for (int i = 0; i < bsp->num_faces; ++i)
-				if (visible_faces[i])
+				if (sw_visible_faces[i])
 					draw_face(bsp, i, zero, (int)(fd->time * 2.0f));
 		}
+		sw_world_ftb_mask_active = false;
 	}
-	free(visible_faces);
 	if (!sw_world_repair_pass)
 		sw_scan_phase ^= 1; // alternate stripe phase per fresh world pass
 }
@@ -2103,32 +2130,48 @@ static qboolean sample_bsp_light(const vec3_t origin, float *red, float *green, 
 		nearest_point[2] * LittleFloat(texture->vecs[0][2]) + LittleFloat(texture->vecs[0][3]);
 	const float t = nearest_point[0] * LittleFloat(texture->vecs[1][0]) + nearest_point[1] * LittleFloat(texture->vecs[1][1]) +
 		nearest_point[2] * LittleFloat(texture->vecs[1][2]) + LittleFloat(texture->vecs[1][3]);
-	float minimum_s = FLT_MAX;
-	float minimum_t = FLT_MAX;
-	float maximum_s = -FLT_MAX;
-	float maximum_t = -FLT_MAX;
-	const int first = LittleLong(nearest_face->firstedge);
-	const int count = LittleShort(nearest_face->numedges);
-	for (int i = 0; i < count; ++i)
+	float minimum_s;
+	float minimum_t;
+	int light_width;
+	int light_height;
+	const sw_face_packet_t *packet = bsp->packets != NULL && nearest_index >= 0 && nearest_index < bsp->num_faces ?
+		&bsp->packets[nearest_index] : NULL;
+	if (packet != NULL && packet->verts != NULL)
 	{
-		const int surface_edge = LittleLong(bsp->surfedges[first + i]);
-		const int vertex_index = little_ushort(bsp->edges[abs(surface_edge)].v[surface_edge >= 0 ? 0 : 1]);
-		const dvertex_t *vertex = &bsp->vertices[vertex_index];
-		const float vs = LittleFloat(vertex->point[0]) * LittleFloat(texture->vecs[0][0]) +
-			LittleFloat(vertex->point[1]) * LittleFloat(texture->vecs[0][1]) +
-			LittleFloat(vertex->point[2]) * LittleFloat(texture->vecs[0][2]) + LittleFloat(texture->vecs[0][3]);
-		const float vt = LittleFloat(vertex->point[0]) * LittleFloat(texture->vecs[1][0]) +
-			LittleFloat(vertex->point[1]) * LittleFloat(texture->vecs[1][1]) +
-			LittleFloat(vertex->point[2]) * LittleFloat(texture->vecs[1][2]) + LittleFloat(texture->vecs[1][3]);
-		minimum_s = min(minimum_s, vs);
-		minimum_t = min(minimum_t, vt);
-		maximum_s = max(maximum_s, vs);
-		maximum_t = max(maximum_t, vt);
+		minimum_s = packet->light_min_s;
+		minimum_t = packet->light_min_t;
+		light_width = packet->light_width;
+		light_height = packet->light_height;
 	}
-	minimum_s = floorf(minimum_s / 16.0f) * 16.0f;
-	minimum_t = floorf(minimum_t / 16.0f) * 16.0f;
-	const int light_width = (int)((ceilf(maximum_s / 16.0f) * 16.0f - minimum_s) / 16.0f + 1.0f);
-	const int light_height = (int)((ceilf(maximum_t / 16.0f) * 16.0f - minimum_t) / 16.0f + 1.0f);
+	else
+	{
+		minimum_s = FLT_MAX;
+		minimum_t = FLT_MAX;
+		float maximum_s = -FLT_MAX;
+		float maximum_t = -FLT_MAX;
+		const int first = LittleLong(nearest_face->firstedge);
+		const int count = LittleShort(nearest_face->numedges);
+		for (int i = 0; i < count; ++i)
+		{
+			const int surface_edge = LittleLong(bsp->surfedges[first + i]);
+			const int vertex_index = little_ushort(bsp->edges[abs(surface_edge)].v[surface_edge >= 0 ? 0 : 1]);
+			const dvertex_t *vertex = &bsp->vertices[vertex_index];
+			const float vs = LittleFloat(vertex->point[0]) * LittleFloat(texture->vecs[0][0]) +
+				LittleFloat(vertex->point[1]) * LittleFloat(texture->vecs[0][1]) +
+				LittleFloat(vertex->point[2]) * LittleFloat(texture->vecs[0][2]) + LittleFloat(texture->vecs[0][3]);
+			const float vt = LittleFloat(vertex->point[0]) * LittleFloat(texture->vecs[1][0]) +
+				LittleFloat(vertex->point[1]) * LittleFloat(texture->vecs[1][1]) +
+				LittleFloat(vertex->point[2]) * LittleFloat(texture->vecs[1][2]) + LittleFloat(texture->vecs[1][3]);
+			minimum_s = min(minimum_s, vs);
+			minimum_t = min(minimum_t, vt);
+			maximum_s = max(maximum_s, vs);
+			maximum_t = max(maximum_t, vt);
+		}
+		minimum_s = floorf(minimum_s / 16.0f) * 16.0f;
+		minimum_t = floorf(minimum_t / 16.0f) * 16.0f;
+		light_width = (int)((ceilf(maximum_s / 16.0f) * 16.0f - minimum_s) / 16.0f + 1.0f);
+		light_height = (int)((ceilf(maximum_t / 16.0f) * 16.0f - minimum_t) / 16.0f + 1.0f);
+	}
 	lightmap_color(bsp, nearest_face, s, t, minimum_s, minimum_t, light_width, light_height, red, green, blue);
 	return true;
 }
@@ -2160,7 +2203,11 @@ static void flex_light(const entity_t *entity, float light[3])
 			const dlight_t *dynamic = &sw_refdef.dlights[i];
 			vec3_t delta;
 			VectorSubtract(entity->origin, dynamic->origin, delta);
-			const float distance = sqrtf(max(0.0f, dot3(delta, delta)));
+			const float distance_sq = max(0.0f, dot3(delta, delta));
+			const float radius_sq = dynamic->intensity * dynamic->intensity;
+			if (distance_sq >= radius_sq)
+				continue;
+			const float distance = sqrtf(distance_sq);
 			const float contribution = max(dynamic->intensity - distance, 0.0f) / 256.0f;
 			light[0] += dynamic->color.r / 255.0f * contribution;
 			light[1] += dynamic->color.g / 255.0f * contribution;
@@ -3725,6 +3772,10 @@ static void sw_temporal_invalidate(void)
 
 static qboolean sw_temporal_enabled(void)
 {
+	// Hole-repair scissor rows use one uint64_t bitset of 8px tiles: 64*8=512.
+	// Wider modes need a wider/dynamic mask before temporal reprojection is safe.
+	if (sw_width > 512 || sw_height > 480)
+		return false;
 	if (sw_cvar_temporal == NULL)
 	{
 		const char *env = getenv("H2DOS_SW_TEMPORAL");
@@ -3785,14 +3836,12 @@ static void sw_temporal_snapshot(const refdef_t *fd)
 // matrix T = M_s^T M_d, so the mapping needs no depth and covers the viewport
 // exactly once (it is a function: no per-pixel zb compare). Block endpoints
 // (8 px) divide exactly; inside blocks it follows the renderer's fixed-point
-// span conventions. Dest depth receives the transported source key (turbo);
-// disocclusions (translation, near-plane) remain holes for the dilate pass.
+// span conventions. This path is rotation-only: translation is rejected by
+// the scheduler because a backward map then becomes depth-dependent.
 #define SW_WARP_BLOCK 8
 static void sw_temporal_warp(const refdef_t *fd)
 {
 	memset(sw_depth, 0, (size_t)sw_width * (size_t)sw_height * sizeof(*sw_depth));
-	const float hstep_s = 1.0f / sw_snap_projection_x;
-	const float vstep_s = 1.0f / sw_snap_projection_y;
 	const float cx_s = sw_snap_x + sw_snap_width * 0.5f;
 	const float cy_s = sw_snap_y + sw_snap_height * 0.5f;
 	const float hs_d = 1.0f / projection_x;
@@ -3824,6 +3873,7 @@ static void sw_temporal_warp(const refdef_t *fd)
 		int x = x0;
 		while (x < x1)
 		{
+			const int block_start = x;
 			const int block = min(SW_WARP_BLOCK, x1 - x);
 			const float esx = dsx + stx * block;
 			const float esy = dsy + sty * block;
@@ -3850,15 +3900,25 @@ static void sw_temporal_warp(const refdef_t *fd)
 			const int du = (int)((su1 - su0) * 65536.0f * SW_INV_WIDTH(block));
 			const int dv = (int)((sv1 - sv0) * 65536.0f * SW_INV_WIDTH(block));
 			qboolean block_holes = false;
-			for (int i = 0; i < block; ++i, ++x, iu += du, iv += dv)
+			float qz = dsz;
+			for (int i = 0; i < block; ++i, ++x, iu += du, iv += dv, qz += stz)
 			{
-				const int sx = ClampI(iu >> 16, 0, sw_width - 1);
-				const int sy = ClampI(iv >> 16, 0, sw_height - 1);
+				const int sx = iu >> 16;
+				const int sy = iv >> 16;
+				if (sx < sw_snap_x || sx >= sw_snap_x + sw_snap_width ||
+					sy < sw_snap_y || sy >= sw_snap_y + sw_snap_height)
+				{
+					block_holes = true;
+					continue;
+				}
 				const size_t sidx = (size_t)sy * (size_t)sw_width + (size_t)sx;
 				const uint32_t skey = sw_snap_zb[sidx];
 				if (skey != 0)
 				{
-					zb_row[x] = skey;
+					// For pure rotation, qz = z_source / z_dest, so inverse-z in
+					// destination space is source_inverse_z * qz. Keeping the old
+					// key breaks occlusion against freshly rendered entities.
+					zb_row[x] = (uint32_t)((float)skey * qz);
 					fb_row[x] = sw_snap_color[sidx];
 				}
 				else
@@ -3866,7 +3926,7 @@ static void sw_temporal_warp(const refdef_t *fd)
 			}
 			if (block_holes && (y >> 3) < SW_SCISSOR_TILES_Y)
 			{
-				const int t0 = x0 >> 3, t1 = (x - 1) >> 3;
+				const int t0 = block_start >> 3, t1 = (x - 1) >> 3;
 				sw_scissor_row[y >> 3] |= ((2ull << (t1 - t0)) - 1) << t0;
 				sw_scissor_active = true;
 			}
@@ -3988,22 +4048,23 @@ int SW_RenderFrame(const refdef_t *fd)
 	{
 		if (sw_snap_world != sw_world_model || sw_snap_width != sw_width || sw_snap_height != sw_height)
 			sw_temporal_invalidate();
-		// Motion-driven scheduling: reuse the snapshot while the camera stays
-		// within ~3 degrees total rotation and ~24 units translation of the
-		// snapshot pose, capped at 3 warps per real frame. Nearly-still cameras
-		// stretch reuse; whipping the view falls back to real frames.
+		// Motion-driven scheduling: the current backward homography is exact only
+		// for a shared camera origin (rotation-only reprojection). Any translation
+		// needs depth-dependent mapping, so render a real frame when vieworg moves.
+		// Rotation reuse remains capped at 3 warps per real frame.
 		static vec3_t sched_angles, sched_org;
 		static qboolean sched_init = false;
 		qboolean force_real = true;
 		if (sw_snap_valid && sw_temporal_warp_budget > 0 && sched_init)
 		{
 			force_real = false;
-			const float dangle = fabsf(fd->viewangles[0] - sched_angles[0]) +
-				fabsf(fd->viewangles[1] - sched_angles[1]) + fabsf(fd->viewangles[2] - sched_angles[2]);
+			const float dangle = sw_angle_delta(fd->viewangles[0], sched_angles[0]) +
+				sw_angle_delta(fd->viewangles[1], sched_angles[1]) +
+				sw_angle_delta(fd->viewangles[2], sched_angles[2]);
 			const vec3_t dv = { fd->vieworg[0] - sched_org[0], fd->vieworg[1] - sched_org[1],
 				fd->vieworg[2] - sched_org[2] };
-			const float moved = sqrtf(dv[0] * dv[0] + dv[1] * dv[1] + dv[2] * dv[2]);
-			if (dangle > 3.0f || moved > 24.0f || sw_temporal_warp_budget <= 1)
+			const float moved_sq = dv[0] * dv[0] + dv[1] * dv[1] + dv[2] * dv[2];
+			if (dangle > 3.0f || moved_sq > 1e-6f || sw_temporal_warp_budget <= 1)
 				force_real = true;
 		}
 		if (force_real)

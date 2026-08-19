@@ -47,7 +47,9 @@ qboolean SW_FrameBufferInit(void *window)
 			{
 				const int tw = (int)strtol(ew, NULL, 10);
 				const int th = (int)strtol(eh, NULL, 10);
-				if (tw >= 160 && tw <= 1280 && th >= 100 && th <= 960)
+				// The rasterer's fixed world coverage mask is currently sized for
+				// at most 640x480. Do not advertise modes that can overrun it.
+				if (tw >= 160 && tw <= 640 && th >= 100 && th <= 480)
 				{
 					req_w = tw;
 					req_h = th;
@@ -89,6 +91,12 @@ qboolean SW_FrameBufferInit(void *window)
 	sw_height = sw_surface->h;
 	if (sw_width <= 0 || sw_height <= 0 || (size_t)sw_width > SIZE_MAX / (size_t)sw_height)
 		return false;
+	if (sw_width > 640 || sw_height > 480)
+	{
+		sw_ri.Con_Printf(PRINT_ALL, "ref_soft: mode %dx%d exceeds fixed raster masks (max 640x480)\n",
+			sw_width, sw_height);
+		return false;
+	}
 
 	const size_t pixels = (size_t)sw_width * (size_t)sw_height;
 	if (sw_surface->format == SDL_PIXELFORMAT_INDEX8)
@@ -96,10 +104,15 @@ qboolean SW_FrameBufferInit(void *window)
 		// Palettized present (320x200 sibling mode): fixed 3-3-2 palette and a
 		// 64KB 565->index LUT; conversion happens per row at present.
 		sw_present_lut = malloc(65536);
+		if (sw_present_lut == NULL)
+		{
+			sw_ri.Con_Printf(PRINT_ALL, "ref_soft: could not allocate indexed present LUT\n");
+			return false;
+		}
 		for (int i = 0; i < 65536; ++i)
 			sw_present_lut[i] = (byte)((((i >> 8) & 0xE0) | ((i >> 6) & 0x1C) | ((i >> 3) & 0x03)));
 		SDL_Palette *pal = SDL_CreatePalette(256);
-		if (pal != NULL && sw_present_lut != NULL)
+		if (pal != NULL)
 		{
 			SDL_Color colors[256];
 			for (int i = 0; i < 256; ++i)
@@ -113,6 +126,13 @@ qboolean SW_FrameBufferInit(void *window)
 			SDL_SetSurfacePalette(sw_surface, pal);
 			SDL_DestroyPalette(pal);
 			sw_ri.Con_Printf(PRINT_ALL, "ref_soft: indexed present active (332 palette)\n");
+		}
+		else
+		{
+			free(sw_present_lut);
+			sw_present_lut = NULL;
+			sw_ri.Con_Printf(PRINT_ALL, "ref_soft: could not create indexed palette\n");
+			return false;
 		}
 	}
 	// Fast path: with a shader-native RGB565 surface and tight pitch, render
@@ -141,6 +161,8 @@ qboolean SW_FrameBufferInit(void *window)
 
 void SW_FrameBufferShutdown(void)
 {
+	free(sw_present_lut);
+	sw_present_lut = NULL;
 	free(sw_depth);
 	if (sw_color_owns)
 		free(sw_color);
