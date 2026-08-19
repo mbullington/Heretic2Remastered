@@ -20,7 +20,8 @@
     {
       "name": "flex_vertex_gradient",
       "symbol": "_SW_RasterFlexEntity",
-      "contains": "fmul DWORD PTR \\[ebp-0x384\\]",
+      "contains": "fstp DWORD PTR \\[esi-0x[0-9a-f]+\\]$",
+      "nth": 0,
       "trips_key": "bench-flex-vertex-lerps",
       "align": { "ebp": 4, "edi": 4, "ebx": 4, "ecx": 4 },
       "comment": "per-vertex 4-channel color x intensity: FILD/FMUL/FADDP stack juggle. ideas.md #3 census loop. 56 instr, mem 17/iter."
@@ -28,7 +29,8 @@
     {
       "name": "flex_variant_b",
       "symbol": "_SW_RasterFlexEntity",
-      "contains": "fmul DWORD PTR \\[ebp-0x3a0\\]",
+      "contains": "fstp DWORD PTR \\[ebx\\+0x4\\]$",
+      "nth": 0,
       "trips_key": "bench-flex-tris",
       "align": { "ebp": 4, "edi": 4, "ebx": 4 },
       "comment": "second flex gradient variant (@0210f3 in seg-6 build; likely the clipped or dyn-lit path — attribution approximate, watch it move with census #3)"

@@ -54,11 +54,11 @@ PYEOF
   if [ -n "$OUT_OF_COVERAGE" ]; then
     echo "PMCA-T0-SKIP out-of-coverage: $OUT_OF_COVERAGE"
   else
+    verdict=0
     python3 scripts/pm_mca.py report --exe .dos-build/guest/SILVER.EXE \
       --manifest scripts/pm_mca_manifest.json \
       --evidence .dos-build/guest/COMBAT-EVIDENCE.TXT \
-      --baseline "$PMCA_BASELINE" --json /tmp/h2-ar-pmca.json
-    verdict=$?
+      --baseline "$PMCA_BASELINE" --json /tmp/h2-ar-pmca.json || verdict=$?
     if [ $verdict -eq 42 ]; then
       echo "PMCA-T0 REGRESS: deterministic PMMX ruler says worse; discarding before DOSBox"
       exit 42

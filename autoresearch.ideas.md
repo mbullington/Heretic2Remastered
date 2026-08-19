@@ -23,7 +23,7 @@ SEG-7 pricing frame (supersedes the static-tutorial one):
 
 ### ~~1. Direct-framebuffer present path~~ DONE (run #76): present 9,289->311us (-97%). pm-mca correctly silent (out-of-coverage by design: DOS video-mode selection, not renderer loops). Legacy learning: banked path accepts tearing, no page flip.
 
-### 2. Flex gradient byte->float LUT [bit-exact, NEW from pmca baseline #75]
+### ~~2. Flex gradient byte->float LUT~~ DONE (run #77): pmca_est_us 625->522 (-16.5%); gradient 89->74 clk, variant (swaprefs, same disease fixed) 79->66 clk; prologue trend 616->546us; bit-exact gates green. Secondary learning banked: LUT-index loads trade FILD serialization for index-AGI when movzx is adjacent (variant B pre-pass showed it); deferring index computation is the follow-on if these loops stay hot.
 Baseline evidence: flex_vertex_gradient (89 clk/iter, 491 trips/tutorial,
 985/combat) + flex_variant_b (79 clk) spend 34-38% of cycles on FILD chains:
 xor eax,eax / mov al,[byte] / mov [tmp],eax / xor eax,eax / fild [tmp].

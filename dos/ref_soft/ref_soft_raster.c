@@ -2843,6 +2843,18 @@ void SW_RasterFlexEntity(const entity_t *entity, const sw_model_t *model, const 
 {
 	static vec3_t lerped[SW_MAX_FLEX_VERTS];
 	static float intensities[SW_MAX_FLEX_VERTS];
+	// E2 (ideas #2, pm-mca baseline #75): byte vertex components go through a
+	// byte->float LUT instead of a store->FILD chain per access (34/89 clk of
+	// the gradient loop were fp-operand stalls on that serialization). Exact
+	// 0..255 integers in fp32 => bit-identical to FILD conversion.
+	static float sw_byte2float[256];
+	static qboolean sw_byte2float_ready = false;
+	if (!sw_byte2float_ready)
+	{
+		for (int i = 0; i < 256; ++i)
+			sw_byte2float[i] = (float)i;
+		sw_byte2float_ready = true;
+	}
 	const uclock_t prologue_start = uclock();
 	if (entity == NULL || model == NULL || model->flex == NULL || (entity->flags & RF_NODRAW) ||
 		!isfinite(entity->scale) || entity->scale <= 0.0f || !isfinite(entity->backlerp) ||
@@ -2871,8 +2883,8 @@ void SW_RasterFlexEntity(const entity_t *entity, const sw_model_t *model, const 
 	for (int vertex = 0; vertex < flex->render_num_xyz; ++vertex)
 	{
 		for (int axis = 0; axis < 3; ++axis)
-			lerped[vertex][axis] = frame->vertices[vertex].v[axis] * front[axis] +
-				old_frame->vertices[vertex].v[axis] * back[axis] + move[axis];
+			lerped[vertex][axis] = sw_byte2float[frame->vertices[vertex].v[axis]] * front[axis] +
+				sw_byte2float[old_frame->vertices[vertex].v[axis]] * back[axis] + move[axis];
 		const float current = r_avertexnormal_dots[shade_row][frame->vertices[vertex].lightnormalindex];
 		const float old = r_avertexnormal_dots[shade_row][old_frame->vertices[vertex].lightnormalindex];
 		intensities[vertex] = current * front_lerp + old * back_lerp;
@@ -2925,8 +2937,8 @@ void SW_RasterFlexEntity(const entity_t *entity, const sw_model_t *model, const 
 		{
 			const int index = flex->cluster_vertices[0][vertex];
 			for (int axis = 0; axis < 3; ++axis)
-				lerped[index][axis] = swap_frame->vertices[index].v[axis] * swap_front[axis] +
-					old_swap_frame->vertices[index].v[axis] * swap_back[axis] + swap_move[axis];
+				lerped[index][axis] = sw_byte2float[swap_frame->vertices[index].v[axis]] * swap_front[axis] +
+					sw_byte2float[old_swap_frame->vertices[index].v[axis]] * swap_back[axis] + swap_move[axis];
 		}
 		for (int joint = 0; joint < flex->num_clusters; ++joint)
 			interpolate_flex_placement(&flex->skeleton_placements[entity->swapFrame * flex->num_clusters + joint],

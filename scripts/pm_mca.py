@@ -1261,9 +1261,10 @@ def resolve_loop_slice(funcs, loop: dict) -> list[Ins]:
     instrs = funcs[sym]
     rx = re.compile(loop["contains"])
     hits = [i for i, x in enumerate(instrs) if rx.search(x.raw)]
-    if len(hits) != 1:
-        raise KeyError(f"{loop['name']}: anchor matched {len(hits)}x in {sym} (need 1)")
-    a = hits[0]
+    nth = loop.get("nth", 0)
+    if not hits or nth >= len(hits):
+        raise KeyError(f"{loop['name']}: anchor matched {len(hits)}x in {sym} (need nth={nth})")
+    a = hits[nth]
     best = None
     for i in range(a, min(len(instrs), a + 400)):
         ins = instrs[i]
