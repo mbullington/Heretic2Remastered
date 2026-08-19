@@ -167,13 +167,17 @@ so carried products are the same floats. Carry FLOATS ONLY: carry the fixed
 iu/it too and truncation drift accumulates = gate-red class. Note: shrinks
 #13's pool ~2x => sequence this FIRST, then re-decide #13.
 
-### 5. r_swscan2 row-parity variant [turbo-class, ON est -5..9 vs columns' -4.3]
-PS2 field-render trick. Existing stripe infra (#71/#72) alternates 2px column
-pairs: ON = -4.3. Row parity additionally kills span-row prologues (4.7K
-span-rows x 0.76us ~ 3.6ms, E57-v2 census) while halving real-frame px the
-same. Predicate-level change on existing machinery; snapshot already samples
-both phases. Known anti-synergy: sky row-skip dies under stripes (#72
-learning). User-grant class mirrors scan2 (stipple-adjacent turbo).
+### 5. r_swscan2 row-parity variant — DISCARDED by forensic bisect (run #91)
+PS2 field-render trick; FULLY BUILT (r_swscan2=2: row gates in
+spans/sky/clear, default-off) then gate-red EFFECTS 129px + world +14ms on
+the OFF path, reproducibly. Bisect: sw_scan2_row fns-only, sky row-gates,
+row clear, span-counter-move = all GREEN; sw_scan2_row() CALL or even DECL
+inside draw_face_spans = RED, and counters+env prove the gate never fired
+in-game. draw_face_spans is PERTURBATION-FRAGILE on this host (ARM DOSBox
+dynarec billing-granularity + lowered-FPU class; E18's +521us may share it).
+Any C-level addition there = gate/billing dice roll; E17-class
+float-chain-identical rewrites are the only known-safe edits. Revival path
+= asm-lane or manifest-era span-engine rebuild, NOT C.
 Stronger cousin from GPT round-2: checkerboard SHADE at full-res visibility
 with face-ID-keyed reconstruction (holes fill only from same-face neighbors)
 — kills silhouette ghosting but needs a full-face-ID buffer + reconstruction
@@ -196,10 +200,11 @@ collapses to (r<<11)|(g<<5)|b. LUT sibling: monolithic 128KB texel-indexed
 form STAYS CLOSED (run #5: +8.8ms on DOSBox's free-memory/cheap-IMUL
 ruler); the 128B-hot-row variant REOPENED as #22 under pm-mca's
 IMUL=9-11clk-NP pricing.
-Prereq census (folds into #11): light-cell + texel-row crossing frequencies
-at 320x240 — at minification >=2px/texel, (b) pays; at near-1:1 faces it
-adds a compare per px over the plain IMUL. (a) pays at any crossing rate
-<= every-16px.
+CENSUS #11 DONE (run #92): (a) 8,738 light-crossings/frame ~ run 9.8px
+> 16px threshold WOULD pay structurally, but draw_face_spans edit-fragility
+(runs #91-92) => PARKED for asm-lane/manifest era; (b) 24,390 texel-row
+crossings/frame = 29% of painted px => DEAD (recompute beats saved IMUL).
+(c) stands as the only live piece; #22 inherits the manifest gate.
 
 ### 22. 565 shade-row LUT [bit-exact by construction; sequence AFTER #19; est -2..5ms PMMX-class; shares #13's manifest gate]
 Mail pitch; NOT closed by run #5: #5's 128KB monolith was falsified on
@@ -252,17 +257,14 @@ Form: __m64 builtins with -mmmx inside one copy function (no raw asm blocks
 = no scheduler fences), single emms at function exit, alignment at alloc.
 Do not reopen the per-px modulate axis here.
 
-### 11. World census sweep [measurement-only; decides #19, coverage-first, style-LUTs, node-walk]
-Decide-by-counter dimensions: (1) light-cell and texel-row crossing
-frequencies per span (#19 gate); (2) fully-covered 128px-block fraction via
-bench_world_zreject run histogram (decides GPT's coverage-before-prologue:
-skip the whole block prologue FDIVs/FISTs when 4 cover words are saturated);
-(3) build_face_light rebuild cells/frame under animated styles (decides
-per-style 256-entry scale LUTs: raw*style_fixed -> indexed add; band-pack
-makes per-CELL laziness awkward, count first); (4) BSP node-walk cost
-(visframe subtree prune + axial-plane special-case potential: full dot per
-node today, axial => 1 FSUB; GPT's PVS-row-cache part is DONE in user batch
-f2edab6a).
+### ~~11. World census sweep~~ DONE (run #92; data banked in #11-note)
+RESULTS (per frame, 144f combat run): light-cell crossings 8,738 (avg run
+~9.8 painted px); texel-row crossings 24,390 (29%: #19(b) row-ptr DEAD);
+fully-covered 128px blocks 582/3,302 = 17.6% (coverage-before-prologue pool
+~0.1ms: DEAD); BSP nodes 963/walk (~15 instr each: visframe pool ~0.1ms:
+DEAD). style-LUT question: see bench-world-lightbuild-px in evidence. The
+census placement itself re-confirmed run #91: draw_face_spans additions =
+gate lottery (129px signature).
 
 ### 20. DJGPP codegen census [PARTIALLY EXECUTED 2026-08-20d; remainder cheap]
 (c) FWAIT/control-word churn: DONE at mail triage - 1,444 fnstcw / 4,169
