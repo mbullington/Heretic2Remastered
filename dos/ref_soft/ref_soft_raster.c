@@ -270,16 +270,18 @@ static void band_pack_light(const uint32_t *dense, const int lw, const int lh, u
 static inline uint16_t span_modulate3(const uint16_t texel, const unsigned lr, const unsigned lg,
 	const unsigned lb)
 {
-	// Truncating shift instead of +128 rounding: the <1-LSB difference per
-	// channel sits inside the engine's documented 2-LSB fixed-point budget, and
-	// three adds come out of the hot world inner loop.
-	unsigned r = (((texel >> 8) & 0xF8u) * lr) >> 8;
-	unsigned g = (((texel >> 3) & 0xFCu) * lg) >> 8;
-	unsigned b = (((texel << 3) & 0xF8u) * lb) >> 8;
-	if (r > 255u) r = 255u;
-	if (g > 255u) g = 255u;
-	if (b > 255u) b = 255u;
-	return (uint16_t)(((r & 0xF8u) << 8) | ((g & 0xFCu) << 3) | (b >> 3));
+	// E19c/ideas#19(c): the 8-bit expansion cancels algebraically. With
+	// r5 = texel>>11, old R = min(255,(r5*lr)>>5)>>3 == min(31,(r5*lr)>>8)
+	// (nested floor(floor(x/32)/8) = floor(x/256) for x <= 31713; clamp classes
+	// agree at both ends). Green/blue identically. Bit-identical output, six
+	// fewer ops per px. The 128KB product-LUT form stays CLOSED (run #5).
+	unsigned r = (((texel >> 11) & 31u) * lr) >> 8;
+	unsigned g = (((texel >> 5) & 63u) * lg) >> 8;
+	unsigned b = ((texel & 31u) * lb) >> 8;
+	if (r > 31u) r = 31u;
+	if (g > 63u) g = 63u;
+	if (b > 31u) b = 31u;
+	return (uint16_t)((r << 11) | (g << 5) | b);
 }
 
 // Style factors (style * 128, fixed point) plus the style layer indexes a
