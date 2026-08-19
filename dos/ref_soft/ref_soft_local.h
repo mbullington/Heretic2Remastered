@@ -204,6 +204,8 @@ extern refimport_t sw_ri;
 extern uint16_t *sw_color;
 extern uint32_t *sw_depth; // depth as non-negative float bits (ordered as int)
 extern int sw_width;
+extern int sw_scan_phase;
+qboolean sw_scan2_active(void);
 extern int sw_height;
 extern refdef_t sw_refdef;
 extern sw_model_t *sw_world_model;

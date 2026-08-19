@@ -216,7 +216,24 @@ void SW_Clear(const uint16_t color)
 	// Color fill is deferred: SW_RasterFrame re-fills only frames without a
 	// worldmodel. Worldmodel frames are fully repainted by world/sky spans.
 	// Depth stores inverse-z (larger = closer), so the far plane is zero.
-	memset(sw_depth, 0, pixels * sizeof(*sw_depth));
+	if (!sw_scan2_active())
+		memset(sw_depth, 0, pixels * sizeof(*sw_depth));
+	else
+	{
+		// Checkerboard stripe-interleave (r_swscan2): only the current-phase
+		// 2-px column pairs get this frame's depth; last frame's OTHER columns
+		// keep their keys (and pixels) so depth stays self-consistent per pair.
+		for (int yy = 0; yy < sw_height; ++yy)
+		{
+			uint32_t *zrow = sw_depth + (size_t)yy * (size_t)sw_width;
+			for (int xx = sw_scan_phase * 2; xx < sw_width; xx += 4)
+			{
+				zrow[xx] = 0;
+				if (xx + 1 < sw_width)
+					zrow[xx + 1] = 0;
+			}
+		}
+	}
 	sw_stats.bench_us_clear += (unsigned long long)(uclock() - start);
 }
 

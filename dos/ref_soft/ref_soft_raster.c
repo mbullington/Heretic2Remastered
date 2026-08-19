@@ -757,7 +757,7 @@ static void draw_face_spans(const screen_vertex_t *verts, const int n, const sw_
 					const uint16_t lit = span_modulate(texel,
 						light_cache[(int)((unsigned)ilt >> 20) * light_stride + (int)((unsigned)ils >> 20)]);
 					const int sa = lit != 0 ? sa_base : 0;
-					if (sa != 0 && ikey >= zb_row[idx])
+					if (sa != 0 && ikey >= zb_row[idx] && (!sw_scan2_active() || ((x >> 1) & 1) == sw_scan_phase))
 					{
 						const uint16_t dst = fb_row[idx];
 						const int dw = 255 - sa;
@@ -1494,7 +1494,7 @@ void SW_RasterSky(const refdef_t *fd)
 				const int x_end = x + block;
 				while (x < x_end)
 				{
-					if (zb_row[x] == 0)
+					if (zb_row[x] == 0 && (!sw_scan2_active() || ((x >> 1) & 1) == sw_scan_phase))
 					{
 						const int texture_x = ClampI(is >> 16, 0, image->width - 1);
 						const int texture_y = ClampI(it >> 16, 0, image->height - 1);
@@ -1515,7 +1515,7 @@ void SW_RasterSky(const refdef_t *fd)
 			{
 				for (int i = 0; i < block; ++i, ++x)
 				{
-					if (zb_row[x] == 0)
+					if (zb_row[x] == 0 && (!sw_scan2_active() || ((x >> 1) & 1) == sw_scan_phase))
 					{
 						float s, t;
 						const int face = sky_coordinates(direction, &s, &t);
@@ -1664,6 +1664,8 @@ void SW_RasterWorld(const refdef_t *fd)
 		}
 	}
 	free(visible_faces);
+	if (!sw_world_repair_pass)
+		sw_scan_phase ^= 1; // alternate stripe phase per fresh world pass
 }
 
 static qboolean project_point(const vec3_t point, int *x, int *y, float *depth)
@@ -3485,6 +3487,14 @@ static qboolean sw_snap_valid;
 static int sw_temporal_warp_budget;
 qboolean sw_temporal_warp_now;
 static cvar_t *sw_cvar_temporal;
+static cvar_t *sw_cvar_scan2;
+int sw_scan_phase; // stripe-parity of the column pairs the world paints this frame
+qboolean sw_scan2_active(void)
+{
+	if (sw_cvar_scan2 == NULL)
+		sw_cvar_scan2 = sw_ri.Cvar_Get("r_swscan2", getenv("H2DOS_SW_SCAN2") != NULL ? "1" : "0", 0);
+	return sw_cvar_scan2 != NULL && sw_cvar_scan2->value != 0.0f;
+}
 
 // Hole-repair scissor: after the homography warp, the world pass is re-run
 // clipped to the 8x8 tiles the warp never covered, replacing smear/sky with
