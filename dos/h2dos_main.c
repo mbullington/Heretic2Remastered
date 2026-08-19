@@ -863,6 +863,9 @@ static void log_bench_summary(void)
 	log_append("bench-mag-world=%u\nbench-mag-world-alpha=%u\nbench-mag-flex=%u\nbench-mag-putpixel=%u\nbench-mag-frame=%u\nbench-mag-surface=%llu\n",
 		stats->bench_mag_world, stats->bench_mag_world_alpha, stats->bench_mag_flex,
 		stats->bench_mag_putpixel, stats->bench_mag_frame, (unsigned long long)stats->bench_mag_surface);
+	log_append("bench-part-calls=%u\nbench-part-px-point=%u\nbench-part-px-tex=%u\nbench-part-px-add=%u\nbench-part-lmcolor=%u\n",
+		stats->bench_part_calls, stats->bench_part_px_point, stats->bench_part_px_tex,
+		stats->bench_part_px_add, stats->bench_part_lmcolor);
 }
 
 static void begin_audio_proof(const qboolean realdata)

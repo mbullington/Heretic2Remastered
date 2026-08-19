@@ -53,6 +53,11 @@ typedef struct h2dos_soft_stats_s {
 	unsigned bench_world_faces;    // draw_face() invocations
 	unsigned bench_world_spans;    // rasterized rows
 	unsigned bench_world_blocks;   // 16-px subdivided blocks
+	unsigned bench_part_calls;     // draw_particle calls (both passes)
+	unsigned bench_part_px_point;  // px visited in the point/disc path (accepted circle px)
+	unsigned bench_part_px_tex;    // px visited in the textured-quad path (all)
+	unsigned bench_part_px_add;    // of the above, additive-class px
+	unsigned bench_part_lmcolor;   // particles taking the PFL_LM_COLOR light sample
 	unsigned bench_world_lightbuild_px; // face-light miniature pixels rebuilt
 	unsigned long long bench_us_world_setup;  // draw_face work before span emission
 	unsigned long long bench_us_world_spans;  // span rasterization (draw_face_spans)

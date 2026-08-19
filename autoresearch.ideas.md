@@ -14,6 +14,23 @@ atoms admitted (#12 blend specialization, #13 manifest-gated reciprocal),
 triaged with code verification: #17 light-chain collapse (VERIFIED bit-exact
 by aliasing), #18 block endpoint carry, #19 run specialization, #11 census
 re-scoped, #20 codegen census, mips -> user arbitration, 6 more screened.
+2026-08-20c (user-approved): external research-direction pitch (boundary-
+proportional/"kinetic" rendering family) triaged against in-tree E61 evidence
+- 2 temporal-phase-2 entries admitted to arbitration below (translation warp,
+styled-face material snapshot), 3 screened at triage: full kinetic screen
+arrangement (B1/E44/E47 painter-tie + crack class; residual-hole pool
+census-tiny ~18px/frame @879e568), frameless error heap (keep-class core
+ALREADY SHIPPED as E61's motion-gated scheduler + hole-tile error regions),
+map-compiled visibility automaton (PVS row cache DONE f2edab6a, vertex
+cache +4.8ms falsified, emitted programs vs P55C 16KB I-cache). Flags the
+SEG-7 workload blocker verified in code (static-identity entry below).
+2026-08-20d (user-approved): external "1996 x87 lore" mail triaged against
+LIVE objdump + pm_mca_data evidence during triage - 2 admitted (#21
+conversion-tax [census EXECUTED at triage: 1,444 fnstcw / 4,169 fldcw /
+1,905 fistp; FDIV PC=single phase], #22 shade-row LUT), #13(b) refined to
+cross-span form (avg span 28.8px), #20 census partially executed, 2 parked
+(indexed M8 world textures, constant-z mapper), 1 screened (no-clear
+ztrick).
 
 SEG-7 pricing frame (supersedes the static-tutorial one):
 - Bench = tutorial2 combat (gorgon+rat_giant+angermonsters, orbiting camera,
@@ -51,7 +68,8 @@ Fidelity plan: sweep levels 16/32/64/128 on the synthetic flex fixture that
 killed E55 variant A. 16 = gate-red by construction; 128 -> error ~1/888,
 borderline-inside budget. Find the knee, then arbitrate keep vs turbo-bank.
 
-### 12. SW_BlendRect full-screen specialization [bit-exact, est -20..40ms COMBAT-class]
+### ~~12. SW_BlendRect full-screen specialization~~ DONE (run #86): blend 70.3->40.5ms (-42%), frame -29.8ms.
+### 12. SW_BlendRect archive note
 GPT code-review re-derivation, verified in-tree: SW_BlendRect inlines the full
 SW_PutPixel body per px (267-instr fn; objdump: env-init call, tagxy/zcollide
 debug compares, float depth-key classify, z-test, 6 IMUL unpack + mul-hi /255).
@@ -65,7 +83,8 @@ instead. RENDER gate includes the pulse (fxload injects it per frame) => keep
 class requires true bit-exactness, not "close". Not in pm-mca manifest =>
 T1/T2 DOSBox trend path; ruler credits it (instruction-count mechanism).
 
-### 15. Light-disc stamps [bit-exact feasible; 13.7ms combat pool; sequence after #12]
+### ~~15. Light-disc stamps~~ DONE (run #87): lights 13,752->148us (-99%). GPT's row-extent + radial-factor form, bit-exact verified.
+### 15. Light-disc stamps archive note
 Promoted from lanes 2026-08-19 per user (combat bench prices lights: 13.7ms).
 SW_RasterLights @3715: sqrtf + per-px PutPixel inside a square-domain walk.
 Precompute per-radius row extents (dx per row) + radial factor table keyed by
@@ -78,18 +97,46 @@ Sibling approx variant is TURBO-CLASS ONLY: approx falloff (max + 3/8 mid +
 needs user arbitration, NOT keep-fidelity like the stamp table.
 NB: fog = documented non-goal (adds px cost, would red gates).
 
-### 14. Deferred additive compositing — 8x8 tile accumulators [combat-priced fx overdraw]
-Pool: particles 34.6ms + additive passes (Raven postmortem: ~10x overdraw as
-their systemic unfixed cost). Accumulate additive fx into 8x8 tile per-channel
-accumulators; one fb READ+ADD+WRITE per tile instead of one per sprite.
-Legal: saturating nonneg addition commutes. In scope: blend path only; fx
-simulation stays in src/. Sibling mechanisms in the same family (pick on
-census, don't stack): particle stamps, sprite-atlas RLE spans (PS1
-transparent-pixel surgery), pre-sampled particle atlases per discrete
-radius/type (GPT round-2 concurs), E65/E66 re-probe (combat de-quiesces
-their pools).
-Est unknown until an overdraw census lands — gate build on a #11-style
-counter run first; most complex mechanism in the queue.
+### ~~14. Deferred additive compositing~~ RESOLVED-BY-CENSUS (runs #88-89): additive px = 0 in combat => tile accumulators have NO pool. Redirected to PARTICLE STAMPS (census 1.33M tex + 417K point px): particles 34.6ms->3.5ms (-90%). See #14 note.
+### 14. Particle stamps (from deferred-additive census) [bit-exact, est -25..31ms combat]
+DONE (run #89): census-first per the old plan KILLED the tile mechanism
+(additive px/frame = 0 in combat: Raven's overdraw problem isn't H2-soft's).
+Real pool = textured-quad px (1.33M/run) + point-disc px (417K/run), both
+paying PutPixel + float-lerp atlas sampling per px. Stamps: (type x radius)
+sampled-texel grids + int-predicate disc extents, PutPixel-class blend
+families from #12/#15, debug fallback, arithmetic counting incl. OOB px
+(evidence parity per-binary; tex totals follow the combat rng trajectory
+~0.35% across builds - E62 rand-fork precedent; pointwise stamp==live
+verified 0/4,640 mismatches). particles 34,588->3,480us. Textured-quad path
+still pays per-px modulate() float chains (E55/E56 color-class: untouchable)
+- residual 3.5ms is mostly that + z-guards.
+
+### 21. x87 conversion-tax elimination [CENSUS DONE 2026-08-20d; est 5-7ms PMMX-class, DOSBox-BLIND]
+Mail pitch (Quake Sys_SetFPCW/Sys_LowFPPrecision lineage), census executed
+against SILVER.EXE: 1,444 fnstcw / 4,169 fldcw / 1,905 fistp static sites.
+Hot paths CONFIRMED: _draw_face 26 fnstcw (~10 truncating casts per 128px
+block prologue: iu/it/ils/ilt + 4 steps + ikey/ikey_end; plus per-row ceilf
+casts), _SW_RasterFlexEntity 10 (= run #16's "12 conversions/block"),
+_dispatch_flex_screen_triangle 11, SW_PutPixel 3 (folds into #12's fix).
+pm-mca already prices every piece: fldcw=8NP, fistp=6NP, fnstcw=2NP =>
+~22 serialized clk per C cast (gcc hoists the fnstcw save; the chop/restore
+fldcw pair per cast remains). World alone: 6.6K blocks/frame (12.28M walked
+px / 64) x ~10 casts ~= 1.5M clk ~= 6ms @PMMX-233 ~= 4x the ENTIRE #13 FDIV
+pool. DOSBox cannot see this (run #16 double-bias sw_ftoi = discard-as-noise
+on the blind ruler, NEVER gate-falsified; revival justified, not re-pitch);
+pm-mca can once the span loop gets a manifest entry (same gate as #13).
+Phase (a) BIT-EXACT: known-mode conversions in span/flex prologues -
+double-bias magic-add (RN-semantics, CW-independent; revival of run #16) or
+asm-lane bare fistp. Phase (b) SEPARATE GATE-RISK RUN: chop + 24-bit-PC
+FPCW set once at renderer entry, restored at exit (the actual Quake trick):
+FDIV 33->19 clk (pm_mca_data.py already cites the 19/33/39 24/53/64-bit PC
+table; DJGPP CW = 53-bit). ULP-drift class = E42/E43-lane arbitration.
+Subtlety the mail missed: gcc emits its dances regardless of ambient CW, so
+(b) does NOT remove the cast tax - (a) does; (b)'s own object is FDIV/FSQRT
+latency. Ambient chop changes no compiled-C cast semantics (dances set chop
+explicitly; libm frndint sites manage their own CW). Ruler note: phase (a)
+is DOSBox-invisible by construction => pm-mca manifest entry is the 
+evidence path; do not T1/T2 it expecting trend movement.
 
 ### 17. World light-coordinate collapse (5 -> 3 perspective chains) [bit-exact by aliasing; est -1..3ms]
 GPT round-2, VERIFIED IN CODE: draw_face sets vertex.light_s = base_s /
@@ -145,12 +192,26 @@ falsified the shift form — CL-dependency — NOT the row-pointer form.)
 (c) EXACT NATIVE-565 MODULATE: span_modulate3's 8-bit expand cancels
 algebraically (verified: floor(floor(x/32)/8)=floor(x/256) incl. the
 overbright clamps) => min(31,(r5*lr)>>8) form, -5..7 ops/px, repack
-collapses to (r<<11)|(g<<5)|b. LUT sibling STAYS CLOSED (run #5: 128KB exact
-LUT +8.8ms; memory != cheaper than ALU here).
+collapses to (r<<11)|(g<<5)|b. LUT sibling: monolithic 128KB texel-indexed
+form STAYS CLOSED (run #5: +8.8ms on DOSBox's free-memory/cheap-IMUL
+ruler); the 128B-hot-row variant REOPENED as #22 under pm-mca's
+IMUL=9-11clk-NP pricing.
 Prereq census (folds into #11): light-cell + texel-row crossing frequencies
 at 320x240 — at minification >=2px/texel, (b) pays; at near-1:1 faces it
 adds a compare per px over the plain IMUL. (a) pays at any crossing rate
 <= every-16px.
+
+### 22. 565 shade-row LUT [bit-exact by construction; sequence AFTER #19; est -2..5ms PMMX-class; shares #13's manifest gate]
+Mail pitch; NOT closed by run #5: #5's 128KB monolith was falsified on
+DOSBox's free-memory/cheap-IMUL ruler ("3 extra byte loads + index math +
+init-check per px"). This form: mul5[1024][32] + mul6[1024][64] = 96KB
+committed but 128 BYTES hot per light-cell run, row pointers hoisted at run
+start, tables built eagerly once (no per-px init-check). pm-mca flips the
+sign: 3x IMUL (9-11clk NP EACH) per painted px -> 3 hot-row loads (1clk +
+AGI care) with identical indexes ((texel>>11), (texel>>5)&63, texel&31).
+Bit-exact: rows built with #19(c)'s verified min(31,(r5*lr)>>8) expression.
+Deps: #19(a) light-cell runs (per-px row-pointer reload negates it), and
+the opaque-span manifest entry for honest pricing.
 
 ### 6. Eager per-entity projection pass [sub-ULP position, est -1..3ms + MMX-batch enabler]
 From census #78: proj fills = 794/frame @4.7us = 3.7ms/frame, all scattered
@@ -203,11 +264,13 @@ makes per-CELL laziness awkward, count first); (4) BSP node-walk cost
 node today, axial => 1 FSUB; GPT's PVS-row-cache part is DONE in user batch
 f2edab6a).
 
-### 20. DJGPP codegen census [measurement-only, cheap, T0-native tooling exists]
-pm_mca.py analyze --objdump already walks every function: sweep hot symbols
-for (a) call sites to ceilf/floorf/fix helpers in loops, (b) FDIV/FSQRT
-counts per hot function, (c) FWAIT/control-word churn. GPT's "innocent C
-hides x87 nonsense" hypothesis, priced statically in one script run; any hit
+### 20. DJGPP codegen census [PARTIALLY EXECUTED 2026-08-20d; remainder cheap]
+(c) FWAIT/control-word churn: DONE at mail triage - 1,444 fnstcw / 4,169
+fldcw / 1,905 fistp, hot fns enumerated, graduated into experiment #21.
+Remaining: (a) ceilf/floorf/fix-helper call sites per hot symbol
+(draw_face's 26 fnstcw INCLUDE the per-row ceilf casts - they share #21's
+fix machinery), (b) FDIV/FSQRT counts per hot function (prices #21 phase
+b's pool). One-script sweep via pm_mca.py analyze --objdump; any new hit
 becomes its own experiment with the pmca delta printed natively.
 
 ### 13. World span-prologue FDIV -> seed LUT + 1 Newton [MANIFEST-GATED first]
@@ -221,6 +284,13 @@ IEEE. Do not run as T1-only on the DOSBox ruler (x87-tax refuted there).
 Variant (b) [IEEE-exact alternative]: software-pipeline the TRUE 1/w FDIV
 across the integer shading of the current block (Pentium FP/integer overlap;
 pm-mca models it) — same manifest gate. #18 halves this pool first.
+Form note 2026-08-20d: avg span = 28.8px (12.28M walked px / 425.8K spans /
+64 frames) => most spans are ONE 128px block, so the mail's Quake picture
+("issue block-N+2 FDIV, shade N+1") has no room INTRA-span. Working shape =
+CROSS-SPAN: issue the NEXT span's iz0/iz1 FDIVs while integer-shading the
+current span's block (~29px of inner-loop covers the 33-clk fdiv i_ov=32
+window easily IF the schedule holds; C unlikely to keep producer/consumer
+distance => asm-lane kernel, pm-mca priceable).
 
 ### 16. Temporal polish bundle [promoted 2026-08-19: temporal is default-ON; one session]
 - radius-2 dilation ONLY for >1px residual reveal cracks (holes ~18/frame):
@@ -234,6 +304,38 @@ every frame — verify warp-cadence counters before/while tuning, or the bench
 never prices these.
 
 ## Awaiting user arbitration (evidence banked; do not rebuild)
+- Translation-capable temporal warp [E61 lineage + per-plane homography;
+  2026-08-20 research pitch, triaged: the pitch's #1 mechanism]: E61's
+  backward warp is ROTATION-ONLY by construction (ref_soft_raster.c:4384
+  moved_sq > 1e-6 => real frame; comment :4370 "any translation needs
+  depth-dependent mapping"), so ALL walking gameplay falls out of reuse.
+  Mechanism options: (a) depth-dependent backward map via snapshot z-key
+  (per-px ray*z transform; stage-2's forward splat was the slow first
+  draft, 151-157 vs 136.5 @879e568), (b) per-face plane homographies (H2
+  world = known planes; needs face-ID sidecar in the snapshot, +2B/px
+  traffic; pitch's exact-projective form). Disocclusions land in the
+  EXISTING hole-tile repair pass; expected artifact class = disocclusion
+  z-tie/1px cracks (translation map is many-to-one, unlike the rotation
+  function => likely turbo-class unless ties hold). Pool = every
+  straight-line walk; sibling rotation warp banked -25.2ms (e9b207f).
+  Gated on the workload blocker (static-identity entry below): the combat
+  bench has zero translation by construction.
+- Styled-face material snapshot / relight-after-warp [census-gated;
+  2026-08-20 research pitch #2, triaged]: the snapshot is BAKED RGB565+Z
+  (sw_snap_color/sw_snap_zb), so nonzero-lightstyle faces are excluded from
+  reuse en bloc (temporal_dynamic, ref_soft_raster.c:1012-1017: re-rendered
+  every fake frame; "they are few" is unpriced). Mechanism: transport
+  material IDENTITY for styled faces, reshade per fake frame from current
+  style scalars. Enabler VERIFIED in-tree: #17 proves light_s/t == s/t for
+  every non-warp face (bit-exact aliasing) => reshade needs no new gradient
+  chains, only light lookup + modulate per px. Survives the 3x-falsified
+  lit-surface axis (#23/#59/E60) by construction: amortizes GEOMETRY
+  (span-walk/prologue), pays shading PER FRAME - no amortized shading to
+  invalidate. Win = styled faces' fake-frame span-walk/prologue only;
+  census prereq folds into #11.3 (count styled px FRACTION, not just
+  rebuild cells). Sidecar traffic (styled-px tag + light-cell idx) is
+  real-iron-visible, DOSBox/pmca-metric-blind. Gated on the same workload
+  blocker.
 - rgb-affine flex turbo variant A: -12.1ms flex (frame 157.1 vs 160.7), GATE
   RED 210px synthetic-fixture. CLUT (#4) is its higher-fidelity sibling and
   likely supersedes it at 64/128 levels.
@@ -243,6 +345,17 @@ never prices these.
   bench. Real gameplay still has calm stand-and-look phases; needs either a
   calm-camera second scene or user arbitration to build anyway. Ranked out
   of the active queue 2026-08-19.
+  WORKLOAD BLOCKER (verified in code 2026-08-20; gates ALL temporal
+  phase-2 incl. #16 polish and the two entries above): SEG-7 orbit =
+  7.5deg/frame yaw (h2dos_main.c:1105, frame%48 * 360/48) + stationary
+  player, and the E61 motion gate (ref_soft_raster.c:4384: >3deg rotation
+  OR >0.001u translation => real) therefore forces EVERY frame REAL -
+  warp cadence is exactly ZERO in the combat bench. Numbers agree: SEG-7
+  world 101.1 ~= seg-6 no-warp 99.1 vs warp-active 78.5 (e9b207f). Every
+  temporal-reuse mechanism prices at 0 on both rulers until a
+  calm+translation second scene lands or the user arbitrates building
+  blind. #16's warp-cadence check is confirmed by construction, not
+  counters.
 - True mipmapping for the world (GPT round-2): loader consumes mip0 only
   (width[0]/offsets[0]); nearest-level sampling by |du|/|dv| shrinks the
   distant-wall working set 4-16x. OUTPUT-CHANGING (gate-red class) but
@@ -251,6 +364,20 @@ never prices these.
   (DOSBox: no cache model; pm-mca phase-1: L1-view) => priceable only on
   real iron or pm-mca phase-2. Needs: user sign-off on the visual change
   + a ruler that can see it. Do NOT run under DOSBox expecting movement.
+  Heavyweight sibling from the 2026-08-20 research pitch: Talisman-style
+  hierarchical image caching (Shade '96: BSP-subtree images reused as
+  warped quads) - same gate-red resample class, same ruler blindness,
+  plus bookkeeping; census prereq = per-face distance x screen-area
+  distribution. Mips remain the cheaper first move if arbitrated.
+
+## Screened out 2026-08-20d (90s-lore mail; evidence-pinned, do not re-pitch)
+- No-clear Z via GL-Quake ztrick (alternate key ranges + compare direction
+  per frame): pool = the entire clear_us ~= 1.2ms (~0.6% of frame,
+  ref_soft_framebuffer.c:247); requires a polarity variant of EVERY
+  z-compare/write site (world, flex, sky, SW_PutPixel/blend stamps, lights)
+  + canonicalization at the temporal snapshot boundary (default-ON warp
+  transports zb); seg-6's 31-bit linear keys already carry a delicate tie
+  budget. Worst machinery-to-payoff ratio in the mail.
 
 ## Screened out 2026-08-20 round 2 (GPT bundle II; evidence-pinned, do not re-pitch)
 - PMULLW packed modulate over light-cell runs: 3rd re-pitch of the per-px
@@ -324,3 +451,14 @@ rendering — Unreal '98 shipped 8x8 tile CPU rasterization as its core cache
 strategy; extend to snapshot store + temporal warp traversal. Build trigger
 for the full sim: analyzer says pairing-optimum but DOSBox trend stops
 moving = residual lives in the memory system.
+2026-08-20d (90s-lore mail): indexed M8 world textures - keep wall-kind m8
+as INDICES + sample via per-image pal565 (src8/pal565 retention EXISTS,
+skin-only at ref_soft_image.c:146; extension mechanical). Bit-exact by
+construction (pal565[i] built with the identical sw_pack_texel call as the
+per-px expansion); win = halved texture working set = cache-only => both
+rulers blind. Synergy: composes with #22's shade rows. Also the moonshot:
+constant-z / orientation-adaptive mapper (Ken Silverman school) - pick span
+direction per surface by |dw/dx| vs |dw/dy| so perspective varies least
+along runs => whole-run affine or huge correction quanta; needs a second
+complete span-engine family (sky/flex/temporal interactions) + a real-iron
+ruler. Revisit only if the world lane hits an FDIV/prologue floor.

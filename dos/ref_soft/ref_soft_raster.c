@@ -3625,6 +3625,89 @@ static uint16_t particle_atlas_sample(const sw_image_t *image, const byte type_i
 	return image->pixels[iy * image->width + ix];
 }
 
+// ---------------------------------------------------------------------------
+// E14 particle stamps (census #88: 1.33M textured px + 417K point px per
+// 64-frame combat run, 0 additive px). draw_particle paid SW_PutPixel per px
+// plus, in the quad path, two float lerps + clamps + an atlas index per px.
+// Stamps bake exactly what is static: point-disc row extents (int predicate)
+// and the (type x radius x image) sampled-texel grid (built with the very
+// same float expressions, so bit-identical). The modulate() float chain and
+// the z-guard stay per px; the additive class folds to dr + sr*255/255 ==
+// dr + sr, the blend classes reuse the swept (m*0x8081)>>23 == m/255
+// identity (m <= 248*255 from the 565 masks). Debug flags keep the original
+// per-pixel walk.
+#define SW_PP_RADIUS_MAX 16
+static byte sw_pp_extent[SW_PP_RADIUS_MAX + 1][SW_PP_RADIUS_MAX + 1]; // [r][py] -> xmax
+static qboolean sw_pp_extent_built;
+
+#define SW_PT_SLOTS 512
+#define SW_PT_DIM (2 * SW_PP_RADIUS_MAX)
+static uint16_t sw_pt_data[SW_PT_SLOTS][SW_PT_DIM * SW_PT_DIM];
+static byte sw_pt_rowcount[SW_PT_SLOTS][SW_PT_DIM]; // nonzero-source texels per row (qa!=0 px)
+static int sw_pt_map[256][SW_PP_RADIUS_MAX - 1]; // [type][radius-2] -> slot, -1 unfilled, -2 bypass
+static const sw_image_t *sw_pt_slot_image[SW_PT_SLOTS];
+static unsigned sw_pt_next;
+static qboolean sw_pt_map_built;
+
+static void sw_pp_build_extents(void)
+{
+	sw_pp_extent_built = true;
+	for (int r = 1; r <= SW_PP_RADIUS_MAX; ++r)
+		for (int py = 0; py <= SW_PP_RADIUS_MAX; ++py)
+		{
+			int xmax = 0;
+			for (int px = 0; px <= r; ++px)
+				if (px * px + py * py <= r * r)
+					xmax = px;
+			sw_pp_extent[r][py] = (byte)xmax;
+		}
+}
+
+static const uint16_t *sw_pt_lookup(const sw_image_t *image, const byte type_index, const int radius)
+{
+	if (!sw_pt_map_built)
+	{
+		sw_pt_map_built = true;
+		memset(sw_pt_map, 0xFF, sizeof(sw_pt_map));
+	}
+	int slot = sw_pt_map[type_index][radius - 2];
+	if (slot == -2)
+		return NULL;
+	if (slot >= 0)
+	{
+		if (sw_pt_slot_image[slot] == image)
+			return sw_pt_data[slot];
+		sw_pt_map[type_index][radius - 2] = -2; // image churn on one key: never restamp
+		return NULL;
+	}
+	if (sw_pt_next >= SW_PT_SLOTS)
+	{
+		sw_pt_map[type_index][radius - 2] = -2;
+		return NULL;
+	}
+	slot = (int)sw_pt_next++;
+	sw_pt_map[type_index][radius - 2] = slot;
+	sw_pt_slot_image[slot] = image;
+	uint16_t *out = sw_pt_data[slot];
+	for (int py = -radius; py < radius; ++py)
+	{
+		unsigned nonzero = 0;
+		for (int px = -radius; px < radius; ++px)
+		{
+			const uint16_t texel = particle_atlas_sample(image, type_index, (float)(px + radius) / (radius * 2),
+				(float)(py + radius) / (radius * 2));
+			*out++ = texel;
+			nonzero += (texel != 0);
+		}
+		sw_pt_rowcount[slot][py + radius] = (byte)nonzero;
+	}
+	return sw_pt_data[slot];
+}
+static const byte *sw_pt_rowcount_of(const uint16_t *stamp, const int radius)
+{
+	return sw_pt_rowcount[(int)(((uintptr_t)stamp - (uintptr_t)sw_pt_data) / sizeof(sw_pt_data[0]))] + radius;
+}
+
 static void draw_particle(const particle_t *particle, const qboolean additive)
 {
 	int x, y;
@@ -3661,16 +3744,162 @@ static void draw_particle(const particle_t *particle, const qboolean additive)
 		color.b = (byte)((color.b * color.a) / 255);
 		color.a = 255;
 	}
+	++sw_stats.bench_part_calls;
+	sw_stats.bench_part_lmcolor += ((particle->type & PFL_LM_COLOR) != 0);
 	if (point || radius < 2 || image == NULL)
 	{
+		const uint16_t color565 = SW_RGB565(color.r, color.g, color.b);
+		if (sw_dbg_tag_x < 0 && !sw_dbg_zcollide && !sw_dbg_zviz && !sw_dbg_zstrict)
+		{
+			if (!sw_pp_extent_built)
+				sw_pp_build_extents();
+			const uint32_t key = (depth > 1e30f) ? 0xFFFFFFFFu : (uint32_t)(depth * SW_DEPTH_SCALE);
+			const unsigned sr = (color565 >> 8) & 0xF8u;
+			const unsigned sg = (color565 >> 3) & 0xFCu;
+			const unsigned sb = (color565 << 3) & 0xF8u;
+			unsigned mag = 0;
+			for (int py = -radius; py <= radius; ++py)
+			{
+				// The general loop counted every in-disc px INCLUDING off-screen
+				// ones (PutPixel bounds-returned after the increments): count them
+				// arithmetically here so the evidence numbers stay identical.
+				const int xmax = sw_pp_extent[radius][py < 0 ? -py : py];
+				sw_stats.bench_part_px_point += (unsigned)(2 * xmax + 1);
+				sw_stats.bench_part_px_add += additive ? (unsigned)(2 * xmax + 1) : 0u;
+				const int dy = y + py;
+				if ((unsigned)dy >= (unsigned)sw_height)
+					continue;
+				if (!additive && color.a == 0)
+					continue; // PutPixel would run the z-gate then write nothing
+				const int px0 = max(-(int)xmax, -x);
+				const int px1 = min((int)xmax, sw_width - 1 - x);
+				uint16_t *const dst = sw_color + (size_t)dy * (size_t)sw_width + x;
+				const uint32_t *const zbr = sw_depth + (size_t)dy * (size_t)sw_width + x;
+				for (int px = px0; px <= px1; ++px)
+				{
+					if (zbr[px] > key)
+						continue;
+					uint16_t out;
+					if (additive)
+					{
+						// alpha==255 after premultiply: min(255, dr + sr).
+						const uint16_t d = dst[px];
+						const unsigned r = min(255u, ((d >> 8) & 0xF8u) + sr);
+						const unsigned g = min(255u, ((d >> 3) & 0xFCu) + sg);
+						const unsigned b = min(255u, ((d << 3) & 0xF8u) + sb);
+						out = SW_RGB565(r, g, b);
+					}
+					else if (color.a == 255)
+					{
+						out = color565;
+					}
+					else
+					{
+						const uint16_t d = dst[px];
+						const unsigned aw = color.a, dw = 255u - color.a;
+						const unsigned r = ((sr * aw + ((d >> 8) & 0xF8u) * dw) * 0x8081u) >> 23;
+						const unsigned g = ((sg * aw + ((d >> 3) & 0xFCu) * dw) * 0x8081u) >> 23;
+						const unsigned b = ((sb * aw + ((d << 3) & 0xF8u) * dw) * 0x8081u) >> 23;
+						out = SW_RGB565(r, g, b);
+					}
+					dst[px] = out;
+					mag += (out == 0xF81Fu);
+				}
+			}
+			sw_stats.bench_mag_putpixel += mag;
+			++sw_stats.particles;
+			return;
+		}
 		for (int py = -radius; py <= radius; ++py)
 			for (int px = -radius; px <= radius; ++px)
 				if (px * px + py * py <= radius * radius)
-					SW_PutPixel(x + px, y + py, depth, SW_RGB565(color.r, color.g, color.b), color.a, false, additive);
+				{
+					++sw_stats.bench_part_px_point;
+					sw_stats.bench_part_px_add += additive;
+					SW_PutPixel(x + px, y + py, depth, color565, color.a, false, additive);
+				}
 		++sw_stats.particles;
 		return;
 	}
 	// Textured quad, screen-aligned like the production GL1 particle pass.
+	const uint16_t *stamp = NULL;
+	if (sw_dbg_tag_x < 0 && !sw_dbg_zcollide && !sw_dbg_zviz && !sw_dbg_zstrict)
+		stamp = sw_pt_lookup(image, type_index, radius);
+	if (stamp != NULL)
+	{
+		const uint32_t key = (depth > 1e30f) ? 0xFFFFFFFFu : (uint32_t)(depth * SW_DEPTH_SCALE);
+		const float fr = color.r / 255.0f;
+		const float fg = color.g / 255.0f;
+		const float fb = color.b / 255.0f;
+		const float fa = color.a / 255.0f;
+		// Per-particle alpha: modulate() sets it to this same constant for any
+		// nonzero source texel (and zero otherwise). additive premultiplied a==255.
+		const byte quad_alpha_const = (byte)ClampI((int)(255.0f * fa), 0, 255);
+		unsigned mag = 0;
+		const byte *const rowcounts = sw_pt_rowcount_of(stamp, radius);
+		for (int py = -radius; py < radius; ++py)
+		{
+			// Counter parity with the general loop, INCLUDING off-screen px
+			// (PutPixel counted, then bounds-returned): the additive class counts
+			// all 2r px/row (it premultiplies a to 255, so quad_alpha==0 is
+			// impossible there); the other class counts nonzero-source px unless
+			// the whole particle is alpha 0.
+			sw_stats.bench_part_px_tex += additive ? (unsigned)(2 * radius) :
+				(quad_alpha_const != 0 ? (unsigned)rowcounts[py] : 0u);
+			sw_stats.bench_part_px_add += additive ? (unsigned)(2 * radius) : 0u;
+			const int dy = y + py;
+			if ((unsigned)dy >= (unsigned)sw_height)
+				continue;
+			if (quad_alpha_const == 0)
+				continue;
+			const int px0 = max(-radius, -x);
+			const int px1 = min(radius - 1, sw_width - 1 - x);
+			uint16_t *const dst = sw_color + (size_t)dy * (size_t)sw_width + x;
+			const uint32_t *const zbr = sw_depth + (size_t)dy * (size_t)sw_width + x;
+			const uint16_t *const srow = stamp + (py + radius) * (radius * 2) + radius;
+			for (int px = px0; px <= px1; ++px)
+			{
+				const uint16_t source = srow[px];
+				if (source == 0)
+					continue; // colorkey: alpha 0, both classes write nothing
+				byte quad_alpha;
+				const uint16_t out = modulate(source, fr, fg, fb, fa, &quad_alpha);
+				if (zbr[px] > key)
+					continue;
+				uint16_t fin;
+				if (additive)
+				{
+					const uint16_t d = dst[px];
+					const unsigned osr = (out >> 8) & 0xF8u;
+					const unsigned osg = (out >> 3) & 0xFCu;
+					const unsigned osb = (out << 3) & 0xF8u;
+					const unsigned r = min(255u, ((d >> 8) & 0xF8u) + osr);
+					const unsigned g = min(255u, ((d >> 3) & 0xFCu) + osg);
+					const unsigned b = min(255u, ((d << 3) & 0xF8u) + osb);
+					fin = SW_RGB565(r, g, b);
+				}
+				else if (quad_alpha_const == 255)
+				{
+					fin = out;
+				}
+				else
+				{
+					const uint16_t d = dst[px];
+					const unsigned aw = quad_alpha_const, dw = 255u - quad_alpha_const;
+					const unsigned r = ((((out >> 8) & 0xF8u) * aw + ((d >> 8) & 0xF8u) * dw) * 0x8081u) >> 23;
+					const unsigned g = ((((out >> 3) & 0xFCu) * aw + ((d >> 3) & 0xFCu) * dw) * 0x8081u) >> 23;
+					const unsigned b = ((((out << 3) & 0xF8u) * aw + ((d << 3) & 0xF8u) * dw) * 0x8081u) >> 23;
+					fin = SW_RGB565(r, g, b);
+				}
+				dst[px] = fin;
+				mag += (fin == 0xF81Fu);
+			}
+		}
+		sw_stats.bench_mag_putpixel += mag;
+		sw_stats.texture_particles += (type_index >= 22 && type_index < 36) ? 2 : 1;
+		++sw_stats.particles;
+		return;
+	}
 	for (int py = -radius; py < radius; ++py)
 		for (int px = -radius; px < radius; ++px)
 		{
@@ -3681,6 +3910,8 @@ static void draw_particle(const particle_t *particle, const qboolean additive)
 				color.a / 255.0f, &quad_alpha);
 			if (quad_alpha == 0 && !additive)
 				continue;
+			++sw_stats.bench_part_px_tex;
+			sw_stats.bench_part_px_add += additive;
 			SW_PutPixel(x + px, y + py, depth, out, quad_alpha, false, additive);
 		}
 	sw_stats.texture_particles += (type_index >= 22 && type_index < 36) ? 2 : 1;
