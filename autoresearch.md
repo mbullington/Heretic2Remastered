@@ -80,6 +80,14 @@ had been comparing a stale RENDER.PPM.)
 - total_us ≤ 85,000 (≈ frame_us 60,000 + present ~19,000 + clear ~6,000)
 - 3 consecutive discards with no credible mechanism left, or user's call
 
+## SEG-7 handoff-agenda close-out (2026-08-18)
+Baseline 15239169 (user correctness batch) 206,764 -> KEPT chain: 1b7108de E59.1 FTB world order (-15.9),
+cdba5907 E55c bit-exact opaque flex (-2.75), 65a2e2c2 E58 baked render packets (-4.98) => BEST 183,083 (-11.4%).
+Falsified/skipped per ideas.md seg-7 section: E60 (gate red + regression), E61 (contract-illegal class),
+E57 (wash), E62 (wash), E63/E64 (pool math), E65/E66 (quiescent pools). Pending USER decision:
+rgb-affine flex turbo (-12.1ms, gate-red fidelity class 0.27%) vs bit-exact keeping; E61 reprojection turbo (-25..40ms, gate-red class).
+
+
 ## Current state
 - SEGMENT 4 (2026-08-17): DOSBox cputype=pentium_mmx (9307dbd1) — new realistic ruler; seg-3 numbers not comparable.
   Kept stack: commit 1797d154 (E42 span-step 32). Best total_us = 141,807 (frame 123,960, world 96,197,

@@ -1,5 +1,18 @@
 # Untried hypotheses (remove when attempted)
 
+## SEG-7 handoff-agenda dispositions (2026-08-18, baseline 15239169 total 206,764)
+KEPT: E59.1 FTB BSP draw order (-15.9ms total / world -9.3; overwrote 14.6K->2.0K px/frame — handoff's "39 screenfuls" was a 32x counter misread, real overdraw was 1.25x; E59b HZB FALSIFIED by pool math ~1.5ms).
+KEPT: E55c bit-exact opaque flex path (entities -8.2ms): vcolor per-vertex hoist + alpha-chain drop + colorkey test. s/t/r/g/b float chains untouched.
+KEPT: E58 baked render packets (-5.0ms total): map-static vertex/base_s/t + light dims per face at load.
+FALSIFIED: E60 lit-surface cache — gate red 4.54% (warp-class faces composite wrong) AND world +4.5ms: 565+pow2 modulate already cheap (Quake-era win came from 8-bit colormap math), 7 faces/frame flicker-rebuild, composite loop carries IMUL+4 clamp-branches; ceiling ~+2.5ms even perfected. DO NOT re-open without pow2-stride + flicker-bypass redesign.
+SKIPPED (contract-illegal): E61 temporal reprojection — cannot be bit-exact vs full-render baselines (fidelity-ceiling class); user-gated turbo est -25..40ms.
+WASH: E57 coverage-driven sky (40-tile span masks bit-exact): sky -3.7 == coverage tax +3.6 in world. Learning: sky floor 8.4ms at holes=0 is row-basis+block machinery, NOT classification/zb-walk; deadband irrelevant at holes=0.
+WASH: E62 PVS decode-once + gen stamps: per-leaf RLE re-decode was small vs leaf struct loads; +45 lines for noise.
+POOL-FALSIFIED: E63 (flex px only 11.3K/frame: tile-z pool ~1.5ms == build cost; self-occlusion needs per-px anyway), E64 (45% tris already bbox-culled pre-fill; B3-D: rejects free; multi-monster play only), E65/E66 (lights+particles = 3us each quiescent; combat-scene workload needed — new-workload gate).
+USER-GATED TURBO BANK (fidelity-ceiling class, per step-64 precedent): rgb-affine flex variant A measured -12.1ms flex pool / frame 157.1 vs 160.7 bit-exact — GATE RED 210-211px (0.27%, 4.6x budget) on synthetic flex fixture; UV-affine measured bit-NEUTRAL (210 vs 211 same pixels => ceiling break is rgb chain physics: 565->888 quantum = 8/255 > 2LSB).
+METHOD: bench is RUN-BIMODAL across invocations (mode A sky 17.5/world 105.9, mode B sky 12.2/world 104.9, rng-seeded both) — per-run medians poisoned; compare like-modes via /tmp/h2-ar-evidence-N.txt. walked_world_px jitters +0.1-0.4% from pre-activation wall-clock rand forking.
+
+
 CLOSED 2026-08-18 (#47, #48): B2b indexed internals falsified for real content — ~1 palette per m8 in the real PAKs (2016 distinct / Htic2-0; 195 of 199 silverspring), single 256-global = garbage; 565 fallback re-banked. B1 stage-2 hybrid clip falsified: unsorted = +11ms no payoff; sorted = gate-red 2.0% on coplanar z-ties (painter-semantic ties are order-dependent). World span level = architectural optimum under painter semantics; HZB/subtree world ideas share that fate. 320x200 (user-authorized mode sibling) = seg-5 agenda.
 
 ## Big structural swing (researched from q2DOS + Hammer of Thyrion, both GPL2 — see NOTICES.md)
