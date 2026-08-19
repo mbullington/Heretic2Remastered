@@ -10,6 +10,10 @@ atoms admitted (#12 blend specialization, #13 manifest-gated reciprocal),
 7 re-pitches screened out with run citations (see dated section below).
 2026-08-19 (user): lanes + temporal backlog PROMOTED into the queue (#14/#15/
 #16) - combat bench is the workload contract, r_swtemporal defaults ON.
+2026-08-19b: GPT round-2 ("what is mathematically redundant per frame/px")
+triaged with code verification: #17 light-chain collapse (VERIFIED bit-exact
+by aliasing), #18 block endpoint carry, #19 run specialization, #11 census
+re-scoped, #20 codegen census, mips -> user arbitration, 6 more screened.
 
 SEG-7 pricing frame (supersedes the static-tutorial one):
 - Bench = tutorial2 combat (gorgon+rat_giant+angermonsters, orbiting camera,
@@ -81,9 +85,40 @@ accumulators; one fb READ+ADD+WRITE per tile instead of one per sprite.
 Legal: saturating nonneg addition commutes. In scope: blend path only; fx
 simulation stays in src/. Sibling mechanisms in the same family (pick on
 census, don't stack): particle stamps, sprite-atlas RLE spans (PS1
-transparent-pixel surgery), E65/E66 re-probe (combat de-quiesces their pools).
+transparent-pixel surgery), pre-sampled particle atlases per discrete
+radius/type (GPT round-2 concurs), E65/E66 re-probe (combat de-quiesces
+their pools).
 Est unknown until an overdraw census lands — gate build on a #11-style
 counter run first; most complex mechanism in the queue.
+
+### 17. World light-coordinate collapse (5 -> 3 perspective chains) [bit-exact by aliasing; est -1..3ms]
+GPT round-2, VERIFIED IN CODE: draw_face sets vertex.light_s = base_s /
+light_t = base_t for EVERY face class (ref_soft_raster.c:1107/1153); only
+SURF_WARP makes s/t independent of base. For non-warp faces, light_s_over_z
+attrs == s_over_z attrs at every vertex => SW_GRADIENT(lsz/ltz) computes the
+identical floats as uz/vz => aliases are BIT-IDENTICAL (same ops, same
+inputs). Then per block: ls0 == u0 so ils = iu + (1<<20) - (light_min_s<<16)
+(one add vs FMUL+FIST); per px: kill the ils/ilt accumulators, lidx from
+(iu+Cs)>>20 (iu+Cs add replaces ils+=step add = wash, but 2 regs + 2 step
+inits + 2 block FISTs die). Face cost: -2 gradients (~20 float ops x 462
+faces) + span-init evals. Flowing faces: light_s = s - scroll => recover as
+u0 - scroll*iz0 (new float chain, ULP-drift class = E42/E43-lane, measure);
+or keep flowing on the 5-chain fallback. Gate on !(SURF_WARP); warp keeps
+the full path. Synergy: #19's run DDAs then derive light cells from (iu,it)
+directly.
+
+### 18. Block endpoint carry (iz1/u1/v1 -> next block's iz0/u0/v0) [bit-exact w/ guard; est -0.3..0.8ms]
+GPT round-2, VERIFIED: block prologue re-derives iz0 = 1.0f/w and the four
+start endpoints every block (raster.c:648-651) though all four were computed
+as iz1/u1/v1b/(ls1/lt1) at the previous block's end. Carry them => FDIVs go
+2B -> B+1 and -4 FMUL/block (~E51 halved FDIV count for -446us; this halves
+the REMAINDER without touching block quantum). Bit-exact conditions: (a)
+carry iz1 only when w_end > 1e-20f (current iz0 path is UNclamped vs iz1's
+max() — divergence only in the degenerate near-plane case; guard recomputes);
+(b) uz/vz/w advances must keep the same single-eval expression (uz + gux*block)
+so carried products are the same floats. Carry FLOATS ONLY: carry the fixed
+iu/it too and truncation drift accumulates = gate-red class. Note: shrinks
+#13's pool ~2x => sequence this FIRST, then re-decide #13.
 
 ### 5. r_swscan2 row-parity variant [turbo-class, ON est -5..9 vs columns' -4.3]
 PS2 field-render trick. Existing stripe infra (#71/#72) alternates 2px column
@@ -92,6 +127,30 @@ span-rows x 0.76us ~ 3.6ms, E57-v2 census) while halving real-frame px the
 same. Predicate-level change on existing machinery; snapshot already samples
 both phases. Known anti-synergy: sky row-skip dies under stripes (#72
 learning). User-grant class mirrors scan2 (stipple-adjacent turbo).
+Stronger cousin from GPT round-2: checkerboard SHADE at full-res visibility
+with face-ID-keyed reconstruction (holes fill only from same-face neighbors)
+— kills silhouette ghosting but needs a full-face-ID buffer + reconstruction
+pass traffic; vanilla row-parity is nearly free by comparison.
+
+### 19. World span run specialization (light cells + texel rows + native-565 modulate) [bit-exact; census-gated; est -1..4ms]
+GPT round-2 bundle "D", three coordinated per-px kills in the opaque lanes:
+(a) LIGHT-CELL RUNS: per-px lidx = (ilt>>20)*stride + (ils>>20) + cmp is a
+2-shift+IMUL+add+cmp chain EVERY px (78.8K/frame) even though light cells are
+16x16 texels; precompute the next (iu,it)-cell boundary crossing (integer DDA
+on the affine step) and run const-light inner loops - hoists the light unpack
+too. Existing per-px lidx!=prev run-reuse is the weak form of this.
+(b) TEXEL ROW POINTER: image->pixels[(ty)*width + tx] pays IMUL/px; retain
+texture_row and recompute on integer-V crossing. (run #6's ctz-shift regress
+falsified the shift form — CL-dependency — NOT the row-pointer form.)
+(c) EXACT NATIVE-565 MODULATE: span_modulate3's 8-bit expand cancels
+algebraically (verified: floor(floor(x/32)/8)=floor(x/256) incl. the
+overbright clamps) => min(31,(r5*lr)>>8) form, -5..7 ops/px, repack
+collapses to (r<<11)|(g<<5)|b. LUT sibling STAYS CLOSED (run #5: 128KB exact
+LUT +8.8ms; memory != cheaper than ALU here).
+Prereq census (folds into #11): light-cell + texel-row crossing frequencies
+at 320x240 — at minification >=2px/texel, (b) pays; at near-1:1 faces it
+adds a compare per px over the plain IMUL. (a) pays at any crossing rate
+<= every-16px.
 
 ### 6. Eager per-entity projection pass [sub-ULP position, est -1..3ms + MMX-batch enabler]
 From census #78: proj fills = 794/frame @4.7us = 3.7ms/frame, all scattered
@@ -132,7 +191,24 @@ Form: __m64 builtins with -mmmx inside one copy function (no raw asm blocks
 = no scheduler fences), single emms at function exit, alignment at alloc.
 Do not reopen the per-px modulate axis here.
 
-### 11. World texel+light run census [measurement-only; decides a -1..3ms idea]
+### 11. World census sweep [measurement-only; decides #19, coverage-first, style-LUTs, node-walk]
+Decide-by-counter dimensions: (1) light-cell and texel-row crossing
+frequencies per span (#19 gate); (2) fully-covered 128px-block fraction via
+bench_world_zreject run histogram (decides GPT's coverage-before-prologue:
+skip the whole block prologue FDIVs/FISTs when 4 cover words are saturated);
+(3) build_face_light rebuild cells/frame under animated styles (decides
+per-style 256-entry scale LUTs: raw*style_fixed -> indexed add; band-pack
+makes per-CELL laziness awkward, count first); (4) BSP node-walk cost
+(visframe subtree prune + axial-plane special-case potential: full dot per
+node today, axial => 1 FSUB; GPT's PVS-row-cache part is DONE in user batch
+f2edab6a).
+
+### 20. DJGPP codegen census [measurement-only, cheap, T0-native tooling exists]
+pm_mca.py analyze --objdump already walks every function: sweep hot symbols
+for (a) call sites to ceilf/floorf/fix helpers in loops, (b) FDIV/FSQRT
+counts per hot function, (c) FWAIT/control-word churn. GPT's "innocent C
+hides x87 nonsense" hypothesis, priced statically in one script run; any hit
+becomes its own experiment with the pmca delta printed natively.
 
 ### 13. World span-prologue FDIV -> seed LUT + 1 Newton [MANIFEST-GATED first]
 GPT-prompted; survives only in this form. pm-mca-legal target (FDIV = 39cyc
@@ -142,6 +218,9 @@ and the #8/rsqrt precedent was T0-discard on layout churn for exactly this
 visibility gap. Precondition = manifest grows an opaque-span entry; then
 1-2K seed LUT + r*(2-w*r) NR, error budget derived from texel-movement, not
 IEEE. Do not run as T1-only on the DOSBox ruler (x87-tax refuted there).
+Variant (b) [IEEE-exact alternative]: software-pipeline the TRUE 1/w FDIV
+across the integer shading of the current block (Pentium FP/integer overlap;
+pm-mca models it) — same manifest gate. #18 halves this pool first.
 
 ### 16. Temporal polish bundle [promoted 2026-08-19: temporal is default-ON; one session]
 - radius-2 dilation ONLY for >1px residual reveal cracks (holes ~18/frame):
@@ -164,6 +243,38 @@ never prices these.
   bench. Real gameplay still has calm stand-and-look phases; needs either a
   calm-camera second scene or user arbitration to build anyway. Ranked out
   of the active queue 2026-08-19.
+- True mipmapping for the world (GPT round-2): loader consumes mip0 only
+  (width[0]/offsets[0]); nearest-level sampling by |du|/|dv| shrinks the
+  distant-wall working set 4-16x. OUTPUT-CHANGING (gate-red class) but
+  period-correct (Q1/Q2 software mipmapped by default; mip bias may look
+  MORE right via shimmer suppression). Both rulers blind to the win
+  (DOSBox: no cache model; pm-mca phase-1: L1-view) => priceable only on
+  real iron or pm-mca phase-2. Needs: user sign-off on the visual change
+  + a ruler that can see it. Do NOT run under DOSBox expecting movement.
+
+## Screened out 2026-08-20 round 2 (GPT bundle II; evidence-pinned, do not re-pitch)
+- PMULLW packed modulate over light-cell runs: 3rd re-pitch of the per-px
+  MMX axis (runs #38/#39 parity tax). Axis stays closed; #10 movq copies
+  remain the only open MMX lane.
+- Sparse-Z / depth-needed tile mask (skip world zb writes where no later
+  consumer overlaps): conflicts with default-ON temporal - the warp
+  transports the WORLD-ONLY zb (batch f2edab6a qz-scaled z-key transport),
+  so every world px has a consumer. Sky already tests covermask not z
+  (S-buffer row free-ride): the other half of the pitch is done.
+- Frame-stamped projected BSP edge cache: vertex-cache family, falsified
+  at +4.8ms with ~10-15% dedup on H2 scenes; edge dedup adds clip-status
+  caching but keeps the same stamp-check-vs-save economics.
+- Viewmodel/foreground pre-coverage cull of world: requires render-order
+  flip or a conservative rect (=> holes at silhouettes); post-FTB census
+  has accepted overdraw at 2.0K px/frame - the pool this attacks is
+  measured-absent.
+- Per-scanline fixed-point edge DDAs (kill ceilf): pool misidentified -
+  ceilf runs per-edge-onset, not per scanline (x advances by slope add);
+  moving edge rounding shifts span boundaries => coplanar shared-edge
+  crack class (B1-family gate risk), no measured dividend.
+- Subtree occlusion via fully-covered 8x8 covermask tiles: 4th HZB form;
+  the E59.1 leftover-overdraw census (2.0K px) still bounds the geometry
+  pool. Keep-class ceiling ~1.5ms, machinery-heavy.
 
 ## Screened out 2026-08-20 (GPT external code-review re-pitches; evidence-pinned)
 - Quake lit-surface cache (3rd re-pitch): runs #23 (+730% world) + #59/E60
