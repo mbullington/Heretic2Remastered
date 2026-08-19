@@ -3666,11 +3666,63 @@ static void sw_temporal_warp(const refdef_t *fd)
 	}
 }
 
+// Deterministic combat-fx load for the T3 holdout (H2DOS_SW_FXLOAD=1): the
+// production rasterizers see exactly the shapes real combat produces (typed
+// atlas/softmask/additive particles, dlight stamps, a full-screen damage
+// blend), injected at the refdef boundary. Counts are frame-indexed only, so
+// reruns are bit-identical; the swarm orbits vieworg for coverage motion.
+static void sw_debug_fxload(refdef_t *fd)
+{
+	const unsigned f = sw_stats.bench_frames;
+	const float base_ang = (float)(f % 48u) * (6.2831853f / 48.0f);
+	for (int i = 0; i < 64 && fd->num_particles < MAX_PARTICLES; ++i)
+	{
+		const float a = base_ang + (float)i * (6.2831853f / 64.0f);
+		const float r = 96.0f + (float)((f + (unsigned)(i * 17)) & 63u);
+		particle_t *p = &fd->particles[fd->num_particles++];
+		p->origin[0] = fd->vieworg[0] + cosf(a) * r;
+		p->origin[1] = fd->vieworg[1] + sinf(a) * r;
+		p->origin[2] = fd->vieworg[2] + 8.0f + (float)((i * 13) & 31) - 16.0f;
+		p->color.r = (byte)(160 + (i & 95));
+		p->color.g = (byte)(64 + ((f + (unsigned)i) & 63u));
+		p->color.b = 32;
+		p->color.a = 255;
+		p->scale = 2.0f + (float)(i & 3);
+		p->type = (unsigned)(i & 7) | ((i & 1) ? PFL_ADDITIVE : 0u) |
+			((i % 5 == 0) ? PFL_SOFT_MASK : 0u);
+	}
+	for (int i = 0; i < 2 && fd->num_dlights < MAX_DLIGHTS; ++i)
+	{
+		const float a = base_ang + (float)i * 3.1415926f;
+		dlight_t *dl = &fd->dlights[fd->num_dlights++];
+		dl->origin[0] = fd->vieworg[0] + cosf(a) * 144.0f;
+		dl->origin[1] = fd->vieworg[1] + sinf(a) * 144.0f;
+		dl->origin[2] = fd->vieworg[2] + 24.0f;
+		dl->color.r = 255;
+		dl->color.g = 96;
+		dl->color.b = 24;
+		dl->color.a = 255;
+		dl->intensity = 220.0f + (float)((f * 11u) & 63u);
+	}
+	const float pulse = 0.10f + 0.05f * (float)(f & 15u) / 15.0f;
+	fd->blend[0] = 1.0f;
+	fd->blend[1] = 0.25f;
+	fd->blend[2] = 0.15f;
+	fd->blend[3] = pulse;
+}
+
 int SW_RenderFrame(const refdef_t *fd)
 {
 	if (fd == NULL || sw_color == NULL || fd->width <= 0 || fd->height <= 0 ||
 		fd->fov_x <= 1.0f || fd->fov_x >= 179.0f || fd->fov_y <= 1.0f || fd->fov_y >= 179.0f)
 		return 0;
+	refdef_t fx_fd;
+	if (getenv("H2DOS_SW_FXLOAD") != NULL)
+	{
+		fx_fd = *fd;
+		sw_debug_fxload(&fx_fd);
+		fd = &fx_fd;
+	}
 	// Diagnostic camera tour (H2DOS_SW_TOUR=radius[,zoff]): move the refdef
 	// vieworg on a deterministic circle around the first-rendered position so
 	// parallax, near-plane crossings and PVS transitions actually exercise the

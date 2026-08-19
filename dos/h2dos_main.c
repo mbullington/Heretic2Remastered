@@ -946,6 +946,28 @@ static void verify_loopback(void)
 	log_append("loopback-gamespy-rejected=PASS\nloopback-address=loopback\nloopback-send=1\nloopback-receive=1\nloopback-payload=PASS\n");
 }
 
+// T3 combat-scene helper: put every monster edict created since the last
+// recorded edict-count floor at (dx,dy) beside the player. Public struct
+// fields only; fully deterministic (fixed player pose, fixed offsets).
+static int bench_combat_floor;
+
+static void combat_place_new_monsters(edict_t *player, const float dx, const float dy)
+{
+	extern edict_t *g_edicts;
+	extern game_export_t globals;
+	if (player == NULL)
+		return;
+	for (edict_t *e = &g_edicts[bench_combat_floor]; e < &g_edicts[globals.num_edicts]; ++e)
+	{
+		if (!e->inuse || !(e->svflags & SVF_MONSTER))
+			continue;
+		e->s.origin[0] = player->s.origin[0] + dx;
+		e->s.origin[1] = player->s.origin[1] + dy;
+		e->s.origin[2] = player->s.origin[2];
+	}
+	bench_combat_floor = globals.num_edicts;
+}
+
 int main(const int argc, char** argv)
 {
 	int frame_limit = argument_value(argc, argv, "-dosframes", "H2DOS_FRAMES", 180);
@@ -1034,6 +1056,8 @@ int main(const int argc, char** argv)
 	previous = Sys_Microseconds() - 100000;
 	long long bench_time_us = 0;
 	qboolean bench_seeded = false;
+	qboolean bench_combat_armed = false;
+	int bench_combat_delay = 0;
 	for (frame = 0; frame < frame_limit; ++frame)
 	{
 		long long now = Sys_Microseconds();
@@ -1077,6 +1101,73 @@ int main(const int argc, char** argv)
 			// per angle (coverage, objects) lands in the dumped frames.
 			cl.viewangles[0] = -10.0f;
 			cl.viewangles[1] = (float)(frame % 48) * (360.0f / 48.0f);
+		}
+		if (realdata && bench_requested && bench_seeded &&
+			getenv("H2DOS_COMBAT") != NULL && svs.clients != NULL && svs.initialized)
+		{
+			// T3 combat holdout driver: surround the (stationary, deterministic)
+			// player with hostile monsters, then anger everything. Spawning only
+			// forward-100u can bury spawns in geometry, so two classnames are
+			// planted along two opposite deterministic body yaw angles. Melee hits
+			// give blood particles + damage blends; no god-mode: a death respawns
+			// deterministically with monsters still angered.
+			++bench_combat_delay;
+			edict_t *player = svs.clients[0].edict;
+			if (player != NULL)
+			{
+				// The engine's spawn command misplaces entities in this build
+				// (they land at 0,0,0), so freshly-spawned monsters are
+				// repositioned deterministically beside the player two frames
+				// after each spawn command has actually executed. Gorgon (the
+				// lizard) in front, giant rat behind.
+				if (bench_combat_delay == 8)
+				{
+					extern game_export_t globals;
+					bench_combat_floor = globals.num_edicts;
+					Cbuf_AddText("spawn monster_gorgon\n");
+				}
+				else if (bench_combat_delay == 10)
+				{
+					combat_place_new_monsters(player, 64.0f, 0.0f);
+					Cbuf_AddText("spawn monster_rat_giant\n");
+				}
+				else if (bench_combat_delay == 12)
+				{
+					combat_place_new_monsters(player, -64.0f, 0.0f);
+				}
+				else if (bench_combat_delay == 14 && !bench_combat_armed)
+				{
+					Cbuf_AddText("angermonsters\n");
+					bench_combat_armed = true;
+					log_append("bench-combat-armed=gorgon+rat-giant+angermonsters\n");
+				}
+				else if (bench_combat_armed && (bench_combat_delay == 52 || bench_combat_delay == 100))
+				{
+					// Two-point gameplay probe: positions at arm+40 and arm+88 tell
+					// whether angered monsters close on the stationary player or are
+					// stuck/unspawned. Health comes from the parsed client playerstate.
+					extern edict_t *g_edicts;
+					extern game_export_t globals;
+					int monsters = 0;
+					float nearest = 1.0e9f;
+					for (edict_t *e = &g_edicts[1]; e < &g_edicts[globals.num_edicts]; ++e)
+					{
+						if (!e->inuse || !(e->svflags & SVF_MONSTER))
+							continue;
+						++monsters;
+						const vec3_t d = {e->s.origin[0] - player->s.origin[0],
+							e->s.origin[1] - player->s.origin[1],
+							e->s.origin[2] - player->s.origin[2]};
+						const float dist = (float)sqrt(d[0] * d[0] + d[1] * d[1] + d[2] * d[2]);
+						log_append("bench-combat-mob f=%d org=%.0f,%.0f,%.0f dist=%.0f\n",
+							bench_combat_delay, e->s.origin[0], e->s.origin[1], e->s.origin[2], dist);
+						if (dist < nearest)
+							nearest = dist;
+					}
+					log_append("bench-combat-probe f=%d monsters=%d nearest=%.1f player-health=%d\n",
+						bench_combat_delay, monsters, nearest, cl.frame.playerstate.stats[STAT_HEALTH]);
+				}
+			}
 		}
 		if (realdata && getenv("H2DOS_DUMPALL") != NULL)
 		{

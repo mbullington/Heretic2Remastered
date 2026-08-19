@@ -30,8 +30,47 @@ export -f build_dos
 run_boxed bash -c build_dos || { echo "build attempt 1 failed/hung, retrying" >&2; pkill -f i586-pc-msdosdjgpp 2>/dev/null; sleep 2; run_boxed bash -c build_dos; } || {
   tail -25 /tmp/h2-ar-build.log; exit 1; }
 
-# Three benchmark runs; collect evidence copies per run, take per-metric medians.
-for i in 1 2 3; do
+# --- T0: pm-mca static PMMX ruler (deterministic; early-discard gate) -------
+# Coverage: only manifest-declared renderer files. Anything else => abstain to
+# the old full 3-run path. REGRESS => exit 42 BEFORE any DOSBox run.
+RUNS=3
+PMCA_BASELINE=autoresearch.pmca-baseline.json
+if [ -f scripts/pm_mca.py ] && [ -f scripts/pm_mca_manifest.json ]; then
+  CHANGED=$(git diff --name-only HEAD 2>/dev/null | grep -v '^$' || true)
+  OUT_OF_COVERAGE=$(python3 - "$CHANGED" <<'PYEOF'
+import json, sys
+changed = [c for c in sys.argv[1].splitlines() if c]
+m = json.load(open("scripts/pm_mca_manifest.json"))
+allowed = set(m.get("covered_files", [])) | {
+    "scripts/pm_mca.py", "scripts/pm_mca_data.py", "scripts/pm_mca_manifest.json",
+    "autoresearch.sh", "autoresearch.checks.sh"}
+bad = [c for c in changed if c not in allowed]
+print(";".join(bad))
+PYEOF
+)
+  if [ -n "$OUT_OF_COVERAGE" ]; then
+    echo "PMCA-T0-SKIP out-of-coverage: $OUT_OF_COVERAGE"
+  else
+    python3 scripts/pm_mca.py report --exe .dos-build/guest/SILVER.EXE \
+      --manifest scripts/pm_mca_manifest.json \
+      --evidence .dos-build/guest/BENCH-EVIDENCE.TXT \
+      --baseline "$PMCA_BASELINE" --json /tmp/h2-ar-pmca.json
+    verdict=$?
+    if [ $verdict -eq 42 ]; then
+      echo "PMCA-T0 REGRESS: deterministic PMMX ruler says worse; discarding before DOSBox"
+      exit 42
+    fi
+    if [ $verdict -eq 43 ]; then
+      echo "PMCA-T0 REBASELINE: ruler definition changed; adopting fresh reference, full verify"
+      cp /tmp/h2-ar-pmca.json "$PMCA_BASELINE"
+    else
+      RUNS=1   # in-coverage + deterministic metric: single gate run suffices
+    fi
+  fi
+fi
+
+# Benchmark run(s); collect evidence copies per run, take per-metric medians.
+for i in $(seq 1 "$RUNS"); do
   rm -rf .dos-build/runs/bench-BENCH1
   python3 scripts/run-dos-benchmark.py > /tmp/h2-ar-bench-$i.log 2>&1 || {
     tail -30 /tmp/h2-ar-bench-$i.log; exit 1; }
@@ -39,9 +78,16 @@ for i in 1 2 3; do
     tail -30 /tmp/h2-ar-bench-$i.log; exit 1; }
   cp .dos-build/guest/BENCH-EVIDENCE.TXT /tmp/h2-ar-evidence-$i.txt
 done
-cp /tmp/h2-ar-bench-3.log /tmp/h2-ar-bench.log
+cp "/tmp/h2-ar-bench-$RUNS.log" /tmp/h2-ar-bench.log
+EVFILES=$(for i in $(seq 1 "$RUNS"); do printf '/tmp/h2-ar-evidence-%s.txt ' "$i"; done)
 
-python3 - /tmp/h2-ar-evidence-1.txt /tmp/h2-ar-evidence-2.txt /tmp/h2-ar-evidence-3.txt <<'PYEOF'
+# pm-mca succeeded and everything downstream passed: refresh the tracked ruler
+# reference from this run (committed on keep, reverted on discard/crash).
+if [ -f /tmp/h2-ar-pmca.json ] && [ "$RUNS" -eq 1 ]; then
+  cp /tmp/h2-ar-pmca.json "$PMCA_BASELINE"
+fi
+
+python3 - $EVFILES <<'PYEOF'
 import statistics
 import sys
 

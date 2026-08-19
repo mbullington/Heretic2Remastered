@@ -1,0 +1,23 @@
+bench-combat-armed=gorgon+rat-giant+angermonsters
+bench-combat-mob f=52 org=0,0,0 dist=161
+bench-combat-probe f=52 monsters=1 nearest=161.3 player-health=100
+bench-combat-mob f=100 org=0,0,0 dist=161
+bench-combat-probe f=100 monsters=1 nearest=161.3 player-health=100
+bench-frames=144
+bench-walked-world-px=12285099
+bench-inside-world-px=12285099
+bench-world-faces=60835
+bench-world-spans=425806
+bench-walked-flex-px=0
+bench-inside-flex-px=1481591
+bench-flex-vertex-lerps=141864
+bench-model-flex=1542
+bench-model-sprite=0
+bench-flex-tris=132975
+bench-flex-tris-fast=116360
+bench-flex-tris-clip=16615
+bench-flex-tris-bbox=58986
+bench-flex-tris-behind=0
+bench-sky-pixels=11059200
+bench-flex-tris-affine=115822
+bench-flex-tris-wind=0

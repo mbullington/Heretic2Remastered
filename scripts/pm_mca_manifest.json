@@ -1,0 +1,50 @@
+{
+  "version": 1,
+  "comment": "pm-mca analyzed-loop manifest. Each loop resolves at analysis time: 'contains' must match exactly one instruction in 'symbol'; the enclosing clean backward-jcc loop becomes the slice. Address-free (relink-proof). Trips come from the bench evidence per FRAME_LIMIT. covered_files drives the T0 coverage gate: diffs touching anything else abstain to the full T1+T2 path.",
+  "covered_files": [
+    "dos/ref_soft/ref_soft_raster.c",
+    "dos/ref_soft/ref_soft_flex.c",
+    "dos/ref_soft/ref_soft_image.c",
+    "dos/ref_soft/ref_soft_framebuffer.c",
+    "dos/ref_soft/ref_soft_main.c",
+    "dos/ref_soft/ref_soft_model.c",
+    "dos/ref_soft/ref_soft_local.h",
+    "dos/ref_soft/ref_soft_public.h",
+    "dos/ref_soft/ref_soft.h"
+  ],
+  "defaults": {
+    "align": { "esp": 4, "ebp": 4 },
+    "fd_precision": 33
+  },
+  "loops": [
+    {
+      "name": "flex_vertex_gradient",
+      "symbol": "_SW_RasterFlexEntity",
+      "contains": "fmul DWORD PTR \\[ebp-0x384\\]",
+      "trips_key": "bench-flex-vertex-lerps",
+      "align": { "ebp": 4, "edi": 4, "ebx": 4, "ecx": 4 },
+      "comment": "per-vertex 4-channel color x intensity: FILD/FMUL/FADDP stack juggle. ideas.md #3 census loop. 56 instr, mem 17/iter."
+    },
+    {
+      "name": "flex_variant_b",
+      "symbol": "_SW_RasterFlexEntity",
+      "contains": "fmul DWORD PTR \\[ebp-0x3a0\\]",
+      "trips_key": "bench-flex-tris",
+      "align": { "ebp": 4, "edi": 4, "ebx": 4 },
+      "comment": "second flex gradient variant (@0210f3 in seg-6 build; likely the clipped or dyn-lit path — attribution approximate, watch it move with census #3)"
+    },
+    {
+      "name": "world_struct_clear",
+      "symbol": "_SW_RasterWorld",
+      "contains": "mov DWORD PTR \\[eax\\],0x0",
+      "trips_key": "bench-world-faces",
+      "align": { "eax": 4 },
+      "comment": "48-byte struct zero-fill, stride 0x48. Store-fill loop: write-buffer-bound on real iron (unmodeled); cpi here = L1 view."
+    }
+  ],
+  "excluded_known_blind_spots": [
+    "present path at RGB565 = rep movsd rows (rep-prefixed: v1 slice scope excludes)",
+    "per-pixel span walkers with data-dependent branches (v1 slice scope excludes; needs scenario support)",
+    "_SW_Present INDEX8 LUT loop: sibling path only, trips=0 at seg-6 settings"
+  ]
+}

@@ -84,6 +84,37 @@ system, which the static tool provably cannot see. Census-before-kill
 discipline stands: analyzer scores cycles/iter; only counter-pinned trip
 counts aim it at loops that dominate.
 
+## Harness: staged rollout pipeline T0-T3 [with pm-mca promoted; replaces flat ~90s 3x-run shape for asm lane]
+
+Shortest truthful path from candidate to verdict; cheap deterministic filters
+kill early, expensive stages run rarely.
+
+- T0 analyzer pre-filter (<1s, runs FIRST in autoresearch.sh, before any
+  DOSBox run): verdict on Sum(cycles/iter x trips) over analyzed loops vs
+  stored segment baseline. Deterministic => any regression is real. Scenario
+  spread (declared branch freqs): if [best..worst] straddles baseline,
+  ESCALATE to T1 instead of discarding. Exit-fast with distinct status +
+  METRIC line so jsonl stays honest; bad asm ideas die in build-time + <1s.
+- COVERAGE CHECK in front of T0: loop manifest (checked in) = symbols +
+  trip-count counter mapping + declared branch freqs + alignment assumptions.
+  Diff touching anything outside the manifest => T0 abstains, route straight
+  to T1+T2. Never silently pass unanalyzed code.
+- T1 correctness gate (1x DOSBox, ~30s): PASS + pixel gates are deterministic
+  booleans; medians never needed. The ONLY mandatory DOSBox run for
+  in-coverage asm rollouts => ~30s vs ~90s today.
+- T2 3x-median trend run: ONLY (a) out-of-coverage changes (data layout,
+  un-analyzed code), or (b) every Nth keep for trend-continuity sanity.
+- T3 combat-scene holdout [DOES NOT EXIST YET — build task]: NOT per-rollout
+  (hands back the saved time); run at keep-checkpoint cadence (every N keeps
+  / user call). Scores robustness, not rank: regression > threshold =>
+  review flag, not auto-discard. Primary metric stays the tutorial scene;
+  making the combat scene SCORED = material workload change = new segment
+  per contract.
+
+Build task (gates T3 + unblocks workload-gated queue below): deterministic
+combat-scene capture. Tutorial scene leaves lights/blend/sprites quiescent
+(3us/3us/0.014ms) — asm work on those lanes is blind until this exists.
+
 ## Queued (ranked by expected total_us impact)
 
 ### 1. Static-camera identity fast path for temporal [bit-exact, est -25..40ms]
@@ -132,6 +163,16 @@ any further flex work; the attribution selects the kill:
 - pose/proj cross-frame redundancy dominates -> DO NOT build the pose memo:
   md2 lerp changes pose every frame in real gameplay; bench-hit-rate would
   be an overfit. Record and pick the second-best axis instead.
+Folded in from the 2026-08-19 hindsight review (same ~15-line counter pass):
+- flex_proj_lookup cache fills/frame + fill cost: prices entity->view fusion
+  (compose View x Entity once per entity; ~12 mul + 9 add vs current ~21 +
+  19 per unique vertex, projection rows pre-scaled). Reassociates POSITION
+  chains only: sub-ULP => expected <1px flips, NOT the E55/E56 color-chain
+  death. Build only if census shows fills are a real slice.
+- rotate_flex_clusters calls vs unique verts ratio (loader copies indices
+  into ancestor lists, so expect 2-3x). Ceiling pre-pinned: the WHOLE posing
+  prologue is 467us/frame, so this only matters if the rotate slice alone
+  is >~300us.
 
 ### 4. Flex intensity-shade CLUT [turbo-class, est -4..8ms; keep possible at 64/128 levels]
 PS1 CLUT trick; fits E55c exactly: per-vertex vcolor = base_light * intensity
@@ -184,10 +225,35 @@ alloc. Do not reopen the per-px modulate axis here.
   RED 210px synthetic-fixture. CLUT (#4) is its higher-fidelity sibling and
   likely supersedes it at 64/128 levels.
 
+## Screened out 2026-08-19 (H2 hindsight review; evidence-pinned, do not re-pitch)
+
+- Flex hierarchy transform composition: the redundancy is REAL (verified:
+  ref_soft_flex.c copies each vertex into ancestor cluster lists;
+  rotate_flex_clusters re-transforms shared vertices once per ancestor; ref
+  points walk the chain per ancestor) but the pool is measured dead —
+  flex_prologue_us = 467us/frame (runs #64-73) covers ALL posing work for
+  99 entities = 0.32% of total; the rotate slice is a fraction of that.
+  3x on it = noise. DOS port already hoists per-entity trig into the proj
+  cache. Counts-only confirmation folds into census #3 above.
+- FMNI_NO_DRAW / demand-deform vertex_valid[] caching: attacks the same
+  467us prologue; tutorial2 census has all 99 flex models on-screen, and
+  per-vertex validity branches tax the hot tri path. Meshlet-cull variant
+  stays workload-gated above.
+- Client-effects fill-rate governor + PVS-driven effect-sim skip: correct
+  diagnosis (Raven's postmortem: overdraw fixed effect-by-effect, never
+  systemically), wrong scope — fx simulation lives in src/ (off-limits) and
+  dynamic quality scaling is gate-red by construction. Revisit only as a
+  user-arbitrated FEATURE, not a perf experiment.
+
 ## Workload-gated (pools measured quiescent: lights 3us, blend 3us, sprites 0.014ms)
 Needs a combat-scene workload before any of: light-disc stamps, particle
 stamps, E65/E66 re-probe, sprite-atlas RLE spans (PS1 transparent-pixel
-surgery). From the Q2-lineage technique review (2026-08-18 msg):
+surgery).
+Unreal-98 cross-check (2026-08-18): its celebrated CPU lanes (colored dlights,
+occlusion culling) are exactly these workload-gated lanes — no new items.
+Fog: playerstate.fog_density arrives from src/, DOS ref_soft never consumes
+it; implementing volumetrics ADDS px cost and would red seg-6 gates =>
+documented non-goal for the perf campaign. From the Q2-lineage technique review (2026-08-18 msg):
 - Entity-level occlusion/HZB reject, particle coarse-Z reject: tutorial2
   census says the pool does not exist here (pre-FTB z-rejects 5% of world
   px; overdraw 1.25x; all 99 flex models on-screen). Needs an
@@ -199,6 +265,27 @@ surgery). From the Q2-lineage technique review (2026-08-18 msg):
   frustum-cluster variant only pays partially-off-screen. Never in
   pose-memo form (md2 lerp runs every frame in real gameplay = bench
   overfit).
+- Deferred additive compositing: accumulate additive fx into 8x8 tile
+  per-channel accumulators; one fb READ+ADD+WRITE per tile instead of one
+  per sprite. Legal because saturating nonneg addition commutes. In scope
+  (blend path only; fx simulation stays in src/). Raven's postmortem names
+  ~10x overdraw as the cost they never fixed systemically => the combat
+  bench should price this lane directly.
+- Approx-distance attenuation (max + 3/8 mid + 3/16 min, or rsqrt family)
+  for dlight falloff: pm-mca prices the FSQRT/FDIV it replaces; the pool
+  itself needs the combat bench (tutorial lights = 3us).
+
+## Graduates when pm-mca is promoted (flat-ruler-invisible, analyzer-priced)
+
+First T0-pre-filter candidate family: sqrt. normalize_checked pays serialized
+FSQRT (70cyc) + FDIV (33cyc), both already modeled in pm_mca_data.py; it runs
+~2x per flex joint per entity (flex_joint_rotation dir/up) plus sprite bases.
+Call sites are in-scope and visual-only => Q_rsqrt + 1 Newton is a legal
+variant (fidelity: joint-basis ULP moves every vertex ~1e-7 relative; same
+sub-ULP position argument as the fusion note above, expect <1px). Also the
+natural validation-kernel family for the analyzer's promotion gate:
+hand-computable FDIV/FSQRT serialization + FXCH/pairing rules. Collision /
+physics sqrt sites (none in ref_soft hot paths) stay exact.
 
 ## Parked for real PMMX (no evidence channel in the DOSBox flat ruler)
 Unmeasurable, not falsified; need a real-iron bench program like texture
@@ -206,4 +293,8 @@ swizzle before them: cache-set phase sweeps (depth base 0..4095 step 32 x
 pitch pad 320..352 x light-arena phase — 128-offset grid search was the msg-3
 proposal), MTRR/USWC for the VESA LFB (run-38 ASI: SetMtrr docs already
 banked), DPMI page lock/pre-touch (spike work, not median), 32x8 scratchpad
-microtiles.
+microtiles. Strongest parked axis: tile rendering — Unreal '98 shipped 8x8
+tile CPU rasterization as its core cache strategy (Sweeney's retrospective
+still endorses tiles for software rendering), i.e. third-party production
+evidence the win is real and the current ruler simply can't see it. Extend
+to tile domains beyond spans: snapshot store + temporal warp traversal.
