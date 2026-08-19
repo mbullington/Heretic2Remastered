@@ -58,32 +58,6 @@ Fidelity plan: sweep levels 16/32/64/128 on the synthetic flex fixture that
 killed E55 variant A. 16 = gate-red by construction; 128 -> error ~1/888,
 borderline-inside budget. Find the knee, then arbitrate keep vs turbo-bank.
 
-### 5. Eager per-entity projection pass [sub-ULP position, est -1..3ms + MMX-batch enabler]  
-From census #78: proj fills = 794/frame @4.7us = 3.7ms/frame, all scattered
-lazily through the tri loop with per-corner seq-check branching. Project
-render_num_xyz in ONE straight-line pass per entity (fills already exist as
-flex_proj_lookup): kills the scatter/branch overhead, converts lazy-cache
-checks into plain array reads, and produces the exact loop shape PMMX batch
-projection needs later. Sub-ULP position argument (same math, new order);
-expect <1px. Overlaps #6's win: it subsumes the scatter/branch part of #5;
-expected marginal after #5 lands.
-
-### 6. Entity x View matrix fusion per entity [sub-ULP position, est -1..2.5]  
-From census #78 (the gated precondition is MET: 794 fills/frame @3.7ms):
-compose View x Entity once per entity (~12 mul + 9 add) instead of
-entity_transform_basis + world_to_view separately per fill (~21 mul + 19 add
-per unique vertex). Reassociates POSITION chains only: per the 2026-08-19
-hindsight note, expected <1px flips, NOT the E55/E56 color-chain death.
-Caveat: only if measure shows fills/basis actually dominate the 3.7ms (vs
-the contained divide + screenmap), pick-2 with #5.
-
-### 7. Proj-cache copy elimination (pointer API) [bit-exact, trivial, est -0.5..1.5]
-From census #78 (80% hit rate): flex_proj_lookup returns *out = *cache =
-~45B memcpy x 3,970 lookups/frame ~= 160KB/frame of pure copy for hits that
-are read-only until the corner is consumed. Return a pointer to the slot
-(or index) instead. Zero math change; mechanically small. Ship first as a
-warm-up for the lane; #5/#6 change the surrounding shape anyway.
-
 ### 5. r_swscan2 row-parity variant [turbo-class, ON est -5..9 vs columns' -4.3]
 PS2 field-render trick. Existing stripe infra (#71/#72) alternates 2px column
 pairs: ON = -4.3. Row parity additionally kills span-row prologues (4.7K
