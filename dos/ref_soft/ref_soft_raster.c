@@ -3018,8 +3018,12 @@ static void raster_flex_triangle(const flex_screen_vertex_t a, const flex_screen
 // and cache the screen coordinates plus inverse-z for every incident triangle
 // of this entity. Returns false when the vertex is behind the near plane, in
 // which case the caller must fall back to the general clipped path.
-static qboolean flex_proj_lookup(const entity_t *entity, const vec3_t lerped[], const float m[3][3],
-	const float t[3], const int vertex, flex_proj_cache_t *out)
+// E9/ideas#9: pointer-returning lookup — callers only read the slot, so
+// skip the 45-byte *out = *cache copy per corner (~160KB/frame at 3,970
+// lookups). Returns NULL for z < SW_NEAR_CLIP; callers never read the slot
+// in that case (the clip path rebuilds corners via entity_transform_basis).
+static const flex_proj_cache_t *flex_proj_lookup(const entity_t *entity, const vec3_t lerped[], const float m[3][3],
+	const float t[3], const int vertex)
 {
 	flex_proj_cache_t *cache = &sw_flex_proj_cache[vertex];
 	if (cache->entity_seq != sw_flex_proj_cache_entity_seq)
@@ -3038,8 +3042,7 @@ static qboolean flex_proj_lookup(const entity_t *entity, const vec3_t lerped[], 
 		cache->inverse_z = w;
 		cache->entity_seq = sw_flex_proj_cache_entity_seq;
 	}
-	*out = *cache;
-	return cache->z >= SW_NEAR_CLIP;
+	return cache->z >= SW_NEAR_CLIP ? cache : NULL;
 }
 
 static void dispatch_flex_screen_triangle(const flex_screen_vertex_t a, const flex_screen_vertex_t b,
@@ -3355,26 +3358,27 @@ void SW_RasterFlexEntity(const entity_t *entity, const sw_model_t *model, const 
 			vec3_t points[3];
 			float uv[3][2];
 			float colors[3][4];
-			flex_proj_cache_t projected[3];
+			const flex_proj_cache_t *projected[3];
 			int vertex_indices[3];
 			qboolean cache_ok = true;
 			for (int corner = 0; corner < 3; ++corner)
 			{
 				const int vertex = rt->vi[corner];
 				vertex_indices[corner] = vertex;
-				if (vertex < 0 || vertex >= SW_MAX_FLEX_VERTS ||
-					!flex_proj_lookup(entity, lerped, ent_view_m, ent_view_t, vertex, &projected[corner]))
+				projected[corner] = (vertex >= 0 && vertex < SW_MAX_FLEX_VERTS) ?
+					flex_proj_lookup(entity, lerped, ent_view_m, ent_view_t, vertex) : NULL;
+				if (projected[corner] == NULL)
 					cache_ok = false;
 			}
 				// Early trivial-reject, identical to the checks inside
 				// span_raster_flex_triangle/draw_flex_triangle: these triangles produce
 				// no pixels, so skip colors/corner construction entirely.
 				if (cache_ok &&
-					((projected[0].x < 0.0f && projected[1].x < 0.0f && projected[2].x < 0.0f) ||
-					 (projected[0].x >= (float)sw_width && projected[1].x >= (float)sw_width && projected[2].x >= (float)sw_width) ||
-					 (projected[0].y < 0.0f && projected[1].y < 0.0f && projected[2].y < 0.0f) ||
-					 (projected[0].y >= (float)sw_height && projected[1].y >= (float)sw_height && projected[2].y >= (float)sw_height) ||
-					 (projected[0].inverse_z <= 0.0f && projected[1].inverse_z <= 0.0f && projected[2].inverse_z <= 0.0f)))
+					((projected[0]->x < 0.0f && projected[1]->x < 0.0f && projected[2]->x < 0.0f) ||
+					 (projected[0]->x >= (float)sw_width && projected[1]->x >= (float)sw_width && projected[2]->x >= (float)sw_width) ||
+					 (projected[0]->y < 0.0f && projected[1]->y < 0.0f && projected[2]->y < 0.0f) ||
+					 (projected[0]->y >= (float)sw_height && projected[1]->y >= (float)sw_height && projected[2]->y >= (float)sw_height) ||
+					 (projected[0]->inverse_z <= 0.0f && projected[1]->inverse_z <= 0.0f && projected[2]->inverse_z <= 0.0f)))
 				{
 					++sw_stats.bench_flex_tris_bbox;
 					continue;
@@ -3401,9 +3405,9 @@ void SW_RasterFlexEntity(const entity_t *entity, const sw_model_t *model, const 
 					flex_screen_vertex_t corners[3];
 					for (int corner = 0; corner < 3; ++corner)
 					{
-						const float w = projected[corner].inverse_z;
-						corners[corner].x = projected[corner].x;
-						corners[corner].y = projected[corner].y;
+						const float w = projected[corner]->inverse_z;
+						corners[corner].x = projected[corner]->x;
+						corners[corner].y = projected[corner]->y;
 						corners[corner].inverse_z = w;
 						corners[corner].s_over_z = uv[corner][0] * (float)skin->width * w;
 						corners[corner].t_over_z = uv[corner][1] * (float)skin->height * w;
