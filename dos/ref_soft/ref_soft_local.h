@@ -45,6 +45,10 @@ typedef struct image_s {
 	int height;
 	int num_frames;
 	uint16_t *pixels;
+	// E4 (ideas #4): for m8 SKIN images, the original index8 texels and the
+	// image's packed-565 palette row - the intensity-shade CLUT's raw inputs.
+	byte *src8;           // NULL for non-m8 and non-skin images
+	uint16_t pal565[256];
 	qboolean has_alpha;
 	qboolean synthetic_fallback;
 	int registration_sequence;

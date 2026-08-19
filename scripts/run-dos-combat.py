@@ -105,11 +105,18 @@ def main() -> int:
         # cheat: every SVF_MONSTER edict acquires the player) + `god` (window
         # survives). SWEEP=1 orbits the camera at a fixed angle per frame so
         # span coverage sweeps a deterministic sequence.
+        extra_blocks = ""
+        extra_env = os.environ.get("H2DOS_BENCH_EXTRA_SET", "").strip()
+        if extra_env:
+            for item in extra_env.split():
+                if "=" in item and all(c.isalnum() or c in "_=.,-" for c in item):
+                    extra_blocks += f"set {item}\n"
         run_dosbox(
             GuestStage(stage_path, None, set()),
             f"set H2DOS_RUN_ID={RUN_ID}\nset H2DOS_FRAMES={FRAME_LIMIT}\n"
             "set H2DOS_RENDERER=1\nset H2DOS_AUDIO=1\nset H2DOS_REALDATA=1\n"
             "set H2DOS_BENCH=1\nset H2DOS_SWEEP=1\nset H2DOS_COMBAT=1\nset H2DOS_SW_FXLOAD=1\n"
+            f"{extra_blocks}"
             "set H2DOS_SW_WIDTH=320\nset H2DOS_SW_HEIGHT=240\n"
             f"silver.exe -basedir H2REAL +set developer 1 +map {COMBAT_MAP} > SWREAL.OUT",
             TIMEOUT_SECONDS,

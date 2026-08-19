@@ -1944,7 +1944,13 @@ typedef struct flex_screen_vertex_s {
 	float red_over_z;
 	float green_over_z;
 	float blue_over_z;
-	float alpha_over_z;
+	union
+	{
+		float alpha_over_z;
+		// E4 (ideas #4): gouraud scalar for the CLUT path, written ONLY by the
+		// opaque tri setup (which never reads alpha_over_z); no size growth.
+		float intensity_over_z;
+	};
 } flex_screen_vertex_t;
 
 static qboolean normalize_checked(vec3_t vector)
@@ -2338,6 +2344,93 @@ static float flex_edge(const flex_screen_vertex_t a, const flex_screen_vertex_t 
 // affine stepping of the five perspective attributes (s/t/r/g/b/a over z) plus
 // affine inverse-z. Gouraud color and alpha are interpolated with the same
 // fixed-point granularity as the world lightmap path (+/-1 LSB tolerance).
+// ---------------------------------------------------------------------------
+// E4 (ideas #4): intensity-shade CLUT for flex opaque spans.
+// One table per current entity-light key: clut[level][skin8] = packed 565 of
+// (texel_rgb x base_light x level_fraction) computed with EXACTLY the integer
+// ops the per-pixel path uses, so at the quantization centers the result is
+// bit-identical to the lerped vcolor path; error = intensity quantization only.
+// env H2DOS_SW_CLUT=<levels> (16/32/64/128 for the fidelity sweep); unset = off.
+#define SW_CLUT_MAX_LEVELS 128
+#define SW_CLUT_SLOTS 4
+static uint16_t sw_shade_clut[SW_CLUT_SLOTS][SW_CLUT_MAX_LEVELS][256];
+static unsigned sw_clut_keys[SW_CLUT_SLOTS];
+static int sw_clut_levels = -1;
+static int sw_clut_next_slot;
+static qboolean sw_clut_frame;  // cached once per frame (hot branches must not re-parse)
+
+static qboolean sw_clut_enabled(void)
+{
+	if (sw_clut_levels < 0)
+	{
+		const char *spec = getenv("H2DOS_SW_CLUT");
+		int v = spec != NULL ? atoi(spec) : 0;
+		if (v != 16 && v != 32 && v != 64 && v != 128)
+			v = 0;
+		sw_clut_levels = v;
+	}
+	return sw_clut_levels >= 16;
+}
+
+static unsigned sw_clut_key_of(const float base_light[3])
+{
+	// quants at 1/2 intensity: dlight flicker stays inside a cell across
+	// frames, so tables persist; cell coarseness shows as band-smooth light
+	// snap, traded deliberately in the fidelity-vs-rebuild-storm decision.
+	const int qr = ClampI((int)(base_light[0] * 2.0f), 0, 255);
+	const int qg = ClampI((int)(base_light[1] * 2.0f), 0, 255);
+	const int qb = ClampI((int)(base_light[2] * 2.0f), 0, 255);
+	return ((unsigned)qr << 16) | ((unsigned)qg << 8) | (unsigned)qb;
+}
+
+static int sw_clut_build(const float base_light[3], const uint16_t pal565[256], const int levels, const int slot)
+{
+	// Exactness contract (mirrors the per-pixel block's integer math):
+	//   current per-pixel: cr = lerped(vcolor = base*I) in [0..512] units,
+	//   mr = ((texel_r * cr + 128) >> 8). Here cr = round(base_c*256) lives in
+	//   the TABLE (per channel) and level==shade selects (cr x I): the LUT per
+	//   level & index stores SW_RGB565(min(255,(texel*bl_q*shade+32768)>>16)).
+	// At the quantization center, (base*I)*256 == bl_q*shade when I == shade/256.
+	const int bl_q[3] = {
+		min(512, max(0, (int)(base_light[0] * 256.0f + 0.5f))),
+		min(512, max(0, (int)(base_light[1] * 256.0f + 0.5f))),
+		min(512, max(0, (int)(base_light[2] * 256.0f + 0.5f))),
+	};
+	for (int level = 0; level < levels; ++level)
+	{
+		const int shade = (level * 512) / levels + (256 / levels);
+		for (int idx = 0; idx < 256; ++idx)
+		{
+			const uint16_t texel = pal565[idx];
+			const unsigned tr = (texel >> 8) & 0xF8u;
+			const unsigned tg = (texel >> 3) & 0xFCu;
+			const unsigned tb = (texel << 3) & 0xF8u;
+			const unsigned mr = ((tr * (unsigned)bl_q[0] * (unsigned)shade + 32768u) >> 16);
+			const unsigned mg = ((tg * (unsigned)bl_q[1] * (unsigned)shade + 32768u) >> 16);
+			const unsigned mb = ((tb * (unsigned)bl_q[2] * (unsigned)shade + 32768u) >> 16);
+			sw_shade_clut[slot][level][idx] = SW_RGB565(min(255u, mr), min(255u, mg), min(255u, mb));
+		}
+	}
+	return slot;
+}
+
+static int sw_clut_cur;
+static void sw_clut_select(const float base_light[3], const sw_image_t *skin)
+{
+	// Each m8 has its own palette, so the key must cover (light x skin row).
+	const unsigned key = sw_clut_key_of(base_light) ^ (unsigned)(uintptr_t)skin;
+	for (int i = 0; i < SW_CLUT_SLOTS; ++i)
+		if (sw_clut_keys[i] == key)
+		{
+			sw_clut_cur = i;
+			return;
+		}
+	const int slot = sw_clut_next_slot;
+	sw_clut_next_slot = (sw_clut_next_slot + 1) & (SW_CLUT_SLOTS - 1);
+	sw_clut_cur = sw_clut_build(base_light, skin->pal565, sw_clut_levels, slot);
+	sw_clut_keys[slot] = key;
+}
+
 static void span_raster_flex_triangle(const flex_screen_vertex_t a, const flex_screen_vertex_t b,
 	const flex_screen_vertex_t c, const sw_image_t *image, const qboolean depth_write, const qboolean additive)
 {
@@ -2559,6 +2652,7 @@ advance:
 static void span_raster_flex_opaque(const flex_screen_vertex_t a, const flex_screen_vertex_t b,
 	const flex_screen_vertex_t c, const sw_image_t *image)
 {
+	const qboolean clut = sw_clut_frame && image->src8 != NULL;
 	const float x10 = b.x - a.x, y10 = b.y - a.y;
 	const float x20 = c.x - a.x, y20 = c.y - a.y;
 	const float denom = x10 * y20 - x20 * y10;
@@ -2567,6 +2661,7 @@ static void span_raster_flex_opaque(const flex_screen_vertex_t a, const flex_scr
 	const float inv = 1.0f / denom;
 	float guz_x, guz_y, gvz_x, gvz_y, gw_x, gw_y;
 	float gr_x, gr_y, gg_x, gg_y, gb_x, gb_y;
+	float gi_x, gi_y;
 #define SWO_GRAD(attr, ox, oy) do { \
 		const float p10 = b.attr - a.attr; \
 		const float p20 = c.attr - a.attr; \
@@ -2576,9 +2671,14 @@ static void span_raster_flex_opaque(const flex_screen_vertex_t a, const flex_scr
 	SWO_GRAD(s_over_z, guz_x, guz_y);
 	SWO_GRAD(t_over_z, gvz_x, gvz_y);
 	SWO_GRAD(inverse_z, gw_x, gw_y);
-	SWO_GRAD(red_over_z, gr_x, gr_y);
-	SWO_GRAD(green_over_z, gg_x, gg_y);
-	SWO_GRAD(blue_over_z, gb_x, gb_y);
+	if (clut)
+		SWO_GRAD(intensity_over_z, gi_x, gi_y);
+	else
+	{
+		SWO_GRAD(red_over_z, gr_x, gr_y);
+		SWO_GRAD(green_over_z, gg_x, gg_y);
+		SWO_GRAD(blue_over_z, gb_x, gb_y);
+	}
 #undef SWO_GRAD
 
 	const flex_screen_vertex_t *verts[3] = { &a, &b, &c };
@@ -2631,7 +2731,8 @@ static void span_raster_flex_opaque(const flex_screen_vertex_t a, const flex_scr
 		float uz = a.s_over_z + guz_x * x_center + guz_y * y_center;
 		float vz = a.t_over_z + gvz_x * x_center + gvz_y * y_center;
 		float w = a.inverse_z + gw_x * x_center + gw_y * y_center;
-		float rz = a.red_over_z + gr_x * x_center + gr_y * y_center;
+		float rz = clut ? (a.intensity_over_z + gi_x * x_center + gi_y * y_center)
+				: (a.red_over_z + gr_x * x_center + gr_y * y_center);
 		float gz = a.green_over_z + gg_x * x_center + gg_y * y_center;
 		float bz = a.blue_over_z + gb_x * x_center + gb_y * y_center;
 		uint16_t *const fb_row = sw_color + (size_t)y * sw_width;
@@ -2649,7 +2750,7 @@ static void span_raster_flex_opaque(const flex_screen_vertex_t a, const flex_scr
 			const float iz1 = 1.0f / max(w_end, 1e-20f);
 			const float u0 = uz * iz0, u1 = (uz + guz_x * block) * iz1;
 			const float v0b = vz * iz0, v1b = (vz + gvz_x * block) * iz1;
-			const float r0 = rz * iz0, r1 = (rz + gr_x * block) * iz1;
+			const float r0 = rz * iz0, r1 = (rz + (clut ? gi_x : gr_x) * block) * iz1;
 			const float g0 = gz * iz0, g1 = (gz + gg_x * block) * iz1;
 			const float b0c = bz * iz0, b1c = (bz + gb_x * block) * iz1;
 			int iu = (int)(u0 * 65536.0f);
@@ -2665,34 +2766,63 @@ static void span_raster_flex_opaque(const flex_screen_vertex_t a, const flex_scr
 			uint32_t ikey = (uint32_t)(w * SW_DEPTH_SCALE);
 			uint32_t ikey_end = (uint32_t)(max(w_end, 0.0f) * SW_DEPTH_SCALE);
 			const int ikey_step = ((int)ikey_end - (int)ikey) / block;
-			for (int i = 0; i < block; ++i, ++x)
-			{
-				++sw_stats.bench_pixels_flex;
-				const size_t idx = (size_t)x;
-				if (ikey >= zb_row[idx])
+			if (clut)
+				for (int i = 0; i < block; ++i, ++x)
 				{
-					const int tx = ClampI(iu >> 16, 0, image->width - 1);
-					const int ty = ClampI(it >> 16, 0, image->height - 1);
-					const uint16_t texel = image->pixels[ty * image->width + tx];
-					// texel 0x0000 is the colorkey: identical semantics to the
-					// salpha==0 branch (no paint, no depth write).
-					if (texel != 0)
+					++sw_stats.bench_pixels_flex;
+					const size_t idx = (size_t)x;
+					if (ikey >= zb_row[idx])
 					{
-						const int cr = min(512, max(0, ir >> 9)); // fixed [0..512]: 256 == 1.0
-						const int cg = min(512, max(0, ig >> 9));
-						const int cb = min(512, max(0, ib >> 9));
-						const unsigned mr = ((((texel >> 8) & 0xF8u) * (unsigned)cr + 128u) >> 8);
-						const unsigned mg = ((((texel >> 3) & 0xFCu) * (unsigned)cg + 128u) >> 8);
-						const unsigned mb = ((((texel << 3) & 0xF8u) * (unsigned)cb + 128u) >> 8);
-						const uint16_t fpx = SW_RGB565(min(255u, mr), min(255u, mg), min(255u, mb));
-						sw_stats.bench_mag_flex += (fpx == 0xF81Fu);
-						fb_row[idx] = fpx;
-						zb_row[idx] = ikey;
-						++sw_stats.depth_writes;
+						const int tx = ClampI(iu >> 16, 0, image->width - 1);
+						const int ty = ClampI(it >> 16, 0, image->height - 1);
+						const byte s8 = image->src8[ty * image->width + tx];
+						if (s8 != 255)
+						{
+							// cr = ir>>9 spans [0..512] (256==1.0); level = cr in units of
+							// (512/levels): index = (cr * levels) / 512 = (ir * levels) >> 18.
+							const int level = min(sw_clut_levels - 1, max(0, (ir * sw_clut_levels) >> 18));
+							const uint16_t fpx = sw_shade_clut[sw_clut_cur][level][s8];
+							if (sw_dbg_tag_x == x && sw_dbg_tag_y == y)
+								sw_ri.Con_Printf(PRINT_ALL,
+									"tagxy clut bf=%u ir=%d lvl=%d s8=%d fpx=%04x pal=%04x blkey=%u\n",
+									sw_stats.bench_frames, ir, level, s8, fpx, image->pal565[s8], sw_clut_keys ? sw_clut_keys[sw_clut_cur] : 0u);
+							sw_stats.bench_mag_flex += (fpx == 0xF81Fu);
+							fb_row[idx] = fpx;
+							zb_row[idx] = ikey;
+							++sw_stats.depth_writes;
+						}
 					}
+					iu += du; it += dt; ir += dr; ig += dg; ib += db; ikey += (uint32_t)ikey_step;
 				}
-				iu += du; it += dt; ir += dr; ig += dg; ib += db; ikey += (uint32_t)ikey_step;
-			}
+			else
+				for (int i = 0; i < block; ++i, ++x)
+				{
+					++sw_stats.bench_pixels_flex;
+					const size_t idx = (size_t)x;
+					if (ikey >= zb_row[idx])
+					{
+						const int tx = ClampI(iu >> 16, 0, image->width - 1);
+						const int ty = ClampI(it >> 16, 0, image->height - 1);
+						const uint16_t texel = image->pixels[ty * image->width + tx];
+						// texel 0x0000 is the colorkey: identical semantics to the
+						// salpha==0 branch (no paint, no depth write).
+						if (texel != 0)
+						{
+							const int cr = min(512, max(0, ir >> 9)); // fixed [0..512]: 256 == 1.0
+							const int cg = min(512, max(0, ig >> 9));
+							const int cb = min(512, max(0, ib >> 9));
+							const unsigned mr = ((((texel >> 8) & 0xF8u) * (unsigned)cr + 128u) >> 8);
+							const unsigned mg = ((((texel >> 3) & 0xFCu) * (unsigned)cg + 128u) >> 8);
+							const unsigned mb = ((((texel << 3) & 0xF8u) * (unsigned)cb + 128u) >> 8);
+							const uint16_t fpx = SW_RGB565(min(255u, mr), min(255u, mg), min(255u, mb));
+							sw_stats.bench_mag_flex += (fpx == 0xF81Fu);
+							fb_row[idx] = fpx;
+							zb_row[idx] = ikey;
+							++sw_stats.depth_writes;
+						}
+					}
+					iu += du; it += dt; ir += dr; ig += dg; ib += db; ikey += (uint32_t)ikey_step;
+				}
 			uz += guz_x * block;
 			vz += gvz_x * block;
 			rz += gr_x * block;
@@ -3040,6 +3170,8 @@ void SW_RasterFlexEntity(const entity_t *entity, const sw_model_t *model, const 
 			sw_flex_vcolor[vertex][1] = base_light[1] * intensity;
 			sw_flex_vcolor[vertex][2] = base_light[2] * intensity;
 		}
+		if (sw_clut_enabled() && base_skin != NULL && base_skin->src8 != NULL)
+			sw_clut_select(base_light, base_skin);
 	}
 	for (int mesh_index = 0; mesh_index < flex->header.num_mesh_nodes; ++mesh_index)
 	{
@@ -3128,6 +3260,10 @@ void SW_RasterFlexEntity(const entity_t *entity, const sw_model_t *model, const 
 							corners[corner].green_over_z = sw_flex_vcolor[vertex_indices[corner]][1] * w;
 							corners[corner].blue_over_z = sw_flex_vcolor[vertex_indices[corner]][2] * w;
 							corners[corner].alpha_over_z = 1.0f; // unused by the opaque path
+						// E4 (ideas #4): the CLUT gouraud scalar is filled ONLY when the
+						// CLUT branch is live; off-state flex corner cost stays zero.
+						if (sw_clut_frame)
+							corners[corner].intensity_over_z = ((entity->flags & RF_FULLBRIGHT) != 0 ? 1.0f : intensities[vertex_indices[corner]]) * w;
 						}
 						else
 						{
@@ -3735,6 +3871,7 @@ int SW_RenderFrame(const refdef_t *fd)
 		sw_debug_fxload(&fx_fd);
 		fd = &fx_fd;
 	}
+	sw_clut_frame = sw_clut_enabled();
 	// Diagnostic camera tour (H2DOS_SW_TOUR=radius[,zoff]): move the refdef
 	// vieworg on a deterministic circle around the first-rendered position so
 	// parallax, near-plane crossings and PVS transitions actually exercise the
