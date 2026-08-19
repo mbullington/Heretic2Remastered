@@ -36,7 +36,7 @@ loops directly, so T0 measures this one natively.
 Risks: 1KB LUT init cost; make sure LUT symbol is 4-aligned (bank/AGI
 declarations in the manifest entry); watch for dpending rematerialization.
 
-### 3. Flex census remainder (proj fills + rotate_flex_clusters) [measurement-only]
+### ~~3. Flex census remainder~~ DONE (runs #78-79): proj fills 794/@4.7us=3.7ms (fed #7); rotate_flex_clusters = 0 calls (dead axis).
 #3 of the old queue is PARTIALLY ANSWERED by baseline #75 (gradient chains:
 89/79 clk, fp-operand dominated — see #2). Still open: proj-cache corner
 copies + span prologues + pose/proj redundancy splits. ~15 lines of counters:
@@ -44,7 +44,14 @@ flex_proj_lookup fills/frame + fill cost, rotate_flex_clusters calls vs
 unique verts ratio (whole posing prologue capped at 467us/frame — only act
 if a slice proves > ~300us of it).
 
-### 4. Flex intensity-shade CLUT [turbo-class, est -4..8ms; keep possible at 64/128 levels]
+### 4. Flex intensity-shade CLUT — PARKED turbo artifact (run #80)
+FULL implementation in-tree, env-gated OFF (H2DOS_SW_CLUT=levels). Fidelity:
+fixture sweep + production 396-429px >2LSB @128lv (8.6-9.4x budget, deltas
+<=25) = not keep-class. Perf: (light x skin) key churn under animated dlights
+=> rebuild storm (41->164-210ms); 1/2 light quantum insufficient. Premise
+holds for STATIC-light content; revisit as user-arbitrated turbo toggle.
+Off-cost: +0.8ms entities (block-specialized pixel loops; was +3.3ms), then
+absorbed by #7.
 PS1 CLUT trick; fits E55c exactly: per-vertex vcolor = base_light * intensity
 is already hoisted, so lerping (r/z,g/z,b/z) == base_rgb * lerp(I/z) —
 mathematically identical. Replace 3 rgb-over-z chains with ONE
@@ -75,7 +82,7 @@ checks into plain array reads, and produces the exact loop shape PMMX batch
 projection needs later. Sub-ULP position argument (same math, new order);
 expect <1px. Overlaps #7's win: it subsumes the scatter/branch part of #7.
 
-### 7. Entity x View matrix fusion per entity [sub-ULP position, est -1..2.5]
+### ~~7. Entity x View matrix fusion~~ DONE (run #83): 9mul+9add per fill; entities -1.0ms, gates bit-exact green.
 From census #78 (the gated precondition is MET: 794 fills/frame @3.7ms):
 compose View x Entity once per entity (~12 mul + 9 add) instead of
 entity_transform_basis + world_to_view separately per fill (~21 mul + 19 add
@@ -84,7 +91,12 @@ hindsight note, expected <1px flips, NOT the E55/E56 color-chain death.
 Caveat: only if measure shows fills/basis actually dominate the 3.7ms (vs
 the contained divide + screenmap), pick-2 with #6.
 
-### 8. normalize_checked rsqrt variant [sub-ULP; ruler now prices it directly]
+### 8. normalize_checked rsqrt variant — DISCARDED by T0 vote (run #81)
+Q_rsqrt+2NR correct in spirit (70+33 clk -> ~30) but the win site is not a
+manifest loop; T0 voted REGRESS on +2cpi layout churn in the flex pods.
+Ruler discipline says: do not retry until normalize sites are manifest-visible
+or a churn threshold exists. The abstain-churn path (added after) reclassifies
+such votes correctly now.
 normalize_checked pays serialized FSQRT (70 cyc) + FDIV (33 cyc), modeled in
 pm_mca_data.py; it runs ~2x per flex joint per entity (flex_joint_rotation
 dir/up) plus sprite bases. Call sites in-scope, visual-only => Q_rsqrt + 1
