@@ -176,10 +176,13 @@ void SW_PutPixel(const int x, const int y, const float depth, const uint16_t col
 		return;
 
 	const size_t index = (size_t)y * (size_t)sw_width + (size_t)x;
-	// All stored depths are non-negative floats, so their bit patterns order as
-	// unsigned ints exactly like the floats did, with no FPU compare.
+	// All stored depths are 31-bit linear fixed-point inverse-z keys (see
+	// SW_DEPTH_SCALE in ref_soft_local.h); larger = closer, 0 = far/sky.
 	uint32_t depth_key;
-	memcpy(&depth_key, &depth, 4);
+	if (depth > 1e30f)
+		depth_key = 0xFFFFFFFFu;
+	else
+		depth_key = (uint32_t)(depth * SW_DEPTH_SCALE);
 	if (depth_key < sw_depth[index])
 		return;
 

@@ -18,6 +18,11 @@
 #define SW_MAX_MODELS 256
 #define SW_MAX_FACE_VERTS 64
 #define SW_NEAR_CLIP 1.0f
+// 31-bit linear fixed-point inverse-z domain: all depth comparisons and the
+// z-buffer store keys in this domain (key = w * SW_DEPTH_SCALE, w = 1/view_z).
+// Larger = closer; 0 = far/sky. Linear so span-wise integer stepping preserves
+// true depth ordering (float bits are monotonic but not affine).
+#define SW_DEPTH_SCALE (2147480000.0f * SW_NEAR_CLIP)
 #define SW_MAX_FLEX_VERTS 2048
 #define SW_MAX_FLEX_TRIS 2048
 #define SW_MAX_FLEX_FRAMES 2048

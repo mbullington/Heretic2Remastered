@@ -23,6 +23,8 @@ typedef struct h2dos_soft_stats_s {
 	unsigned reference_updates;
 	unsigned sky_pixels;
 	unsigned sky_face_mask;
+	unsigned sky_cache_hits;
+	unsigned sky_cache_misses;
 	unsigned animated_faces;
 	unsigned flowing_faces;
 	unsigned turbulent_faces;

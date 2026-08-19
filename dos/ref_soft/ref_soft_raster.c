@@ -229,45 +229,14 @@ typedef struct sw_face_light_store_s {
 	int light_height;
 	uint32_t *samples;
 	unsigned generation;
+	int num_styles;
+	byte styles[MAXLIGHTMAPS];
+	int style_fixed[MAXLIGHTMAPS][3];
 } sw_face_light_store_t;
 static sw_face_light_store_t *sw_face_light_stores;
 static int sw_face_light_store_count;
 static unsigned sw_face_light_generation;
-static float sw_lightstyle_fingerprint[MAX_LIGHTSTYLES * 3];
-static qboolean sw_lightstyle_fingerprint_valid;
-
-static qboolean sw_lightstyles_changed(void)
-{
-	const lightstyle_t *styles = sw_refdef.lightstyles;
-	if (!sw_lightstyle_fingerprint_valid)
-		return true;
-	for (int i = 0; i < MAX_LIGHTSTYLES; ++i)
-	{
-		if (styles != NULL)
-		{
-			if (sw_lightstyle_fingerprint[i * 3] != styles[i].rgb[0] ||
-				sw_lightstyle_fingerprint[i * 3 + 1] != styles[i].rgb[1] ||
-				sw_lightstyle_fingerprint[i * 3 + 2] != styles[i].rgb[2])
-				return true;
-		}
-		else if (sw_lightstyle_fingerprint[i * 3] != 1.0f || sw_lightstyle_fingerprint[i * 3 + 1] != 1.0f ||
-			sw_lightstyle_fingerprint[i * 3 + 2] != 1.0f)
-			return true;
-	}
-	return false;
-}
-
-static void sw_lightstyles_snapshot(void)
-{
-	const lightstyle_t *styles = sw_refdef.lightstyles;
-	for (int i = 0; i < MAX_LIGHTSTYLES; ++i)
-	{
-		sw_lightstyle_fingerprint[i * 3] = styles != NULL ? styles[i].rgb[0] : 1.0f;
-		sw_lightstyle_fingerprint[i * 3 + 1] = styles != NULL ? styles[i].rgb[1] : 1.0f;
-		sw_lightstyle_fingerprint[i * 3 + 2] = styles != NULL ? styles[i].rgb[2] : 1.0f;
-	}
-	sw_lightstyle_fingerprint_valid = true;
-}
+static const void *sw_face_light_world;
 
 // Pack the dense lw x lh miniature into a (lw+2) x (lh+2) band with
 // edge-extended rows and columns. Spans can then index light cells without
@@ -303,6 +272,26 @@ static inline uint16_t span_modulate3(const uint16_t texel, const unsigned lr, c
 	return (uint16_t)(((r & 0xF8u) << 8) | ((g & 0xFCu) << 3) | (b >> 3));
 }
 
+// Style factors (style * 128, fixed point) plus the style layer indexes a
+// face references. Doubles as the per-face rebuild signature for the
+// cross-frame light store: a face is rebuilt only when its own styles
+// changed, so torch flicker no longer invalidates the whole pool.
+static int face_style_signature(const dface_t *face, int style_fixed[MAXLIGHTMAPS][3],
+	byte styles[MAXLIGHTMAPS])
+{
+	int num_styles = 0;
+	for (int style = 0; style < MAXLIGHTMAPS && face->styles[style] != 255; ++style)
+	{
+		const int style_index = face->styles[style];
+		const lightstyle_t *lightstyle = sw_refdef.lightstyles != NULL ? &sw_refdef.lightstyles[style_index] : NULL;
+		for (int channel = 0; channel < 3; ++channel)
+			style_fixed[num_styles][channel] = (int)((lightstyle != NULL ? lightstyle->rgb[channel] : 1.0f) * 128.0f + 0.5f);
+		styles[num_styles] = face->styles[style];
+		++num_styles;
+	}
+	return num_styles;
+}
+
 static qboolean build_face_light(const sw_bsp_t *bsp, const dface_t *face, const int light_width,
 	const int light_height, uint32_t *target)
 {
@@ -327,16 +316,7 @@ static qboolean build_face_light(const sw_bsp_t *bsp, const dface_t *face, const
 	const size_t layer_size = (size_t)light_width * (size_t)light_height * 3;
 	byte styles[MAXLIGHTMAPS];
 	int style_fixed[MAXLIGHTMAPS][3];
-	int num_styles = 0;
-	for (int style = 0; style < MAXLIGHTMAPS && face->styles[style] != 255; ++style)
-	{
-		const int style_index = face->styles[style];
-		const lightstyle_t *lightstyle = sw_refdef.lightstyles != NULL ? &sw_refdef.lightstyles[style_index] : NULL;
-		for (int channel = 0; channel < 3; ++channel)
-			style_fixed[num_styles][channel] = (int)((lightstyle != NULL ? lightstyle->rgb[channel] : 1.0f) * 128.0f + 0.5f);
-		styles[num_styles] = face->styles[style];
-		++num_styles;
-	}
+	const int num_styles = face_style_signature(face, style_fixed, styles);
 	if (num_styles == 0)
 	{
 		const uint32_t white = (256u << 20) | (256u << 10) | 256u;
@@ -350,7 +330,7 @@ static qboolean build_face_light(const sw_bsp_t *bsp, const dface_t *face, const
 		long acc_r = 0, acc_g = 0, acc_b = 0;
 		for (int style = 0; style < num_styles; ++style)
 		{
-			const size_t offset = (size_t)light_offset + (size_t)styles[style] * layer_size + (size_t)sample * 3;
+			const size_t offset = (size_t)light_offset + (size_t)style * layer_size + (size_t)sample * 3;
 			if (offset + 3 > (size_t)bsp->lighting_length)
 				break;
 			acc_r += bsp->lighting[offset] * (long)style_fixed[style][0];
@@ -380,7 +360,8 @@ static inline uint16_t span_modulate(const uint16_t texel, const uint32_t light_
 
 static void draw_face_spans(const screen_vertex_t *verts, const int n, const sw_image_t *image,
 	const sw_bsp_t *bsp, const dface_t *face, const float texture_min_s, const float texture_min_t,
-	const int light_width, const int light_height, const float alpha, const int face_index)
+	const int light_width, const int light_height, const float alpha, const int face_index,
+	const qboolean alpha_test)
 {
 	if (n < 3 || image == NULL || image->pixels == NULL)
 		return;
@@ -440,8 +421,21 @@ static void draw_face_spans(const screen_vertex_t *verts, const int n, const sw_
 			sw_face_light_store_count = face_index + 1;
 		}
 		sw_face_light_store_t *store = &sw_face_light_stores[face_index];
-		if (store->generation != sw_face_light_generation || store->samples == NULL ||
-			store->light_width != light_width || store->light_height != light_height)
+		byte want_styles[MAXLIGHTMAPS];
+		int want_fixed[MAXLIGHTMAPS][3];
+		const int want_num_styles = face_style_signature(face, want_fixed, want_styles);
+		qboolean stale = store->generation != sw_face_light_generation || store->samples == NULL ||
+			store->light_width != light_width || store->light_height != light_height ||
+			store->num_styles != want_num_styles;
+		if (!stale)
+			for (int s = 0; s < want_num_styles; ++s)
+				if (store->styles[s] != want_styles[s] || store->style_fixed[s][0] != want_fixed[s][0] ||
+					store->style_fixed[s][1] != want_fixed[s][1] || store->style_fixed[s][2] != want_fixed[s][2])
+				{
+					stale = true;
+					break;
+				}
+		if (stale)
 		{
 			uint32_t *grown = realloc(store->samples,
 				sizeof(*store->samples) * (size_t)(light_width + 2) * (size_t)(light_height + 2));
@@ -453,6 +447,9 @@ static void draw_face_spans(const screen_vertex_t *verts, const int n, const sw_
 			if (!build_face_light(bsp, face, light_width, light_height, sw_face_light_dense))
 				return;
 			band_pack_light(sw_face_light_dense, light_width, light_height, store->samples);
+			store->num_styles = want_num_styles;
+			memcpy(store->styles, want_styles, sizeof(store->styles));
+			memcpy(store->style_fixed, want_fixed, sizeof(store->style_fixed));
 			store->generation = sw_face_light_generation;
 		}
 		light_cache = store->samples;
@@ -572,15 +569,13 @@ static void draw_face_spans(const screen_vertex_t *verts, const int n, const sw_
 			else if (ils < 0) ils = 0;
 			if (ilt > light_max_t_fixed) ilt = light_max_t_fixed;
 			else if (ilt < 0) ilt = 0;
-			// All stored depths are non-negative floats (SW_PutPixel/span guards
-			// reject <= 0), so their bit patterns order as uint32 keys exactly like
-			// the floats did. Step an integer key block-wise instead of a per-pixel
-			// FADD + FCOM pair; within-block linearization of the key can flip only
-			// exact z-fighting ties (documented tolerance).
-			uint32_t ikey;
-			uint32_t ikey_end;
-			memcpy(&ikey, &w, 4);
-			memcpy(&ikey_end, &w_end, 4);
+			// All stored depths are 31-bit linear fixed-point inverse-z keys
+			// (see SW_DEPTH_SCALE): positive float bits are monotonic but not
+			// affine, so linearly stepping the bit pattern inverted depth order
+			// against other spans mid-block. Block-exact endpoints, monotone
+			// within a block; ties can flip only on exact key equality.
+			uint32_t ikey = (uint32_t)(w * SW_DEPTH_SCALE);
+			uint32_t ikey_end = (uint32_t)(max(w_end, 0.0f) * SW_DEPTH_SCALE);
 			const int ikey_step = ((int)ikey_end - (int)ikey) / block;
 
 			if (alpha >= 1.0f && twist_pow2 && theight_pow2)
@@ -595,6 +590,11 @@ static void draw_face_spans(const screen_vertex_t *verts, const int n, const sw_
 					if (ikey >= zb_row[idx])
 					{
 						const uint16_t texel = image->pixels[((it >> 16) & mask_h) * image->width + ((iu >> 16) & mask_w)];
+						// Alpha-test faces (SURF_ALPHA_TEXTURE): texel 0x0000 is the
+						// colorkey. Writing it produced a black occluder that also
+						// stomped the z-buffer behind genuine geometry.
+						if (!alpha_test || texel != 0)
+						{
 						const int lidx = (int)((unsigned)ilt >> 20) * light_stride + (int)((unsigned)ils >> 20);
 						if (lidx != light_prev_idx)
 						{
@@ -604,9 +604,10 @@ static void draw_face_spans(const screen_vertex_t *verts, const int n, const sw_
 							light_g = (light_prev >> 10) & 1023u;
 							light_b = light_prev & 1023u;
 						}
-						fb_row[idx] = span_modulate3(texel, light_r, light_g, light_b);
-						zb_row[idx] = ikey;
-						++depth_writes;
+							fb_row[idx] = span_modulate3(texel, light_r, light_g, light_b);
+							zb_row[idx] = ikey;
+							++depth_writes;
+						}
 					}
 					iu += iu_step; it += it_step; ils += ils_step; ilt += ilt_step; ikey += (uint32_t)ikey_step;
 				}
@@ -766,6 +767,19 @@ static float quake_surface_amount(void)
 	return Clamp(quake_amount->value, -1000.0f, 1000.0f) * 0.05f;
 }
 
+// Translucent world faces (world and inline models) deferred from draw_face
+// until after sky/entities; bounds-checked, overflow draws immediately.
+typedef struct sw_deferred_face_s {
+	const sw_bsp_t *bsp;
+	int face_index;
+	vec3_t origin;
+	int entity_frame;
+} sw_deferred_face_t;
+#define SW_MAX_DEFERRED_FACES 1024
+static sw_deferred_face_t sw_deferred_faces[SW_MAX_DEFERRED_FACES];
+static int sw_deferred_face_count;
+static qboolean sw_deferral_bypass;
+
 static void draw_face(const sw_bsp_t *bsp, const int face_index, const vec3_t origin, const int entity_frame)
 {
 	if (face_index < 0 || face_index >= bsp->num_faces)
@@ -782,6 +796,19 @@ static void draw_face(const sw_bsp_t *bsp, const int face_index, const vec3_t or
 	const int flags = LittleLong(texture->flags);
 	if (flags & (SURF_NODRAW | SURF_SKY))
 		return;
+	// Translucent world faces blend but write no depth, so they must render
+	// LAST (after sky and entities); in the BSP walk they would paint over
+	// whatever shows through them. Defer them to the post-entity flush.
+	if (!sw_deferral_bypass && (flags & (SURF_TRANS33 | SURF_TRANS66)) &&
+		sw_deferred_face_count < SW_MAX_DEFERRED_FACES)
+	{
+		sw_deferred_face_t *entry = &sw_deferred_faces[sw_deferred_face_count++];
+		entry->bsp = bsp;
+		entry->face_index = face_index;
+		VectorCopy(origin, entry->origin);
+		entry->entity_frame = entity_frame;
+		return;
+	}
 	if ((flags & (SURF_TRANS33 | SURF_TRANS66 | SURF_ALPHA_TEXTURE | SURF_WARP | SURF_UNDULATE)) == 0)
 	{
 		// Opaque, non-warped faces are single-sided (GL culls with gl_cull=1):
@@ -825,27 +852,32 @@ static void draw_face(const sw_bsp_t *bsp, const int face_index, const vec3_t or
 		const int vertex_index = little_ushort(bsp->edges[edge_index].v[surface_edge >= 0 ? 0 : 1]);
 		if (vertex_index < 0 || vertex_index >= bsp->num_vertices)
 			return;
+		vec3_t local;
 		vec3_t point;
 		for (int axis = 0; axis < 3; ++axis)
 		{
-			point[axis] = LittleFloat(bsp->vertices[vertex_index].point[axis]) + origin[axis];
+			local[axis] = LittleFloat(bsp->vertices[vertex_index].point[axis]);
+			point[axis] = local[axis] + origin[axis];
 			if (!isfinite(point[axis]))
 				return;
 		}
-		const float base_s = point[0] * LittleFloat(texture->vecs[0][0]) +
-			point[1] * LittleFloat(texture->vecs[0][1]) + point[2] * LittleFloat(texture->vecs[0][2]) +
+		// Texture and lightmap coordinates belong to the model's local BSP
+		// geometry; translating a brush model must move its position only, not
+		// swim its texture or shift its quantized lightmap minima.
+		const float base_s = local[0] * LittleFloat(texture->vecs[0][0]) +
+			local[1] * LittleFloat(texture->vecs[0][1]) + local[2] * LittleFloat(texture->vecs[0][2]) +
 			LittleFloat(texture->vecs[0][3]);
-		const float base_t = point[0] * LittleFloat(texture->vecs[1][0]) +
-			point[1] * LittleFloat(texture->vecs[1][1]) + point[2] * LittleFloat(texture->vecs[1][2]) +
+		const float base_t = local[0] * LittleFloat(texture->vecs[1][0]) +
+			local[1] * LittleFloat(texture->vecs[1][1]) + local[2] * LittleFloat(texture->vecs[1][2]) +
 			LittleFloat(texture->vecs[1][3]);
 		if (!isfinite(base_s) || !isfinite(base_t))
 			return;
 		if (flags & SURF_UNDULATE)
-			point[2] += turbsin[TURBSIN_V0(point[0], point[1], sw_refdef.time)] * 0.25f +
-				turbsin[TURBSIN_V1(point[0], point[1], sw_refdef.time)] * 0.125f;
+			point[2] += turbsin[TURBSIN_V0(local[0], local[1], sw_refdef.time)] * 0.25f +
+				turbsin[TURBSIN_V1(local[0], local[1], sw_refdef.time)] * 0.125f;
 		if (quake_amount != 0.0f)
-			point[2] += turbsin[TURBSIN_V0(point[0], point[1], sw_refdef.time)] * quake_amount * 0.5f +
-				turbsin[TURBSIN_V1(point[0], point[1], sw_refdef.time)] * quake_amount * 0.25f;
+			point[2] += turbsin[TURBSIN_V0(local[0], local[1], sw_refdef.time)] * quake_amount * 0.5f +
+				turbsin[TURBSIN_V1(local[0], local[1], sw_refdef.time)] * quake_amount * 0.25f;
 		float s = base_s + flowing_scroll;
 		float t = base_t;
 		if (flags & SURF_WARP)
@@ -892,7 +924,8 @@ static void draw_face(const sw_bsp_t *bsp, const int face_index, const vec3_t or
 	if (sw_spans != NULL && sw_spans->value != 0.0f &&
 		light_width <= SW_LIGHT_CACHE_MAX && light_height <= SW_LIGHT_CACHE_MAX)
 		draw_face_spans(projected, clipped_count, image, bsp, lighting_face, minimum_s,
-			minimum_t, light_width, light_height, alpha, face_index);
+			minimum_t, light_width, light_height, alpha, face_index,
+			(flags & SURF_ALPHA_TEXTURE) != 0);
 	else
 		for (int i = 1; i + 1 < clipped_count; ++i)
 			raster_triangle(projected[0], projected[i], projected[i + 1], image,
@@ -1089,6 +1122,7 @@ void SW_RasterSky(const refdef_t *fd)
 	const size_t drawn_pixels = (size_t)max(0, maximum_x - minimum_x) * (size_t)max(0, maximum_y - minimum_y);
 	if (!rotating && sky_cache != NULL && sky_cache_matches(fd, rotation_angle))
 	{
+		++sw_stats.sky_cache_hits;
 		for (int y = minimum_y; y < maximum_y; ++y)
 		{
 			const uint32_t *zb_row = sw_depth + (size_t)y * sw_width;
@@ -1102,6 +1136,7 @@ void SW_RasterSky(const refdef_t *fd)
 		sw_stats.sky_face_mask |= sky_cache_face_mask;
 		return;
 	}
+	++sw_stats.sky_cache_misses;
 	// Rotating the per-pixel direction by the swirl rotation is linear, so the
 	// whole transform folds into the basis vectors once per frame. Direction is
 	// then stepped incrementally across each scanline (3 adds per pixel) instead
@@ -1226,13 +1261,27 @@ void SW_RasterSky(const refdef_t *fd)
 	}
 }
 
+void SW_RasterWorldTrans(void)
+{
+	sw_deferral_bypass = true;
+	for (int i = 0; i < sw_deferred_face_count; ++i)
+	{
+		const sw_deferred_face_t *entry = &sw_deferred_faces[i];
+		draw_face(entry->bsp, entry->face_index, entry->origin, entry->entity_frame);
+	}
+	sw_deferred_face_count = 0;
+	sw_deferral_bypass = false;
+}
+
 void SW_RasterWorld(const refdef_t *fd)
 {
 	if (sw_world_model == NULL || sw_world_model->bsp == NULL || (fd->rdflags & RDF_NOWORLDMODEL))
 		return;
-	if (sw_lightstyles_changed())
+	// Per-face stores are keyed by face index into this BSP; invalidate all of
+	// them when the world changes so a new map cannot reuse stale light.
+	if (sw_face_light_world != sw_world_model->bsp)
 	{
-		sw_lightstyles_snapshot();
+		sw_face_light_world = sw_world_model->bsp;
 		++sw_face_light_generation;
 		if (sw_face_light_generation == 0)
 		{
@@ -1937,7 +1986,7 @@ static float flex_edge(const flex_screen_vertex_t a, const flex_screen_vertex_t 
 	return (x - a.x) * (b.y - a.y) - (y - a.y) * (b.x - a.x);
 }
 
-// Span-engine triangle raster for flex models and sprites: 16-pixel subdivided
+// Span-engine triangle raster for flex models and sprites: 32-pixel subdivided
 // affine stepping of the five perspective attributes (s/t/r/g/b/a over z) plus
 // affine inverse-z. Gouraud color and alpha are interpolated with the same
 // fixed-point granularity as the world lightmap path (+/-1 LSB tolerance).
@@ -2012,14 +2061,14 @@ static void span_raster_flex_triangle(const flex_screen_vertex_t a, const flex_s
 		if (left_prev != old_left_prev || y == scan_first)
 		{
 			left_slope = (lp1->y > lp0->y) ? (lp1->x - lp0->x) / (lp1->y - lp0->y) : 0.0f;
-			left_x = lp0->x + (lp1->y > lp0->y ? ((y + 0.5f) - lp0->y) * left_slope : lp0->x);
+			left_x = lp0->x + (lp1->y > lp0->y ? ((y + 0.5f) - lp0->y) * left_slope : 0.0f);
 		}
 		else
 			left_x += left_slope;
 		if (right_prev != old_right_prev || y == scan_first)
 		{
 			right_slope = (rp1->y > rp0->y) ? (rp1->x - rp0->x) / (rp1->y - rp0->y) : 0.0f;
-			right_x = rp0->x + (rp1->y > rp0->y ? ((y + 0.5f) - rp0->y) * right_slope : rp0->x);
+			right_x = rp0->x + (rp1->y > rp0->y ? ((y + 0.5f) - rp0->y) * right_slope : 0.0f);
 		}
 		else
 			right_x += right_slope;
@@ -2049,10 +2098,8 @@ static void span_raster_flex_triangle(const flex_screen_vertex_t a, const flex_s
 			if (w <= 0.0f)
 				break;
 			const float w_end = w + gw_x * block;
-			// Flex triangles are small: a single divide per span block captures the
-			// z-curve at block start and linearizes within. Span blocks are <=16 px.
 			const float iz0 = 1.0f / w;
-			const float iz1 = iz0;
+			const float iz1 = 1.0f / max(w_end, 1e-20f);
 			const float u0 = uz * iz0, u1 = (uz + guz_x * block) * iz1;
 			const float v0b = vz * iz0, v1b = (vz + gvz_x * block) * iz1;
 			const float r0 = rz * iz0, r1 = (rz + gr_x * block) * iz1;
@@ -2071,10 +2118,8 @@ static void span_raster_flex_triangle(const flex_screen_vertex_t a, const flex_s
 			const int dg = (int)((g1 - g0) * 131072.0f * SW_INV_WIDTH(block));
 			const int db = (int)((b1c - b0c) * 131072.0f * SW_INV_WIDTH(block));
 			const int da = (int)((a1c - a0c) * 131072.0f * SW_INV_WIDTH(block));
-			uint32_t ikey;
-			uint32_t ikey_end;
-			memcpy(&ikey, &w, 4);
-			memcpy(&ikey_end, &w_end, 4);
+			uint32_t ikey = (uint32_t)(w * SW_DEPTH_SCALE);
+			uint32_t ikey_end = (uint32_t)(max(w_end, 0.0f) * SW_DEPTH_SCALE);
 			const int ikey_step = ((int)ikey_end - (int)ikey) / block;
 			for (int i = 0; i < block; ++i, ++x)
 			{
@@ -2514,15 +2559,6 @@ void SW_RasterFlexEntity(const entity_t *entity, const sw_model_t *model, const 
 					++sw_stats.bench_flex_tris_bbox;
 					continue;
 				}
-				// Screen-space winding cull: degenerate or back-facing triangles
-				// cannot contribute pixels on single-sided content; the gate
-				// verdicts whether the content set honors that.
-				{
-					const float area2 = (projected[1].x - projected[0].x) * (projected[2].y - projected[0].y) -
-						(projected[2].x - projected[0].x) * (projected[1].y - projected[0].y);
-					if (area2 <= 0.0f)
-						continue;
-				}
 				for (int corner = 0; corner < 3; ++corner)
 				{
 					const int command = command_start + command_vertices[corner] * 3;
@@ -2556,7 +2592,7 @@ void SW_RasterFlexEntity(const entity_t *entity, const sw_model_t *model, const 
 						corners[corner].alpha_over_z = colors[corner][3] * w;
 					}
 					dispatch_flex_screen_triangle(corners[0], corners[1], corners[2], skin,
-						opaque_depth && !skin->has_alpha, additive);
+						opaque_depth, additive);
 					++sw_stats.bench_flex_tris_fast;
 				}
 				else
@@ -2567,7 +2603,7 @@ void SW_RasterFlexEntity(const entity_t *entity, const sw_model_t *model, const 
 						const int vertex = vertex_indices[corner];
 						entity_transform_basis(entity->origin, cr, sr, cp, sp, cy, sy, lerped[vertex], points[corner]);
 					}
-					draw_flex_triangle(points, uv, colors, skin, opaque_depth && !skin->has_alpha, additive);
+					draw_flex_triangle(points, uv, colors, skin, opaque_depth, additive);
 				}
 				sw_bench_tri_category = 0;
 			}
@@ -2920,6 +2956,14 @@ int SW_RenderFrame(const refdef_t *fd)
 	{
 		const uclock_t next = uclock();
 		sw_stats.bench_us_entities += (unsigned long long)(next - mark);
+		mark = next;
+	}
+	// Translucent faces queued during the world+brush passes, drawn after
+	// sky/entities so their blend composites over what shows through them.
+	SW_RasterWorldTrans();
+	{
+		const uclock_t next = uclock();
+		sw_stats.bench_us_world += (unsigned long long)(next - mark);
 		mark = next;
 	}
 	SW_RasterParticles(fd);

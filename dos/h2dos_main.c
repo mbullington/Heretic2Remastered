@@ -850,6 +850,8 @@ static void log_bench_summary(void)
 		stats->bench_flex_tris_bbox, stats->bench_flex_tris_behind,
 		stats->bench_us_ent_brush / frames, stats->bench_brush_faces, stats->bench_brush_culled,
 		stats->bench_flex_spans, stats->bench_flex_blocks);
+	log_append("bench-sky-cache-hits=%u\nbench-sky-cache-misses=%u\n",
+		stats->sky_cache_hits, stats->sky_cache_misses);
 }
 
 static void begin_audio_proof(const qboolean realdata)

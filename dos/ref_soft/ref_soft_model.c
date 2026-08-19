@@ -712,7 +712,22 @@ struct model_s *SW_RegisterModel(const char *name)
 		return load_book(name);
 	if (extension != NULL && Q_stricmp(extension, ".fm") == 0)
 	{
-		sw_flex_t *flex = SW_LoadFlexFile(name, true);
+		// Remaster-layout requests that exist in the original H2 paks only under
+		// the retail layout. Paks are read-only, so aliasing is the mechanism.
+		static const struct {
+			const char *requested;
+			const char *alias;
+		} k_model_aliases[] = {
+			{ "players/male/tris.fm", "models/player/c_watcher/tris.fm" },
+		};
+		const char *load_name = name;
+		for (size_t i = 0; i < sizeof(k_model_aliases) / sizeof(k_model_aliases[0]); ++i)
+			if (Q_stricmp(name, k_model_aliases[i].requested) == 0)
+			{
+				load_name = k_model_aliases[i].alias;
+				break;
+			}
+		sw_flex_t *flex = SW_LoadFlexFile(load_name, true);
 		if (flex == NULL)
 			return NULL;
 		sw_model_t *model = new_model(name);
