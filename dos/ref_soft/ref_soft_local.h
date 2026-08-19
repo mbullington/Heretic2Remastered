@@ -132,7 +132,17 @@ typedef struct sw_flex_triangle_s {
 typedef struct sw_flex_mesh_s {
 	int start_glcmds;
 	int num_glcmds;
+	int start_tri;
+	int num_tris;
 } sw_flex_mesh_t;
+
+// Load-expanded per-triangle records: fan/strip glcmd blocks flattened to flat
+// (vi, s, t) triplets once per model so the runtime tri loop reads contiguous
+// records instead of re-walking command selection per triangle.
+typedef struct sw_flex_rtri_s {
+	int vi[3];
+	float st[3][2];
+} sw_flex_rtri_t;
 
 typedef struct sw_flex_s {
 	fmheader_t header;
@@ -144,6 +154,7 @@ typedef struct sw_flex_s {
 	sw_flex_frame_t *frames;
 	sw_flex_vertex_t *frame_vertices;
 	int *glcmds;
+	sw_flex_rtri_t *rtri;
 	sw_flex_mesh_t *meshes;
 	int skeletal_type;
 	int num_clusters;

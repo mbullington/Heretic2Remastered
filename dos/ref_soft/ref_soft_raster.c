@@ -3031,50 +3031,24 @@ void SW_RasterFlexEntity(const entity_t *entity, const sw_model_t *model, const 
 			use_color ? node->color.a / 255.0f : entity_alpha
 		};
 		const sw_flex_mesh_t *mesh = &flex->meshes[mesh_index];
-		int position = mesh->start_glcmds;
-		const int end = position + mesh->num_glcmds;
-		while (position < end)
+		const int tri_end = mesh->start_tri + mesh->num_tris;
+		for (int ti = mesh->start_tri; ti < tri_end; ++ti)
 		{
-			const int signed_count = flex->glcmds[position++];
-			if (signed_count == 0) break;
-			const int count = signed_count < 0 ? -signed_count : signed_count;
-			const int command_start = position;
-			for (int triangle = 0; triangle < count - 2; ++triangle)
+			const sw_flex_rtri_t *rt = &flex->rtri[ti];
+			vec3_t points[3];
+			float uv[3][2];
+			float colors[3][4];
+			flex_proj_cache_t projected[3];
+			int vertex_indices[3];
+			qboolean cache_ok = true;
+			for (int corner = 0; corner < 3; ++corner)
 			{
-				int command_vertices[3];
-				if (signed_count < 0)
-				{
-					command_vertices[0] = 0;
-					command_vertices[1] = triangle + 1;
-					command_vertices[2] = triangle + 2;
-				}
-				else if (triangle & 1)
-				{
-					command_vertices[0] = triangle + 1;
-					command_vertices[1] = triangle;
-					command_vertices[2] = triangle + 2;
-				}
-				else
-				{
-					command_vertices[0] = triangle;
-					command_vertices[1] = triangle + 1;
-					command_vertices[2] = triangle + 2;
-				}
-				vec3_t points[3];
-				float uv[3][2];
-				float colors[3][4];
-				flex_proj_cache_t projected[3];
-				int vertex_indices[3];
-				qboolean cache_ok = true;
-				for (int corner = 0; corner < 3; ++corner)
-				{
-					const int command = command_start + command_vertices[corner] * 3;
-					const int vertex = flex->glcmds[command + 2];
-					vertex_indices[corner] = vertex;
-					if (vertex < 0 || vertex >= SW_MAX_FLEX_VERTS ||
-						!flex_proj_lookup(entity, lerped, cr, sr, cp, sp, cy, sy, vertex, &projected[corner]))
-						cache_ok = false;
-				}
+				const int vertex = rt->vi[corner];
+				vertex_indices[corner] = vertex;
+				if (vertex < 0 || vertex >= SW_MAX_FLEX_VERTS ||
+					!flex_proj_lookup(entity, lerped, cr, sr, cp, sp, cy, sy, vertex, &projected[corner]))
+					cache_ok = false;
+			}
 				// Early trivial-reject, identical to the checks inside
 				// span_raster_flex_triangle/draw_flex_triangle: these triangles produce
 				// no pixels, so skip colors/corner construction entirely.
@@ -3090,14 +3064,10 @@ void SW_RasterFlexEntity(const entity_t *entity, const sw_model_t *model, const 
 				}
 				const qboolean opaque_tri = flex_opaque_ok && !use_color && cache_ok &&
 					skin != NULL && skin->pixels != NULL;
-				for (int corner = 0; corner < 3; ++corner)
-				{
-					const int command = command_start + command_vertices[corner] * 3;
-					float s, t;
-					memcpy(&s, &flex->glcmds[command], 4);
-					memcpy(&t, &flex->glcmds[command + 1], 4);
-					uv[corner][0] = s;
-					uv[corner][1] = t;
+			for (int corner = 0; corner < 3; ++corner)
+			{
+				uv[corner][0] = rt->st[corner][0];
+				uv[corner][1] = rt->st[corner][1];
 					if (!opaque_tri)
 					{
 						const float intensity = use_color || (entity->flags & RF_FULLBRIGHT) ? 1.0f : intensities[vertex_indices[corner]];
@@ -3155,9 +3125,7 @@ void SW_RasterFlexEntity(const entity_t *entity, const sw_model_t *model, const 
 				}
 				sw_bench_tri_category = 0;
 			}
-			position += count * 3;
 		}
-	}
 	++sw_stats.flex_entities;
 	sw_stats.bench_us_flex_tris += (unsigned long long)(uclock() - tris_start);
 	if (shadow_pass) ++sw_stats.flex_shadow_entities;

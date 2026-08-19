@@ -468,12 +468,88 @@ static qboolean glcmds_valid(const sw_flex_t *flex)
 	return true;
 }
 
+static qboolean expand_flex_triangles(sw_flex_t *flex)
+{
+	int total_tris = 0;
+	for (int m = 0; m < flex->header.num_mesh_nodes; ++m)
+	{
+		const sw_flex_mesh_t *mesh = &flex->meshes[m];
+		int position = mesh->start_glcmds;
+		const int end = position + mesh->num_glcmds;
+		while (position < end)
+		{
+			const int signed_count = flex->glcmds[position++];
+			if (signed_count == 0)
+				break;
+			const int count = signed_count < 0 ? -signed_count : signed_count;
+			position += count * 3;
+			total_tris += count - 2;
+		}
+	}
+	if (total_tris == 0)
+		return true;
+	sw_flex_rtri_t *rtri = malloc((size_t)total_tris * sizeof(*rtri));
+	if (rtri == NULL)
+		return false;
+	int out = 0;
+	for (int m = 0; m < flex->header.num_mesh_nodes; ++m)
+	{
+		sw_flex_mesh_t *mesh = &flex->meshes[m];
+		mesh->start_tri = out;
+		int position = mesh->start_glcmds;
+		const int end = position + mesh->num_glcmds;
+		while (position < end)
+		{
+			const int signed_count = flex->glcmds[position++];
+			if (signed_count == 0)
+				break;
+			const int count = signed_count < 0 ? -signed_count : signed_count;
+			const int command_start = position;
+			for (int triangle = 0; triangle < count - 2; ++triangle)
+			{
+				int command_vertices[3];
+				if (signed_count < 0)
+				{
+					command_vertices[0] = 0;
+					command_vertices[1] = triangle + 1;
+					command_vertices[2] = triangle + 2;
+				}
+				else if (triangle & 1)
+				{
+					command_vertices[0] = triangle + 1;
+					command_vertices[1] = triangle;
+					command_vertices[2] = triangle + 2;
+				}
+				else
+				{
+					command_vertices[0] = triangle;
+					command_vertices[1] = triangle + 1;
+					command_vertices[2] = triangle + 2;
+				}
+				sw_flex_rtri_t *rt = &rtri[out++];
+				for (int corner = 0; corner < 3; ++corner)
+				{
+					const int command = command_start + command_vertices[corner] * 3;
+					memcpy(&rt->st[corner][0], &flex->glcmds[command], 4);
+					memcpy(&rt->st[corner][1], &flex->glcmds[command + 1], 4);
+					rt->vi[corner] = flex->glcmds[command + 2];
+				}
+			}
+			position += count * 3;
+		}
+		mesh->num_tris = out - mesh->start_tri;
+	}
+	flex->rtri = rtri;
+	return true;
+}
+
 void SW_FreeFlex(sw_flex_t *flex)
 {
 	if (flex == NULL)
 		return;
 	for (int cluster = 0; cluster < SW_MAX_FLEX_JOINTS; ++cluster)
 		free(flex->cluster_vertices[cluster]);
+	free(flex->rtri);
 	free(flex->references);
 	free(flex->skeleton_placements);
 	free(flex->meshes);
@@ -512,7 +588,7 @@ static sw_flex_t *parse_flex(const char *name, const byte *file, const int lengt
 		!load_meshes(flex, &blocks[FLEX_BLOCK_MESH]) ||
 		!load_skeleton(flex, &blocks[FLEX_BLOCK_SKELETON]) ||
 		!load_references(flex, &blocks[FLEX_BLOCK_REFERENCES]) ||
-		!glcmds_valid(flex))
+		!glcmds_valid(flex) || !expand_flex_triangles(flex))
 	{
 		SW_FreeFlex(flex);
 		goto rejected;
