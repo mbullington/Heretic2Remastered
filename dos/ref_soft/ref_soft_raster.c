@@ -3004,6 +3004,20 @@ static void dispatch_flex_screen_triangle(const flex_screen_vertex_t a, const fl
 		raster_flex_triangle(a, b, c, image, depth_write, additive);
 }
 
+static const char *book_dbg_pat;
+static qboolean book_dbg_ready;
+static qboolean book_dbg_on(void)
+{
+	if (!book_dbg_ready)
+	{
+		book_dbg_ready = true;
+		const char *s = getenv("H2DOS_DBG_MODELSKIN");
+		if (s != NULL && *s != 0)
+			book_dbg_pat = s;
+	}
+	return book_dbg_pat != NULL;
+}
+
 void SW_RasterFlexEntity(const entity_t *entity, const sw_model_t *model, const qboolean shadow_pass)
 {
 	static vec3_t lerped[SW_MAX_FLEX_VERTS];
@@ -3214,6 +3228,15 @@ void SW_RasterFlexEntity(const entity_t *entity, const sw_model_t *model, const 
 	for (int mesh_index = 0; mesh_index < flex->header.num_mesh_nodes; ++mesh_index)
 	{
 		const fmnodeinfo_t *node = entity->fmnodeinfo != NULL ? &entity->fmnodeinfo[mesh_index] : NULL;
+		// TEMP DIAG (missing-stand investigation): env-gated, prints draw/skip
+		// per mesh node for models whose skin name matches H2DOS_DBG_MODELSKIN.
+		if (book_dbg_on() && strstr(base_skin != NULL && base_skin->name != NULL ? base_skin->name : "", book_dbg_pat) != NULL)
+			sw_ri.Con_Printf(PRINT_ALL,
+				"modeldbg node=%d/%d nodeinfo=%s flags=%d skin=%d base=%s usec=%d\n",
+				mesh_index, flex->header.num_mesh_nodes, node != NULL ? "set" : "NULL",
+				node != NULL ? node->flags : -1, node != NULL ? node->skin : -1,
+				(base_skin != NULL && base_skin->name != NULL) ? base_skin->name : "null",
+				node != NULL ? (int)(node->flags & FMNI_USE_COLOR) : 0);
 		if (node != NULL && (node->flags & FMNI_NO_DRAW))
 			continue;
 		sw_image_t *skin = base_skin;
