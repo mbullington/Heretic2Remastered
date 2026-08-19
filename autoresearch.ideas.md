@@ -84,7 +84,7 @@ system, which the static tool provably cannot see. Census-before-kill
 discipline stands: analyzer scores cycles/iter; only counter-pinned trip
 counts aim it at loops that dominate.
 
-## Harness: staged rollout pipeline T0-T3 [with pm-mca promoted; replaces flat ~90s 3x-run shape for asm lane]
+## Harness: staged rollout pipeline T0-T3 [BUILT 2026-08-19: SEG-7 live, baseline #75 pmca_est_us=625]
 
 Shortest truthful path from candidate to verdict; cheap deterministic filters
 kill early, expensive stages run rarely.
@@ -111,9 +111,16 @@ kill early, expensive stages run rarely.
   making the combat scene SCORED = material workload change = new segment
   per contract.
 
-Build task (gates T3 + unblocks workload-gated queue below): deterministic
-combat-scene capture. Tutorial scene leaves lights/blend/sprites quiescent
-(3us/3us/0.014ms) — asm work on those lanes is blind until this exists.
+Build task DONE 2026-08-19 (combat scene IS the SEG-7 production bench):
+tutorial2 + planted gorgon+rat_giant (repositioned dos-side; engine spawn
+cmd misplaces) + angermonsters + sweep + renderer-boundary fxload (64 typed
+particles + 2 dlights + blend pulse/frame). Pools: particles 34ms / lights
+14ms / blend 70ms / entities 41ms; counters + CLIENT.PPM bit-identical
+across reruns. KNOWN GAP: angered natives never damage the player (probe:
+only 1 SVF_MONSTER at 0,0,0; pathing to stationary player broken; damage
+blend comes from fxload, not hits). FM loader rejects several original
+monster models (imp etc.) — realdata model-coverage gap worth its own item.
+T3 slot now = OLD static tutorial2 scene (scripts/run-dos-benchmark.py).
 
 ## Queued (ranked by expected total_us impact)
 
@@ -245,10 +252,12 @@ alloc. Do not reopen the per-px modulate axis here.
   dynamic quality scaling is gate-red by construction. Revisit only as a
   user-arbitrated FEATURE, not a perf experiment.
 
-## Workload-gated (pools measured quiescent: lights 3us, blend 3us, sprites 0.014ms)
-Needs a combat-scene workload before any of: light-disc stamps, particle
-stamps, E65/E66 re-probe, sprite-atlas RLE spans (PS1 transparent-pixel
-surgery).
+## Workload-gated — UNBLOCKED 2026-08-19 by the combat bench
+lights 3us->13.7ms, blend 3us->70.3ms, sprites/particles 0->34.6ms in the new
+scene. Candidates: light-disc stamps, particle stamps, E65/E66 re-probe,
+sprite-atlas RLE spans (PS1 transparent-pixel surgery). NOTE: blend_us=70ms
+is a continuous-damage worst case; treat blend-path optimizations as
+combat-conditioning tests, not average-play gains.
 Unreal-98 cross-check (2026-08-18): its celebrated CPU lanes (colored dlights,
 occlusion culling) are exactly these workload-gated lanes — no new items.
 Fog: playerstate.fog_density arrives from src/, DOS ref_soft never consumes
