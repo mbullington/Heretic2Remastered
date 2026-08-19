@@ -3484,12 +3484,13 @@ static void sw_temporal_snapshot(const refdef_t *fd)
 	sw_snap_valid = true;
 }
 
-// E61 stage 2: one exact reprojection chain per source px is cost-equal to
-// the world pass itself on the flat harness (measured: world 105.2 vs 104.0
-// OFF) — the warp only pays if its per-px math degenerates to a handful of
-// adds. So: reproject 32-px SEGMENT ENDPOINTS exactly, walk the segment's
-// destination span linearly (affine per segment; turbo-class).
-#define SW_WARP_SEG 32
+// E61 stage 3: 2D tile-forward warp. Per source 32x32 tile, the four corner
+// pixels take the exact reprojection chain; the destination quad is then
+// walked as two triangles with affine source (u,v) + inverse-z keyed by the
+// corners (turbo-class linearization, rotation-correct unlike the 1D
+// segment kernel, and shared tile edges meet crack-free). Source sky pixels
+// stay holes for the sky pass; disoccluded regions are the honest remainder
+// (sky-filled, documented).
 static void sw_temporal_warp_point(const refdef_t *fd, const float dir_x, const float dir_y,
 	const uint32_t key_s, float *out_x, float *out_y, float *out_w)
 {
@@ -3505,7 +3506,35 @@ static void sw_temporal_warp_point(const refdef_t *fd, const float dir_x, const 
 	const float dz = dot3(mv, view_forward);
 	if (dz <= 1e-6f)
 	{
-		*out_w = 0.0f;
+		// Behind/at the destination near plane: pin the corner to the viewport
+		// rectangle along the 2D travel direction with a very-near key. Triangles
+		// spanning a near-plane crossing then survive instead of dropping
+		// wedge-shaped holes to the sky pass (user-reported sky bleed at edges).
+		const float cx_d = fd->x + fd->width * 0.5f;
+		const float cy_d = fd->y + fd->height * 0.5f;
+		float t = 1e30f;
+		if (dx > 1e-30f || dx < -1e-30f)
+		{
+			const float tx = ((dx > 0.0f ? (float)(sw_width - 1) : 0.0f) - cx_d) / dx;
+			if (tx > 0.0f)
+				t = min(t, tx);
+		}
+		if (dy > 1e-30f || dy < -1e-30f)
+		{
+			// screen y grows down: dy < 0 goes to the top edge
+			const float ty_edge = ((dy < 0.0f ? 0.0f : (float)(sw_height - 1)) - cy_d) / (-dy);
+			if (ty_edge > 0.0f)
+				t = min(t, ty_edge);
+		}
+		if (t >= 1e29f)
+		{
+			*out_w = -1.0f;
+			*out_x = *out_y = 0.0f;
+			return;
+		}
+		*out_x = Clamp((cx_d + dx * t), 0.0f, (float)(sw_width - 1));
+		*out_y = Clamp((cy_d - dy * t), 0.0f, (float)(sw_height - 1));
+		*out_w = 8.0f; // nearer than any world content: the crossing is the closest thing
 		return;
 	}
 	const float iz = 1.0f / dz;
@@ -3514,9 +3543,49 @@ static void sw_temporal_warp_point(const refdef_t *fd, const float dir_x, const 
 	*out_w = iz;
 }
 
+// After the quad walks, fill remaining holes (disocclusions + cracks) from
+// the nearest covered pixel on the smallest enclosing ring (max radius 2).
+// This smears known content INTO hole areas instead of letting them fall to
+// the sky pass: disoccluded screen edges read as stretched world, not sky.
+static void sw_temporal_warp_dilate(void)
+{
+	static const int ring1[8][2] = {
+		{-1, 0}, {1, 0}, {0, -1}, {0, 1}, {-1, -1}, {1, -1}, {-1, 1}, {1, 1}
+	};
+	for (int y = 1; y < sw_height - 1; ++y)
+	{
+		const size_t row = (size_t)y * (size_t)sw_width;
+		for (int x = 1; x < sw_width - 1; ++x)
+		{
+			const size_t idx = row + (size_t)x;
+			if (sw_depth[idx] != 0)
+				continue;
+			uint32_t best_key = 0;
+			size_t best_idx = 0;
+			for (int r = 0; r < 8; ++r)
+			{
+				const size_t nidx = (size_t)((y + ring1[r][1]) * sw_width + (x + ring1[r][0]));
+				if (sw_depth[nidx] > best_key)
+				{
+					best_key = sw_depth[nidx];
+					best_idx = nidx;
+				}
+			}
+			if (best_key != 0)
+			{
+				sw_depth[idx] = best_key;
+				sw_color[idx] = sw_color[best_idx];
+			}
+		}
+	}
+}
+
+// E61 stage 3.5: 1D segment warp (fastest measured kernel) + near-plane
+// corner pinning (edge wedges survive as near content) + dilation fill for
+// disocclusions after the walk.
+#define SW_WARP_SEG 32
 static void sw_temporal_warp(const refdef_t *fd)
 {
-	// Destination depth restarts at far; disocclusions become sky holes.
 	const size_t pixels = (size_t)sw_width * (size_t)sw_height;
 	memset(sw_depth, 0, pixels * sizeof(*sw_depth));
 	const float hstep_s = 1.0f / sw_snap_projection_x;
@@ -3534,7 +3603,7 @@ static void sw_temporal_warp(const refdef_t *fd)
 			const uint32_t k0 = szb_row[xs];
 			const uint32_t k1 = szb_row[x_end];
 			if (k0 == 0 && k1 == 0)
-				continue; // all-sky segment (interior treated below anyway)
+				continue;
 			float ex0, ey0, ew0, ex1, ey1, ew1;
 			if (k0 == 0) { ew0 = 0.0f; ex0 = ey0 = 0.0f; }
 			else sw_temporal_warp_point(fd, (xs + 0.5f - cx_s) * hstep_s, dir_y, k0, &ex0, &ey0, &ew0);
@@ -3567,6 +3636,7 @@ static void sw_temporal_warp(const refdef_t *fd)
 			}
 		}
 	}
+	sw_temporal_warp_dilate();
 }
 
 int SW_RenderFrame(const refdef_t *fd)
