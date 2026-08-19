@@ -112,7 +112,7 @@ qboolean SW_FrameBufferInit(void *window)
 	}
 	// Fast path: with a shader-native RGB565 surface and tight pitch, render
 	// straight into the surface bytes; SDL_UpdateWindowSurface does the only
-	// copy. Otherwise keep a private framebuffer and convert at present.
+	// copy.
 	if (sw_surface->format == SDL_PIXELFORMAT_RGB565 &&
 		sw_surface->pitch == sw_width * (int)sizeof(*sw_color))
 	{

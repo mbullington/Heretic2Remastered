@@ -458,6 +458,33 @@ static void bake_face_packets(sw_bsp_t *bsp)
 		packet->light_height = (int)light_height_value;
 		packet->num_verts = edge_count;
 		packet->verts = verts;
+		// bounding sphere (cheap culling of hole-repair and frustum tests)
+		{
+			float c[3] = { 0.0f, 0.0f, 0.0f };
+			for (int i = 0; i < edge_count; ++i)
+				for (int a = 0; a < 3; ++a)
+					c[a] += verts[i * 5 + a];
+			for (int a = 0; a < 3; ++a)
+				c[a] /= (float)edge_count;
+			float r = 0.0f;
+			for (int i = 0; i < edge_count; ++i)
+			{
+				const float dx = verts[i * 5] - c[0], dy = verts[i * 5 + 1] - c[1],
+					dz = verts[i * 5 + 2] - c[2];
+				const float d = dx * dx + dy * dy + dz * dz;
+				r = max(r, d);
+			}
+			packet->center[0] = c[0];
+			packet->center[1] = c[1];
+			packet->center[2] = c[2];
+			packet->radius = sqrtf(r);
+		}
+		// Myrddin-era temporal reuse: these faces invalidate any snapshot of
+		// the static world, so they must re-render every frame.
+		packet->temporal_dynamic = (LittleLong(texture->flags) &
+			(SURF_FLOWING | SURF_WARP | SURF_UNDULATE | SURF_QUAKE)) != 0 ||
+			LittleLong(texture->nexttexinfo) != -1 ||
+			face->styles[0] != 0 || face->styles[1] != 255 || face->styles[2] != 255 || face->styles[3] != 255;
 	}
 }
 

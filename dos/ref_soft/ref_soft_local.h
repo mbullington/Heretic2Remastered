@@ -69,7 +69,10 @@ typedef struct sw_face_packet_s {
 	float light_min_s, light_min_t;
 	int light_width, light_height;
 	int num_verts;
-	float *verts; // num_verts * 5: local x, y, z, base_s, base_t
+	float center[3];  // local-space bounds: sphere center + radius
+	float radius;
+	byte temporal_dynamic; // animation/flow/warp/undulate/quake/nonzero lightstyles
+	float *verts;     // num_verts * 5: local x, y, z, base_s, base_t
 } sw_face_packet_t;
 
 typedef struct sw_bsp_s {

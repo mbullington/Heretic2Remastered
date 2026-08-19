@@ -3,6 +3,7 @@
 
 import atexit
 import hashlib
+import os
 from pathlib import Path
 import sys
 import time
@@ -51,9 +52,16 @@ def main() -> int:
         effects_path = stage.output("EFFECTS.PPM")
         client_path = stage.output("CLIENT.PPM")
         EVIDENCE.unlink(missing_ok=True)
+        # Diagnostic env passthrough (e.g. H2DOS_RENDERER_EXTRA_SET="H2DOS_SW_TAGXY=155,36")
+        extra_sets = os.environ.get("H2DOS_RENDERER_EXTRA_SET", "").strip()
+        guest_prefix = ""
+        if extra_sets:
+            for item in extra_sets.split():
+                if "=" in item and all(c.isalnum() or c in "_=.,-" for c in item):
+                    guest_prefix += f"set {item}\n"
         return_code = run_dosbox(
             stage,
-            f"silver.exe -basedir H2TEST -dosrun {run_id} -dosframes {FRAMES} "
+            f"{guest_prefix}silver.exe -basedir H2TEST -dosrun {run_id} -dosframes {FRAMES} "
             "-dosrenderer -dosaudio +set dedicated 0 +map synthetic > SWREND.OUT",
             TIMEOUT_SECONDS,
         )

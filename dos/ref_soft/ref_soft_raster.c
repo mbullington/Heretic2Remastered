@@ -358,6 +358,12 @@ static inline uint16_t span_modulate(const uint16_t texel, const uint32_t light_
 	return (uint16_t)(((r & 0xF8u) << 8) | ((g & 0xFCu) << 3) | (b >> 3));
 }
 
+#define SW_SCISSOR_TILES_Y 60
+extern uint64_t sw_scissor_row[SW_SCISSOR_TILES_Y];
+extern qboolean sw_scissor_active;
+extern qboolean sw_world_repair_pass;
+static qboolean project_point(const vec3_t point, int *x, int *y, float *depth);
+
 static int sw_tag_face_paint_count;
 static int sw_tag_face_paint_last;
 
@@ -590,7 +596,6 @@ static void draw_face_spans(const screen_vertex_t *verts, const int n, const sw_
 					sw_stats.bench_frames, face_index, y, left_x, right_x, left_prev, right_prev, left_cur, right_cur);
 			continue;
 		}
-
 		const float x_center = xa + 0.5f - v0->x;
 		float uz = v0->s_over_z + gradient_uz_x * x_center + gradient_uz_y * y_center;
 		float vz = v0->t_over_z + gradient_vz_x * x_center + gradient_vz_y * y_center;
@@ -951,6 +956,34 @@ static void draw_face(const sw_bsp_t *bsp, const int face_index, const vec3_t or
 			nz * (sw_refdef.vieworg[2] - origin[2]) - pdist;
 		if (pos < -0.01f)
 			return;
+	}
+	// Hole-repair scissor: skip faces that miss all hole tiles AND are not
+	// temporally dynamic (animated/flowing/warped/lightstyled faces
+	// re-render every frame regardless; they are few).
+	if (sw_world_repair_pass && bsp->packets != NULL)
+	{
+		const sw_face_packet_t *pk = &bsp->packets[face_index];
+		if (pk->verts != NULL && !pk->temporal_dynamic)
+		{
+			vec3_t wc;
+			VectorAdd(pk->center, origin, wc);
+			int sx, sy;
+			float depth;
+			if (project_point(wc, &sx, &sy, &depth))
+			{
+				const float scr_r = pk->radius * max(projection_x, projection_y) / max(depth, 1.0f);
+				const int t0 = ClampI((int)floorf(((float)sx - scr_r) * 0.125f), 0, (sw_width >> 3) - 1);
+				const int t1 = ClampI((int)floorf(((float)sx + scr_r) * 0.125f), 0, (sw_width >> 3) - 1);
+				const int r0 = ClampI((int)floorf(((float)sy - scr_r) * 0.125f), 0, SW_SCISSOR_TILES_Y - 1);
+				const int r1 = ClampI((int)floorf(((float)sy + scr_r) * 0.125f), 0, SW_SCISSOR_TILES_Y - 1);
+				const uint64_t range = ((2ull << (t1 - t0)) - 1) << t0;
+				qboolean hit = false;
+				for (int ry = r0; ry <= r1 && !hit; ++ry)
+					hit = (sw_scissor_row[ry] & range) != 0;
+				if (!hit)
+					return;
+			}
+		}
 	}
 	int animation_frames;
 	const sw_image_t *image = texture_animation(bsp, texinfo_index, entity_frame, &animation_frames);
@@ -3429,9 +3462,18 @@ static float sw_snap_projection_x, sw_snap_projection_y;
 static int sw_snap_width, sw_snap_height, sw_snap_x, sw_snap_y;
 static const sw_model_t *sw_snap_world;
 static qboolean sw_snap_valid;
-static int sw_temporal_parity;
+static int sw_temporal_warp_budget;
 static qboolean sw_temporal_warp_now;
 static cvar_t *sw_cvar_temporal;
+
+// Hole-repair scissor: after the homography warp, the world pass is re-run
+// clipped to the 8x8 tiles the warp never covered, replacing smear/sky with
+// fresh, camera-exact pixels only where reprojection had nothing. The mask
+// is accumulated inside the warp loop itself (one flag per dest pixel/block).
+#define SW_SCISSOR_TILES_Y 60
+uint64_t sw_scissor_row[SW_SCISSOR_TILES_Y];
+qboolean sw_scissor_active;
+qboolean sw_world_repair_pass;
 
 static void sw_temporal_invalidate(void)
 {
@@ -3442,8 +3484,10 @@ static void sw_temporal_invalidate(void)
 static qboolean sw_temporal_enabled(void)
 {
 	if (sw_cvar_temporal == NULL)
-		sw_cvar_temporal = sw_ri.Cvar_Get("r_swtemporal",
-			getenv("H2DOS_SW_TEMPORAL") != NULL ? "1" : "0", 0);
+	{
+		const char *env = getenv("H2DOS_SW_TEMPORAL");
+		sw_cvar_temporal = sw_ri.Cvar_Get("r_swtemporal", env != NULL ? env : "1", 0);
+	}
 	return sw_cvar_temporal != NULL && sw_cvar_temporal->value != 0.0f;
 }
 
@@ -3491,152 +3535,102 @@ static void sw_temporal_snapshot(const refdef_t *fd)
 // segment kernel, and shared tile edges meet crack-free). Source sky pixels
 // stay holes for the sky pass; disoccluded regions are the honest remainder
 // (sky-filled, documented).
-static void sw_temporal_warp_point(const refdef_t *fd, const float dir_x, const float dir_y,
-	const uint32_t key_s, float *out_x, float *out_y, float *out_w)
-{
-	const float z_s = SW_DEPTH_SCALE / (float)key_s;
-	const float vx = dir_x * z_s;
-	const float vy = dir_y * z_s;
-	const float wx = sw_snap_vieworg[0] + vx * sw_snap_right[0] + vy * sw_snap_up[0] + z_s * sw_snap_forward[0];
-	const float wy = sw_snap_vieworg[1] + vx * sw_snap_right[1] + vy * sw_snap_up[1] + z_s * sw_snap_forward[1];
-	const float wz = sw_snap_vieworg[2] + vx * sw_snap_right[2] + vy * sw_snap_up[2] + z_s * sw_snap_forward[2];
-	const vec3_t mv = { wx - fd->vieworg[0], wy - fd->vieworg[1], wz - fd->vieworg[2] };
-	const float dx = dot3(mv, view_right);
-	const float dy = dot3(mv, view_up);
-	const float dz = dot3(mv, view_forward);
-	if (dz <= 1e-6f)
-	{
-		// Behind/at the destination near plane: pin the corner to the viewport
-		// rectangle along the 2D travel direction with a very-near key. Triangles
-		// spanning a near-plane crossing then survive instead of dropping
-		// wedge-shaped holes to the sky pass (user-reported sky bleed at edges).
-		const float cx_d = fd->x + fd->width * 0.5f;
-		const float cy_d = fd->y + fd->height * 0.5f;
-		float t = 1e30f;
-		if (dx > 1e-30f || dx < -1e-30f)
-		{
-			const float tx = ((dx > 0.0f ? (float)(sw_width - 1) : 0.0f) - cx_d) / dx;
-			if (tx > 0.0f)
-				t = min(t, tx);
-		}
-		if (dy > 1e-30f || dy < -1e-30f)
-		{
-			// screen y grows down: dy < 0 goes to the top edge
-			const float ty_edge = ((dy < 0.0f ? 0.0f : (float)(sw_height - 1)) - cy_d) / (-dy);
-			if (ty_edge > 0.0f)
-				t = min(t, ty_edge);
-		}
-		if (t >= 1e29f)
-		{
-			*out_w = -1.0f;
-			*out_x = *out_y = 0.0f;
-			return;
-		}
-		*out_x = Clamp((cx_d + dx * t), 0.0f, (float)(sw_width - 1));
-		*out_y = Clamp((cy_d - dy * t), 0.0f, (float)(sw_height - 1));
-		*out_w = 8.0f; // nearer than any world content: the crossing is the closest thing
-		return;
-	}
-	const float iz = 1.0f / dz;
-	*out_x = fd->x + fd->width * 0.5f + dx * projection_x * iz;
-	*out_y = fd->y + fd->height * 0.5f - dy * projection_y * iz;
-	*out_w = iz;
-}
-
-// After the quad walks, fill remaining holes (disocclusions + cracks) from
-// the nearest covered pixel on the smallest enclosing ring (max radius 2).
-// This smears known content INTO hole areas instead of letting them fall to
-// the sky pass: disoccluded screen edges read as stretched world, not sky.
-static void sw_temporal_warp_dilate(void)
-{
-	static const int ring1[8][2] = {
-		{-1, 0}, {1, 0}, {0, -1}, {0, 1}, {-1, -1}, {1, -1}, {-1, 1}, {1, 1}
-	};
-	for (int y = 1; y < sw_height - 1; ++y)
-	{
-		const size_t row = (size_t)y * (size_t)sw_width;
-		for (int x = 1; x < sw_width - 1; ++x)
-		{
-			const size_t idx = row + (size_t)x;
-			if (sw_depth[idx] != 0)
-				continue;
-			uint32_t best_key = 0;
-			size_t best_idx = 0;
-			for (int r = 0; r < 8; ++r)
-			{
-				const size_t nidx = (size_t)((y + ring1[r][1]) * sw_width + (x + ring1[r][0]));
-				if (sw_depth[nidx] > best_key)
-				{
-					best_key = sw_depth[nidx];
-					best_idx = nidx;
-				}
-			}
-			if (best_key != 0)
-			{
-				sw_depth[idx] = best_key;
-				sw_color[idx] = sw_color[best_idx];
-			}
-		}
-	}
-}
-
 // E61 stage 3.5: 1D segment warp (fastest measured kernel) + near-plane
 // corner pinning (edge wedges survive as near content) + dilation fill for
 // disocclusions after the walk.
-#define SW_WARP_SEG 32
+// E61 v4: backward destination-driven homography warp. For rotation, every
+// destination pixel's view ray maps to a source view ray by the frame-constant
+// matrix T = M_s^T M_d, so the mapping needs no depth and covers the viewport
+// exactly once (it is a function: no per-pixel zb compare). Block endpoints
+// (8 px) divide exactly; inside blocks it follows the renderer's fixed-point
+// span conventions. Dest depth receives the transported source key (turbo);
+// disocclusions (translation, near-plane) remain holes for the dilate pass.
+#define SW_WARP_BLOCK 8
 static void sw_temporal_warp(const refdef_t *fd)
 {
-	const size_t pixels = (size_t)sw_width * (size_t)sw_height;
-	memset(sw_depth, 0, pixels * sizeof(*sw_depth));
+	memset(sw_depth, 0, (size_t)sw_width * (size_t)sw_height * sizeof(*sw_depth));
 	const float hstep_s = 1.0f / sw_snap_projection_x;
 	const float vstep_s = 1.0f / sw_snap_projection_y;
 	const float cx_s = sw_snap_x + sw_snap_width * 0.5f;
 	const float cy_s = sw_snap_y + sw_snap_height * 0.5f;
-	for (int y = 0; y < sw_height; ++y)
+	const float hs_d = 1.0f / projection_x;
+	const float vs_d = 1.0f / projection_y;
+	const float cx_d = fd->x + fd->width * 0.5f;
+	const float cy_d = fd->y + fd->height * 0.5f;
+	// T = M_s^T * M_d: T_ij = dot(basis_s_i, basis_d_j)
+	const float T0 = dot3(sw_snap_right, view_right), T1 = dot3(sw_snap_right, view_up), T2 = dot3(sw_snap_right, view_forward);
+	const float T3 = dot3(sw_snap_up, view_right), T4 = dot3(sw_snap_up, view_up), T5 = dot3(sw_snap_up, view_forward);
+	const float T6 = dot3(sw_snap_forward, view_right), T7 = dot3(sw_snap_forward, view_up), T8 = dot3(sw_snap_forward, view_forward);
+	const float px_s = sw_snap_projection_x;
+	const float py_s = sw_snap_projection_y;
+	const int ty_count = min(SW_SCISSOR_TILES_Y, (sw_height + 7) >> 3);
+	for (int ty = 0; ty < ty_count; ++ty)
+		sw_scissor_row[ty] = 0;
+	sw_scissor_active = false;
+	const int y0 = max(0, fd->y), y1 = min(sw_height, fd->y + fd->height);
+	const int x0 = max(0, fd->x), x1 = min(sw_width, fd->x + fd->width);
+	for (int y = y0; y < y1; ++y)
 	{
-		const float dir_y = (cy_s - (y + 0.5f)) * vstep_s;
-		const uint32_t *szb_row = sw_snap_zb + (size_t)y * (size_t)sw_width;
-		const uint16_t *scol_row = sw_snap_color + (size_t)y * (size_t)sw_width;
-		for (int xs = 0; xs < sw_width; xs += SW_WARP_SEG)
+		const float dy_row = (cy_d - (y + 0.5f)) * vs_d;
+		const float dx_row = (x0 + 0.5f - cx_d) * hs_d;
+		float dsx = T0 * dx_row + T1 * dy_row + T2;
+		float dsy = T3 * dx_row + T4 * dy_row + T5;
+		float dsz = T6 * dx_row + T7 * dy_row + T8;
+		const float stx = T0 * hs_d, sty = T3 * hs_d, stz = T6 * hs_d;
+		uint16_t *const fb_row = sw_color + (size_t)y * sw_width;
+		uint32_t *const zb_row = sw_depth + (size_t)y * sw_width;
+		int x = x0;
+		while (x < x1)
 		{
-			const int x_end = min(xs + SW_WARP_SEG, sw_width) - 1;
-			const uint32_t k0 = szb_row[xs];
-			const uint32_t k1 = szb_row[x_end];
-			if (k0 == 0 && k1 == 0)
-				continue;
-			float ex0, ey0, ew0, ex1, ey1, ew1;
-			if (k0 == 0) { ew0 = 0.0f; ex0 = ey0 = 0.0f; }
-			else sw_temporal_warp_point(fd, (xs + 0.5f - cx_s) * hstep_s, dir_y, k0, &ex0, &ey0, &ew0);
-			if (k1 == 0) { ew1 = 0.0f; ex1 = ey1 = 0.0f; }
-			else sw_temporal_warp_point(fd, (x_end + 0.5f - cx_s) * hstep_s, dir_y, k1, &ex1, &ey1, &ew1);
-			if (ew0 <= 0.0f && ew1 <= 0.0f)
-				continue;
-			const float seg_len = (float)(x_end - xs);
-			const float tx = (ex1 - ex0) / max(seg_len, 1.0f);
-			const float ty = (ey1 - ey0) / max(seg_len, 1.0f);
-			const float tw = (ew1 - ew0) / max(seg_len, 1.0f);
-			float px = ex0, py = ey0, pw = ew0;
-			for (int x = xs; x <= x_end; ++x, px += tx, py += ty, pw += tw)
+			const int block = min(SW_WARP_BLOCK, x1 - x);
+			const float esx = dsx + stx * block;
+			const float esy = dsy + sty * block;
+			const float esz = dsz + stz * block;
+			if (dsz <= 1e-6f || esz <= 1e-6f)
 			{
-				if (szb_row[x] == 0)
-					continue; // source sky pixel
-				if (pw <= 1e-6f)
-					continue;
-				const int xd = (int)px;
-				const int yd = (int)py;
-				if (xd < 0 || xd >= sw_width || yd < 0 || yd >= sw_height)
-					continue;
-				const size_t idx = (size_t)yd * (size_t)sw_width + (size_t)xd;
-				const uint32_t key_d = (uint32_t)(pw * SW_DEPTH_SCALE);
-				if (key_d >= sw_depth[idx])
-				{
-					sw_depth[idx] = key_d;
-					sw_color[idx] = scol_row[x];
-				}
+				// whole block back-projects behind the source camera: holes
+				const int t0 = x >> 3, t1 = (x + block - 1) >> 3;
+				if ((y >> 3) < SW_SCISSOR_TILES_Y)
+					sw_scissor_row[y >> 3] |= ((2ull << (t1 - t0)) - 1) << t0;
+				sw_scissor_active = true;
+				x += block;
+				dsx = esx; dsy = esy; dsz = esz;
+				continue;
 			}
+			const float iz0 = 1.0f / dsz;
+			const float iz1 = 1.0f / esz;
+			const float su0 = cx_s + dsx * iz0 * px_s;
+			const float sv0 = cy_s - dsy * iz0 * py_s;
+			const float su1 = cx_s + esx * iz1 * px_s;
+			const float sv1 = cy_s - esy * iz1 * py_s;
+			int iu = (int)(su0 * 65536.0f);
+			int iv = (int)(sv0 * 65536.0f);
+			const int du = (int)((su1 - su0) * 65536.0f * SW_INV_WIDTH(block));
+			const int dv = (int)((sv1 - sv0) * 65536.0f * SW_INV_WIDTH(block));
+			qboolean block_holes = false;
+			for (int i = 0; i < block; ++i, ++x, iu += du, iv += dv)
+			{
+				const int sx = ClampI(iu >> 16, 0, sw_width - 1);
+				const int sy = ClampI(iv >> 16, 0, sw_height - 1);
+				const size_t sidx = (size_t)sy * (size_t)sw_width + (size_t)sx;
+				const uint32_t skey = sw_snap_zb[sidx];
+				if (skey != 0)
+				{
+					zb_row[x] = skey;
+					fb_row[x] = sw_snap_color[sidx];
+				}
+				else
+					block_holes = true;
+			}
+			if (block_holes && (y >> 3) < SW_SCISSOR_TILES_Y)
+			{
+				const int t0 = x0 >> 3, t1 = (x - 1) >> 3;
+				sw_scissor_row[y >> 3] |= ((2ull << (t1 - t0)) - 1) << t0;
+				sw_scissor_active = true;
+			}
+			dsx = esx; dsy = esy; dsz = esz;
 		}
 	}
-	sw_temporal_warp_dilate();
 }
 
 int SW_RenderFrame(const refdef_t *fd)
@@ -3684,19 +3678,56 @@ int SW_RenderFrame(const refdef_t *fd)
 	if (fd->rdflags & RDF_NOWORLDMODEL)
 		SW_ClearColorFill();
 	sw_temporal_warp_now = false;
+	sw_scissor_active = false;
 	if (!(fd->rdflags & RDF_NOWORLDMODEL) && sw_temporal_enabled())
 	{
 		if (sw_snap_world != sw_world_model || sw_snap_width != sw_width || sw_snap_height != sw_height)
 			sw_temporal_invalidate();
-		if ((sw_temporal_parity & 1) != 0 && sw_snap_valid)
+		// Motion-driven scheduling: reuse the snapshot while the camera stays
+		// within ~3 degrees total rotation and ~24 units translation of the
+		// snapshot pose, capped at 3 warps per real frame. Nearly-still cameras
+		// stretch reuse; whipping the view falls back to real frames.
+		static vec3_t sched_angles, sched_org;
+		static qboolean sched_init = false;
+		qboolean force_real = true;
+		if (sw_snap_valid && sw_temporal_warp_budget > 0 && sched_init)
+		{
+			force_real = false;
+			const float dangle = fabsf(fd->viewangles[0] - sched_angles[0]) +
+				fabsf(fd->viewangles[1] - sched_angles[1]) + fabsf(fd->viewangles[2] - sched_angles[2]);
+			const vec3_t dv = { fd->vieworg[0] - sched_org[0], fd->vieworg[1] - sched_org[1],
+				fd->vieworg[2] - sched_org[2] };
+			const float moved = sqrtf(dv[0] * dv[0] + dv[1] * dv[1] + dv[2] * dv[2]);
+			if (dangle > 3.0f || moved > 24.0f || sw_temporal_warp_budget <= 1)
+				force_real = true;
+		}
+		if (force_real)
+		{
+			VectorCopy(fd->viewangles, sched_angles);
+			VectorCopy(fd->vieworg, sched_org);
+			sched_init = true;
+			sw_temporal_warp_budget = 4; // real frame now; up to 3 warps follow
+		}
+		else
+		{
 			sw_temporal_warp_now = true;
+			--sw_temporal_warp_budget;
+	}
 	}
 	const uclock_t frame_start = uclock();
 	uclock_t mark = frame_start;
 	// Sky runs AFTER the world pass and writes only where depth is still far
 	// (the sky draws no depth, so world-covered pixels cost one int compare).
 	if (sw_temporal_warp_now)
+	{
 		sw_temporal_warp(fd);
+		// Refresh pass: hole tiles (warp gaps) + dynamic faces (animation,
+		// flowing/warped/undulating surfaces, nonzero lightstyles) re-render
+		// fresh every frame; static warped snapshot covers only the rest.
+		sw_world_repair_pass = true;
+		SW_RasterWorld(fd);
+		sw_world_repair_pass = false;
+	}
 	else
 		SW_RasterWorld(fd);
 	{
@@ -3760,7 +3791,6 @@ int SW_RenderFrame(const refdef_t *fd)
 		(void)mark;
 		sw_stats.bench_us_frame += (unsigned long long)(uclock() - frame_start);
 		++sw_stats.bench_frames;
-		++sw_temporal_parity;
 	}
 	return 0;
 }
