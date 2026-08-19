@@ -1,47 +1,209 @@
-# Untried hypotheses (remove when attempted)
+# Next experiment ideas (ranked)
 
-## SEG-7 handoff-agenda dispositions (2026-08-18, baseline 15239169 total 206,764)
-KEPT: E59.1 FTB BSP draw order (-15.9ms total / world -9.3; overwrote 14.6K->2.0K px/frame — handoff's "39 screenfuls" was a 32x counter misread, real overdraw was 1.25x; E59b HZB FALSIFIED by pool math ~1.5ms).
-KEPT: E55c bit-exact opaque flex path (entities -8.2ms): vcolor per-vertex hoist + alpha-chain drop + colorkey test. s/t/r/g/b float chains untouched.
-KEPT: E58 baked render packets (-5.0ms total): map-static vertex/base_s/t + light dims per face at load.
-FALSIFIED: E60 lit-surface cache — gate red 4.54% (warp-class faces composite wrong) AND world +4.5ms: 565+pow2 modulate already cheap (Quake-era win came from 8-bit colormap math), 7 faces/frame flicker-rebuild, composite loop carries IMUL+4 clamp-branches; ceiling ~+2.5ms even perfected. DO NOT re-open without pow2-stride + flicker-bypass redesign.
-SKIPPED (contract-illegal): E61 temporal reprojection — cannot be bit-exact vs full-render baselines (fidelity-ceiling class); user-gated turbo est -25..40ms.
-WASH: E57 coverage-driven sky (40-tile span masks bit-exact): sky -3.7 == coverage tax +3.6 in world. Learning: sky floor 8.4ms at holes=0 is row-basis+block machinery, NOT classification/zb-walk; deadband irrelevant at holes=0.
-WASH: E62 PVS decode-once + gen stamps: per-leaf RLE re-decode was small vs leaf struct loads; +45 lines for noise.
-POOL-FALSIFIED: E63 (flex px only 11.3K/frame: tile-z pool ~1.5ms == build cost; self-occlusion needs per-px anyway), E64 (45% tris already bbox-culled pre-fill; B3-D: rejects free; multi-monster play only), E65/E66 (lights+particles = 3us each quiescent; combat-scene workload needed — new-workload gate).
-USER-GATED TURBO BANK (fidelity-ceiling class, per step-64 precedent): rgb-affine flex variant A measured -12.1ms flex pool / frame 157.1 vs 160.7 bit-exact — GATE RED 210-211px (0.27%, 4.6x budget) on synthetic flex fixture; UV-affine measured bit-NEUTRAL (210 vs 211 same pixels => ceiling break is rgb chain physics: 565->888 quantum = 8/255 > 2LSB).
-E61 SHIPPED DEFAULT-ON (e9b207fa) per user directive ('default n good, or killed'): all alternative
-options REMOVED from the codebase/ledger. Recipients of the 'remove' list: segment-affine warp (was
-fastest per-osp but 1D-inexact), 2D tile quad warp (slower per-px, dropped), overscan full-quality
-guard band (measured LOSS: frame 187.6 > 158.9 OFF on moving camera; env infra deleted), dilation
-fill (superseded by hole-tile repair), strict parity alternation and r_swtemporal=2 (folded into the
-single motion scheduler). Final architecture: motion-gated scheduler (real if >3deg rot or >24 u
-translation per frame; else warp, cap 3 fakes/real) + backward homography warp (T = M_s^T M_d,
-rotation-exact at 8px block ends, world/flex fixed-point span conventions inside; destination-driven,
-1px-exact map: no per-px z compare, holes can't persist) + refresh pass per fake frame: world walk
-face-culled by (baked sphere center+radius vs 8x8 hole-tile mask) OR temporal_dynamic-baked class
-(anim/flow/warp/undulate/quake/anim-chain/nonzero lightstyles re-render every frame regardless).
-sw_world_repair_pass flag is the cull driver (empty mask MUST NOT degrade to 'no cull'; measured cost
-of that bug: full 2nd world pass = 193ms). snapshot = world-only color+depth post-sky. Gate evidence:
-RENDER+EFFECTS diff=0 with temporal DEFAULT ON; bench total 157,858 (-23.7% vs 206,764 seg-7 base),
-world 78.5, fake-frame repair walked px ~1/3 of full. Backlog: zb-16 snapshot, warp block tune, combat
-scene for E65/E66, radius-2 dilate only for >1px reveal cracks.
-## SEG-9 night-run dispositions (2026-08-19)
-KEPT: SW_RegisterModel-glcmds flat pre-expansion (entities -0.44ms, rtri records).
-KEPT: sky free-rides S-buffer row coverage (sky 12.2->8.4, E57 finally landed free via E59b).
-KEPT: r_swscan2 stripe checkerboard infra, OFF +0.4 residue; ON measured -4.3 (turbo).
-FALSIFIED: post-transform BSP vertex cache (+4.6 world: tutorial2 verts ~10-15% dedup, cache cost > save).
-FALSIFIED: lazy-z + 16-bit-z (ablation: frame +49 with zb stores skipped: sky/warp/FTB need dense depth).
-480x200 measured loss (frame 152.6 vs 128.7: sky-hole dominance at band aspect + INDEX8 present).
-E55d/quadratic: closed with ledger math (divides ~1/span already; 128-block interiors already affine internally; rgb-affine is 565-quantum-cursed by physics).
-Mip selection: NOT BUILT (DOSBox has no cache model => intrinsic op-count delta ~0; real-iron cache effect only).
-MMX: SKIPPED (seg-4 #38 measured flat-parity regression: emulator models MMX ops at parity, compiler can't schedule across asm; hand asm inner loop likewise fails on this ruler).
-Screen-door: pool measured (blend_us=3us/frame in bench window; combat scene doesn't exist in this workload).
-Light-disc stamps: pool measured (lights_us=3us/frame; same quiescent finding as E65).
-Texture swizzle: UNMEASURABLE on flat ruler (no cache model); park for real-PMMX.
-Directional offline vis: documented as large toolchain project; E62 proved per-leaf PVS decode is not the cost center.
-QEM LOD / mesh-node frustum cull: pool measured near-zero on the present trace (player centered; 45% tris already bbox-culled pre-fill; multi-monster scenes would change that).
-E59 stripe note: post-S-buffer overdraw zreject measured 21.4% of candidates at FTB, coverage lane banks part of it.
-SECOND-ORDER LEARNINGS: (a) python bulk-edits need brace+arithmetic audits EVERY time (two separate 1-line dropouts costed ~2h); (b) run-bimodality (sky 12.2<->17.5, world +-0.5) poisoned several 3-run medians; per-run evidence files arbiter; (c) FM-reject spam + AddEntityToView spam are pre-existing game-side noise, not regressions; (d) gates recover bit-exactness through identity-warp + refresh architecture.
+Untried hypotheses only — prune when attempted. History, falsifications, and
+learnings live in autoresearch.jsonl; closed axes are enumerated there
+(B1/painter family, lit-surface caches, HZB, quiescent-pool probes;
+MMX/asm REOPENED 2026-08-18 under the pm-mca ruler proposal below).
 
+Current best: total 145,221 (run #73, 4c79cc3): world 78.7 / entities 39.9
+(flex-tris 33.4) / sky 8.9 / present 14.8 / clear 1.2.
+Two pricings that shape this list:
+- Temporal is default-ON: world px are ~1/4 of pre-E61 volume (33K/frame
+  walked). Per-px world ideas bank ~1/4 of their old pool. Present and
+  entities are paid EVERY frame — they are the best remaining lanes.
+- Fidelity ceiling: any perturbation of a float interpolation chain dies at
+  the 2LSB gate by construction (565->888 quantum = 8/255; E55/E56 red at
+  210px = 4.6x budget). Assume turbo-class unless the chain is untouched.
 
+## 0. Sidecar combat bench [build task; FIRST — prices everything downstream]
+Runs before the queue below because its prices RESHAPE it: every remaining
+agenda item either assumes camera calm (#1 identity restore, #5 scan2
+follow-ups) or is unpriceable on tutorial2 spawn (the entire workload-
+gated list), and E50's removal proved spawn-view validation is a real
+correctness trap. Build a second deterministic scene as a pricing
+instrument:
+- Scripted, renderer-only (gameplay is unverified, src/ untouchable):
+  placed monsters on animation timelines, scripted spell/projectile spawns
+  carrying dlights, particle bursts; RNG already seeded (run #55 infra).
+- Camera path with real translation+rotation (stresses temporal + the #1
+  identity-restore camera-calm assumption).
+- Map with corridors/pillars so entity occlusion actually exists.
+- Gates: verify bit-stability (walked-px jitter precedent) before trusting
+  PPM diffs; tutorial2 stays seg-8 primary — combat is a census sidecar;
+  promote only if its pools prove bigger than tutorial2's remaining queue.
+Downstream rule: no cap-3 relaxation, no workload-gated build, and no
+"camera-calm sizing is final" claims (#1/#5) until this bench's first
+numbers land.
+
+## Harness/ruler: pm-mca static P55C loop analyzer [INFRA; ranks ahead of all queued lanes]
+
+Ruler change, not an experiment. DOSBox cycles=fixed is a flat instruction
+budget — blind to U/V pairing, AGI, load-use, FDIV serialization, 16B
+fetch-window decode bandwidth, MMX shared mul/shifter, bank conflicts. With
+hand-asm hot loops back in scope, the current ruler would score exactly the
+work it cannot see. Build the analyzer FIRST; queued loop-level items get
+repriced under it. ~80% of the full trace-driven sim's benefit for the asm
+program at days-scale cost (full sim = weeks).
+
+Design (trace-free; no emulator in the loop):
+- Input: objdump -d -Mintel slice between marker symbols (ground truth incl
+  gcc codegen seam) or .s directly for pure-asm loops.
+- Instruction DB: PMMX integer+x87+MMX subset actually used (~150 rows):
+  issue rules, latency/throughput, resource claims. Source: Agner PMMX
+  tables cross-checked vs Intel appendix.
+- Engine: cycle-stepped U/V issue; 16B-aligned fetch window, <=2 decode/cyc;
+  full pairing ruleset; dep tracking (AGI, load-use, FDIV ~19cyc
+  nonpipelined, FXCH rules); steady state = loop body unrolled x8, backedge
+  BTB-predicted-taken.
+- Data-dependent per-px branches (z-test etc) = declared frequencies from
+  bench counters; report weighted cycles + spread. Never guess miss rates:
+  flag misalign/line-cross/D-bank conflicts under DECLARED alignments only.
+- Output: per-cycle U/V pairing view (the asm authoring tool) +
+  mechanism-named JSON ASI (fetch_bound/agi/fdiv/bank/u_pressure). Win
+  claims must name the mechanism term that moved (Goodhart tripwire).
+- Metric when promoted (REQUIRES NEW SEGMENT): Sum(cycles/iter x trips/frame)
+  with trip counts pinned from existing bench counters -> est PMMX-233
+  core-us; un-analyzed residual tracked separately off the DOSBox trend.
+  DOSBox PASS + pixel gates stay hard checks, untouched.
+
+Validation gate before promotion: reproduce Agner's published PMMX pairing
+examples/cycle counts + ~10-15 hand-computable kernels, stated error budget.
+If it can't nail those it never becomes a ruler. Real-iron spot check
+(P55CAL.EXE crowdsourcing) stays opportunistic, off critical path.
+
+Honest coverage split: entities/flex (52us/tri, ~3ms px => instruction-window
+bound), span engines, present traffic (sequential copy, addresses statically
+known) = VISIBLE. Parked-list runtime memory effects (cache phase/pitch/arena
+phase/microtiles/USWC-LFB) stay BLIND — pm-mca does not unpark them.
+
+Extension, not competitor: the DB + pairing engine are phase 1 of the full
+trace+cache sim, not throwaway. Trigger to build the rest: (a) parked
+memory-lane ideas rank high enough to actually run, or (b) loops read at
+pairing optimum but DOSBox trend stops moving = residual lives in the memory
+system, which the static tool provably cannot see. Census-before-kill
+discipline stands: analyzer scores cycles/iter; only counter-pinned trip
+counts aim it at loops that dominate.
+
+## Queued (ranked by expected total_us impact)
+
+### 1. Static-camera identity fast path for temporal [bit-exact, est -25..40ms]
+Run-64 ASI: warp kernel costs ~57ms per FAKE frame (warp + snapshot +
+zb-zero) even when the camera barely moves; bench evidence says the calm band
+is the common case (walked px 1.05M/32 frames, ~18 residual holes/frame).
+But an identity (or subpixel) transform needs no warp: restore the world
+snapshot (color+depth, post-sky) with two flat copies (~460KB ~ 2-3ms on the
+ruler), then let the EXISTING selective-refresh pass handle dynamic faces.
+World avg: (104 real + 3x57 fake)/4 ~ 79 -> (104 + 3x6)/4 ~ 30.
+Bit-exact by construction: identity backward-map = same bytes, repair pass
+and its tile culling unchanged, diff should stay 0 (identity-warp precedent
+in run #66). Win attaches to camera calm (a real gameplay state: standing,
+examining, menus-in-world), not to bench specifics.
+Risks: sw_world_repair_pass flag discipline — the empty-mask bug ran a full
+2nd world pass (193ms first attempt); keep cap-3 policy intact.
+Follow-up for user arbitration: with bit-exact identity restore there is no
+approximation drift, so cap-3's reason weakens for the identity case —
+relaxing it (invalidate on motion signature / PVS-leaf change / dynamic-set
+change) pushes sustained-calm world avg toward ~10-15ms.
+
+### 2. Direct-framebuffer present path [bit-exact, est -8..12ms]
+Run-36 decomposition: present's 14ms is the vendored driver's NORMAL path =
+per-px SDL_BlitSurface ("not byte-bound": same 14ms at 8888 for 2x bytes) =
+pure instruction waste on the flat ruler. The vendored SDL3 DOS driver ships
+the fix: SDL_DOS_ALLOW_DIRECT_FRAMEBUFFER => one dosmemput sys-RAM->VRAM,
+palette programmed only on change, no blit compositing. sw_color already
+aliases the window surface (W5, run #37), so the blit is the entire remaining
+present cost.
+Do: set the hint before SDL_GetWindowSurface in the H2_DOS glimp block
+(callsite-only; vendor code untouched).
+Risks: banked path accepts tearing / no page flip (Quake-period-authentic);
+multibank at 153.6KB@320x240; present_us is bimodal -> mode-matched medians.
+Fold in: 320x200 INDEX8 sibling (present 9.0ms incl LUT -> likely ~4-5ms at
+64KB copy) — the run #73 queued user quick-win; measure both in one session.
+
+### 3. Flex "52us/tri phantom" census [measurement-only; decides the 33.4ms kill]
+Flex = largest non-temporal-reducible cost: 33.4ms over 640 tris/frame = ~52
+us/tri, while per-px work is only ~3ms of it. Runs #69/#33 banked "phantom
+persists in proj-cache corner copies + per-tri gradient chains + span
+prologues" but the split was never measured. ~30 lines of counters before
+any further flex work; the attribution selects the kill:
+- gradient chains dominate -> CLUT (#4) as designed
+- scan-conversion rows dominate -> Pineda microtile resurfaces WITH a real
+  pool number (was deferred on a ~3ms estimate)
+- pose/proj cross-frame redundancy dominates -> DO NOT build the pose memo:
+  md2 lerp changes pose every frame in real gameplay; bench-hit-rate would
+  be an overfit. Record and pick the second-best axis instead.
+
+### 4. Flex intensity-shade CLUT [turbo-class, est -4..8ms; keep possible at 64/128 levels]
+PS1 CLUT trick; fits E55c exactly: per-vertex vcolor = base_light * intensity
+is already hoisted, so lerping (r/z,g/z,b/z) == base_rgb * lerp(I/z) —
+mathematically identical. Replace 3 rgb-over-z chains with ONE
+intensity-over-z interpolant; per-px = shade[level][skin8[idx]]; kills 3
+gradient sets, 6 per-block conversions, and 3x per-px clamp/IMUL/repack.
+UV stays perspective-correct (unlike banked affine variant A). LUT 64KB at
+128 levels; rebuild keyed on (quantized base light + style signature) ~0.3ms/
+frame at animated styles. Needs flex skin index8 retained alongside 565.
+Run AFTER census #3 confirms gradients are the pool.
+Fidelity plan: sweep levels 16/32/64/128 on the synthetic flex fixture that
+killed E55 variant A. 16 = gate-red by construction; 128 -> error ~1/888,
+borderline-inside budget. Find the knee, then arbitrate keep vs turbo-bank.
+
+### 5. r_swscan2 row-parity variant [turbo-class, ON est -5..9 vs columns' -4.3]
+PS2 field-render trick. Existing stripe infra (#71/#72) alternates 2px column
+pairs: ON = -4.3. Row parity additionally kills span-row prologues (4.7K
+span-rows x 0.76us ~ 3.6ms, E57-v2 census) while halving real-frame px the
+same. Predicate-level change on existing machinery; snapshot already samples
+both phases. Known anti-synergy: sky row-skip dies under stripes (#72
+learning). User-grant class mirrors scan2 (stipple-adjacent turbo).
+
+### 6. World texel+light run census [measurement-only; decides a -1..3ms idea]
+30-line histogram in the opaque pow2 lane: exact (texel-addr, lidx, z-state)
+run lengths. If mean run >= ~2.5px, bulk-fill same-colour runs (skip texel
+fetch + lidx + modulate on continuing px; store + zb stay per-px). W1 says
+uniform runs may be rarer than intuition, and the post-temporal px pool is
+thin — census first, build only if the histogram is favorable.
+
+### 7. MMX movq bulk-copy probe [bit-exact, trigger-gated, est -1..3ms]
+Axis boundary: PER-PX MMX math stays closed (run #38: flat-parity ruler turns
+pair bookkeeping + asm-block fences into a +6.4ms tax; #39 killed the scalar
+twin). movq COPY loops are different: they halve instruction count on the
+flat ruler and are pure-copy bit-exact. Trigger condition: only priced once
+#1 (identity restore = 2x460KB flat copies/fake frame) and/or #2 (direct
+dosmemput present) land and copies dominate those costs. Form: __m64
+builtins with -mmmx inside one copy function (no raw asm blocks = no
+scheduler fences), single emms at function exit, alignment handled at
+alloc. Do not reopen the per-px modulate axis here.
+
+## Temporal polish backlog (small; bundle as one turbo-polish session)
+- radius-2 dilation ONLY for >1px residual reveal cracks (holes ~18/frame now)
+- snapshot zb-16 (halve snapshot + parity traffic)
+- warp block tune 8 vs 16
+- flex-only face refresh when dynamic faces dominate
+
+## Awaiting user arbitration (evidence banked; do not rebuild)
+- rgb-affine flex turbo variant A: -12.1ms flex (frame 157.1 vs 160.7), GATE
+  RED 210px synthetic-fixture. CLUT (#4) is its higher-fidelity sibling and
+  likely supersedes it at 64/128 levels.
+
+## Workload-gated (pools measured quiescent: lights 3us, blend 3us, sprites 0.014ms)
+Needs a combat-scene workload before any of: light-disc stamps, particle
+stamps, E65/E66 re-probe, sprite-atlas RLE spans (PS1 transparent-pixel
+surgery). From the Q2-lineage technique review (2026-08-18 msg):
+- Entity-level occlusion/HZB reject, particle coarse-Z reject: tutorial2
+  census says the pool does not exist here (pre-FTB z-rejects 5% of world
+  px; overdraw 1.25x; all 99 flex models on-screen). Needs an
+  occlusion-heavy scene to even price.
+- Dynamic-light dirty-tile caches: E60 lit-surface lineage (ceiling +2.5ms
+  even perfected; warp-class faces gate-red). Same combat-workload gate.
+- Flex cluster/meshlet culling: normal-cone backface variant carries the
+  E50 trap (seg-6 removed the winding cull: two-sided content vanished);
+  frustum-cluster variant only pays partially-off-screen. Never in
+  pose-memo form (md2 lerp runs every frame in real gameplay = bench
+  overfit).
+
+## Parked for real PMMX (no evidence channel in the DOSBox flat ruler)
+Unmeasurable, not falsified; need a real-iron bench program like texture
+swizzle before them: cache-set phase sweeps (depth base 0..4095 step 32 x
+pitch pad 320..352 x light-arena phase — 128-offset grid search was the msg-3
+proposal), MTRR/USWC for the VESA LFB (run-38 ASI: SetMtrr docs already
+banked), DPMI page lock/pre-touch (spike work, not median), 32x8 scratchpad
+microtiles.

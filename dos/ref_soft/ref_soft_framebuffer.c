@@ -56,19 +56,24 @@ qboolean SW_FrameBufferInit(void *window)
 		}
 		SDL_DisplayMode want;
 		SDL_zero(want);
-		want.format = req_w == 320 && req_h == 240 ? SDL_PIXELFORMAT_RGB565 : SDL_PIXELFORMAT_INDEX8;
+		// Prefer direct color at the requested resolution; indexed is the fallback.
+		want.format = SDL_PIXELFORMAT_RGB565;
 		want.w = req_w;
 		want.h = req_h;
 		sw_ri.Con_Printf(0, "ref_soft: sw mode request %dx%d\n", want.w, want.h);
-		// Probe ladder: the DOS VESA driver's mode list is sparse; try 32/24-bit
-		// at the requested resolution, then RGB565 at the classic 320x240.
+		// Probe ladder: same resolution in the alternate pixel format first
+		// (video-mode changes are resolution-first), then the classic 320x240.
 		if (!SDL_SetWindowFullscreenMode(sw_window, &want))
 		{
-			want.format = SDL_PIXELFORMAT_RGB565;
-			want.w = 320;
-			want.h = 240;
+			want.format = want.format == SDL_PIXELFORMAT_INDEX8 ? SDL_PIXELFORMAT_RGB565 : SDL_PIXELFORMAT_INDEX8;
 			if (!SDL_SetWindowFullscreenMode(sw_window, &want))
-				want.format = 0;
+			{
+				want.format = SDL_PIXELFORMAT_RGB565;
+				want.w = 320;
+				want.h = 240;
+				if (!SDL_SetWindowFullscreenMode(sw_window, &want))
+					want.format = 0;
+			}
 		}
 		if (want.format != 0)
 			(void)SDL_SetWindowFullscreen(sw_window, true);
