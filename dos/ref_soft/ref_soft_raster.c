@@ -3913,6 +3913,16 @@ static void sw_debug_fxload(refdef_t *fd)
 		dl->color.a = 255;
 		dl->intensity = 220.0f + (float)((f * 11u) & 63u);
 	}
+	if (getenv("H2DOS_DBG_LIGHT") != NULL && fd->num_dlights < MAX_DLIGHTS)
+	{
+		// Debug illumination for dark-scene investigations.
+		dlight_t *dl = &fd->dlights[fd->num_dlights++];
+		dl->origin[0] = fd->vieworg[0];
+		dl->origin[1] = fd->vieworg[1];
+		dl->origin[2] = fd->vieworg[2] + 32.0f;
+		dl->color.r = 255; dl->color.g = 255; dl->color.b = 255; dl->color.a = 255;
+		dl->intensity = 1500.0f;
+	}
 	const float pulse = 0.10f + 0.05f * (float)(f & 15u) / 15.0f;
 	fd->blend[0] = 1.0f;
 	fd->blend[1] = 0.25f;

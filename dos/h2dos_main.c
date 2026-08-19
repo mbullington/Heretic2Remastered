@@ -1169,6 +1169,32 @@ int main(const int argc, char** argv)
 				}
 			}
 		}
+		{
+			// Diagnostic camera: H2DOS_LOOKAT="fx,fy,fz,tx,ty,tz[,frame]"
+			// moves vieworg to (fx,fy,fz) aimed at (tx,ty,tz) at the given frame.
+			static const char *lookat = NULL;
+			static int lookat_frame = -2;
+			if (lookat_frame == -2)
+			{
+				lookat = getenv("H2DOS_LOOKAT");
+				lookat_frame = -1;
+			}
+			if (lookat != NULL && realdata && cls.state == ca_active && cl.refresh_prepped)
+			{
+				float fx=0, fy=0, fz=0, tx=0, ty=0, tz=0;
+				int at_frame = 12;
+				const int n = sscanf(lookat, "%f,%f,%f,%f,%f,%f,%d", &fx, &fy, &fz, &tx, &ty, &tz, &at_frame);
+				if (n >= 6 && frame == at_frame)
+				{
+					cl.vieworg[0] = fx; cl.vieworg[1] = fy; cl.vieworg[2] = fz;
+					const float dx = tx - fx, dy = ty - fy, dz = tz - fz;
+					cl.viewangles[1] = (float)(atan2(dy, dx) * 180.0 / 3.14159265358979323846);
+					const float hd = (float)sqrt(dx*dx + dy*dy);
+					cl.viewangles[0] = (float)(-atan2(dz, hd) * 180.0 / 3.14159265358979323846);
+					cl.viewangles[2] = 0.0f;
+				}
+			}
+		}
 		if (realdata && getenv("H2DOS_DUMPALL") != NULL)
 		{
 			// Name by renderer 3D frame (bf) so dumps align with bf= tagged
