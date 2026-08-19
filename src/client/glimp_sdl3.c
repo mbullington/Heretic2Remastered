@@ -17,6 +17,13 @@ static cvar_t* vid_hidpi;
 
 static qboolean CreateSDLWindow(const SDL_WindowFlags flags, const int width, const int height)
 {
+#ifdef H2_DOS
+	// SEG-7 E1 (ideas #1): opt the DOS VESA driver into its direct-FB path:
+	// app renders into system RAM; UpdateWindowSurface does ONE flat
+	// dosmemput copy sys-RAM->VRAM (bankswitched as needed) instead of the
+	// LFB shadow surface + per-pixel SDL_BlitSurface compositor pass.
+	SDL_SetHint("SDL_DOS_ALLOW_DIRECT_FRAMEBUFFER", "1");
+#endif
 	// Force the window to minimize when focus is lost. 
 	// The windows staying maximized has some odd implications for window ordering under Windows and some X11 window managers like kwin.
 	// See: https://github.com/libsdl-org/SDL/issues/4039 https://github.com/libsdl-org/SDL/issues/3656
