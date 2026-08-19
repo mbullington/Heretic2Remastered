@@ -329,28 +329,22 @@ void SW_Present(void)
 	const uclock_t start = uclock();
 	if (sw_surface == NULL || sw_color == NULL)
 		return;
-	// Per-frame magenta scanner: texels are audited clean at load, so any
-	// 0xF81F in the internal framebuffer came from the rasterizers. Count it
-	// every frame and save a capture the FIRST time it appears so the
-	// transient is inspectable after the run.
+	// Magenta accounting lives only at the write paths (world/alpha/flex/
+	// putpixel counters) which now have full per-pixel coverage; the two
+	// full-framebuffer scans that used to sit here cost ~7ms/frame for zero
+	// additional observability and were removed with the user's sign-off.
+	if (sw_stats.bench_magenta_px > 0)
 	{
-		const size_t pixels = (size_t)sw_width * (size_t)sw_height;
-		size_t magenta = 0;
-		for (size_t i = 0; i < pixels; ++i)
-			magenta += sw_color[i] == 0xF81Fu;
-		sw_stats.bench_magenta_px += (unsigned)magenta;
-		if (magenta > 0 && sw_stats.bench_magenta_max < (unsigned)magenta)
+		if (sw_stats.bench_magenta_max < sw_stats.bench_magenta_px)
+			sw_stats.bench_magenta_max = sw_stats.bench_magenta_px;
+		if (sw_stats.bench_mag_frame == 0)
+			sw_stats.bench_mag_frame = sw_stats.frames_presented + 1;
+		if (sw_stats.bench_magenta_saved == 0)
 		{
-			sw_stats.bench_magenta_max = (unsigned)magenta;
-			if (sw_stats.bench_mag_frame == 0)
-				sw_stats.bench_mag_frame = sw_stats.frames_presented + 1;
+			sw_stats.bench_magenta_saved = 1;
+			SW_SavePPM("MAGENTA.PPM");
 			sw_ri.Con_Printf(PRINT_ALL, "ref_soft: frame %u magenta-px=%u\n",
-				sw_stats.frames_presented + 1, (unsigned)magenta);
-			if (sw_stats.bench_magenta_saved == 0)
-			{
-				sw_stats.bench_magenta_saved = 1;
-				SW_SavePPM("MAGENTA.PPM");
-			}
+				sw_stats.bench_mag_frame, sw_stats.bench_magenta_px);
 		}
 	}
 	bool ready = true;
@@ -380,20 +374,6 @@ void SW_Present(void)
 		ready = SDL_ConvertPixels(sw_width, sw_height,
 			SDL_PIXELFORMAT_RGB565, sw_color, sw_width * (int)sizeof(*sw_color),
 			sw_surface->format, sw_surface->pixels, sw_surface->pitch);
-		// Present-layer audit: if the internal framebuffer is clean but the
-		// converted surface carries 0xF81F, the magenta lives in conversion.
-		if (ready && sw_surface->format == SDL_PIXELFORMAT_RGB565)
-		{
-			size_t surface_magenta = 0;
-			for (int yy = 0; yy < sw_height; ++yy)
-			{
-				const uint16_t *row = (const uint16_t *)((const byte *)sw_surface->pixels +
-					(size_t)yy * (size_t)sw_surface->pitch);
-				for (int xx = 0; xx < sw_width; ++xx)
-					surface_magenta += row[xx] == 0xF81Fu;
-			}
-			sw_stats.bench_mag_surface += (unsigned)surface_magenta;
-		}
 		SDL_UnlockSurface(sw_surface);
 	}
 	if (!ready || !SDL_UpdateWindowSurface(sw_window))
