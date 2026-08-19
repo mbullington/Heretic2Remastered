@@ -183,7 +183,7 @@ with face-ID-keyed reconstruction (holes fill only from same-face neighbors)
 — kills silhouette ghosting but needs a full-face-ID buffer + reconstruction
 pass traffic; vanilla row-parity is nearly free by comparison.
 
-### 19. World span run specialization (light cells + texel rows + native-565 modulate) [bit-exact; census-gated; est -1..4ms]
+### 19. World span run specialization — (c) DONE (run #95, world -4.7ms); (a) PARKED asm-era per #91-92; (b) DEAD per #92 census
 GPT round-2 bundle "D", three coordinated per-px kills in the opaque lanes:
 (a) LIGHT-CELL RUNS: per-px lidx = (ilt>>20)*stride + (ils>>20) + cmp is a
 2-shift+IMUL+add+cmp chain EVERY px (78.8K/frame) even though light cells are
@@ -206,7 +206,7 @@ CENSUS #11 DONE (run #92): (a) 8,738 light-crossings/frame ~ run 9.8px
 crossings/frame = 29% of painted px => DEAD (recompute beats saved IMUL).
 (c) stands as the only live piece; #22 inherits the manifest gate.
 
-### 22. 565 shade-row LUT [bit-exact by construction; sequence AFTER #19; est -2..5ms PMMX-class; shares #13's manifest gate]
+### 22. 565 shade-row LUT [SKIP 2026-08-20: run #5 memory~ALU precedent says wash-or-worse on both visible rulers; pm-mca v1 can't slice the world loop (#13 finding). Real-PMMX lane only]
 Mail pitch; NOT closed by run #5: #5's 128KB monolith was falsified on
 DOSBox's free-memory/cheap-IMUL ruler ("3 extra byte loads + index math +
 init-check per px"). This form: mul5[1024][32] + mul6[1024][64] = 96KB
