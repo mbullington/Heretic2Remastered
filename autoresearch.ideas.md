@@ -111,7 +111,7 @@ verified 0/4,640 mismatches). particles 34,588->3,480us. Textured-quad path
 still pays per-px modulate() float chains (E55/E56 color-class: untouchable)
 - residual 3.5ms is mostly that + z-guards.
 
-### 21. x87 conversion-tax elimination [CENSUS DONE 2026-08-20d; est 5-7ms PMMX-class, DOSBox-BLIND]
+### 21. x87 conversion-tax elimination [BANKED 2026-08-20: world-side both phases blocked (draw_face-fragile per #91-92 + no clean v1 slice per #13 finding); flex-side already LUT-fixed by run #77; (b) = user-arbitration]
 Mail pitch (Quake Sys_SetFPCW/Sys_LowFPPrecision lineage), census executed
 against SILVER.EXE: 1,444 fnstcw / 4,169 fldcw / 1,905 fistp static sites.
 Hot paths CONFIRMED: _draw_face 26 fnstcw (~10 truncating casts per 128px
@@ -298,7 +298,7 @@ current span's block (~29px of inner-loop covers the 33-clk fdiv i_ov=32
 window easily IF the schedule holds; C unlikely to keep producer/consumer
 distance => asm-lane kernel, pm-mca priceable).
 
-### 16. Temporal polish bundle [promoted 2026-08-19: temporal is default-ON; one session]
+### 16. Temporal polish bundle [BENCH-INVISIBLE VERIFIED 2026-08-20: H2DOS_SWEEP yaw step = 7.5deg/frame > the scheduler's 3.0 real-frame gate => temporal warp NEVER fires in combat; needs calm-camera scene or user arbitration]
 - radius-2 dilation ONLY for >1px residual reveal cracks (holes ~18/frame):
   quality, kills the visible artifact class
 - snapshot zb-16 (halve snapshot store + parity traffic)
