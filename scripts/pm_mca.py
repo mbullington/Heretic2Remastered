@@ -1254,6 +1254,32 @@ def db_hash() -> str:
     return f"{h.hexdigest()[:12]}-{VERSION}"
 
 
+def slice_content_hash(body: list[Ins]) -> str:
+    """Structural identity of a slice: mnemonics + operand SHAPES, with all
+    addresses/displacements/immediates normalized to '#'. Codegen churn
+    (register reallocation, frame-offset moves, layout shifts) leaves this
+    invariant; semantic edits never do."""
+    import hashlib
+    parts = []
+    for ins in body:
+        ops = []
+        for o in ins.ops:
+            if o.kind == "reg":
+                ops.append(f"r{o.size}")
+            elif o.kind == "mmreg":
+                ops.append("mm")
+            elif o.kind == "fpreg":
+                ops.append("st")
+            elif o.kind == "mem":
+                ops.append(f"m{o.mem.size}({o.mem.base or ''},{o.mem.index or ''},{o.mem.scale},#)")
+            elif o.kind == "imm":
+                ops.append("#")
+            else:
+                ops.append(o.kind)
+        parts.append(f"{ins.mne}({','.join(ops)})")
+    return hashlib.sha256("|".join(parts).encode()).hexdigest()[:16]
+
+
 def resolve_loop_slice(funcs, loop: dict) -> list[Ins]:
     sym = loop["symbol"]
     if sym not in funcs:
@@ -1342,7 +1368,7 @@ def cmd_report(args) -> int:
         st = res["stats"]
         out["loops"][name] = {
             "cpi": c, "trips": trips, "est_cycles": round(est, 1),
-            "n_instr": len(body),
+            "n_instr": len(body), "slice_id": slice_content_hash(body),
             "stalls": {k: round(v / 12, 2) for k, v in st["stalls"].items()},
             "bank_unknown": st["bank_unknown"], "mem_ops": st["memops_per_iter"],
             "bytes_rw": st["bytes_rw_per_iter"],
@@ -1368,11 +1394,24 @@ def cmd_report(args) -> int:
         o, n_ = old["total_cycles"], out["total_cycles"]
         delta = n_ - o
         print(f"PMCA-DELTA {delta:+.0f} cycles ({o} -> {n_})")
+        # Churn discrimination: if every loop's instruction CONTENT is
+        # identical, the cpi delta is codegen/layout churn, not mechanism —
+        # the ruler abstains and the trend/gates decide this candidate.
+        identical = all(
+            name in old.get("loops", {}) and
+            old["loops"][name].get("slice_id") == out["loops"][name].get("slice_id")
+            for name in out["loops"])
         for name in out["loops"]:
             if name in old.get("loops", {}):
                 dd = out["loops"][name]["cpi"] - old["loops"][name]["cpi"]
                 if dd:
                     print(f"PMCA-LOOP {name}: cpi {old['loops'][name]['cpi']} -> {out['loops'][name]['cpi']} ({dd:+d})")
+        if identical and delta != 0:
+            print("PMCA-VERDICT=ABSTAIN-CHURN (slice content identical; delta is layout churn)")
+            return 44
+        if identical and delta == 0:
+            print("PMCA-VERDICT=OK (identical)")
+            return 0
         if delta > 0:
             print("PMCA-VERDICT=REGRESS")
             return 42

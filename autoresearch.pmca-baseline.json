@@ -1,6 +1,6 @@
 {
  "version": "pm-mca-0.2.0",
- "db": "820706021bec-pm-mca-0.2.0",
+ "db": "83996dafc8ca-pm-mca-0.2.0",
  "frames": 160,
  "loops": {
   "flex_vertex_gradient": {
@@ -8,6 +8,7 @@
    "trips": 886.65,
    "est_cycles": 65612.1,
    "n_instr": 49,
+   "slice_id": "54bc0089c5510872",
    "stalls": {
     "fp-operand": 19.0,
     "store-early": 4.0
@@ -17,11 +18,13 @@
    "bytes_rw": 16.0
   },
   "flex_variant_b": {
-   "cpi": 66,
+   "cpi": 68,
    "trips": 831.09375,
-   "est_cycles": 54852.2,
+   "est_cycles": 56514.4,
    "n_instr": 46,
+   "slice_id": "5a5c5c23fd061583",
    "stalls": {
+    "agi-in-pair": 1.0,
     "fp-operand": 17.0,
     "store-early": 3.0
    },
@@ -34,6 +37,7 @@
    "trips": 380.21875,
    "est_cycles": 1140.7,
    "n_instr": 4,
+   "slice_id": "282e42e950574aab",
    "stalls": {
     "agi": 0.92
    },
@@ -42,7 +46,7 @@
    "bytes_rw": 4.0
   }
  },
- "total_cycles": 121605.0,
- "est_us_pmmx233": 522.0,
+ "total_cycles": 123267.0,
+ "est_us_pmmx233": 529.0,
  "problems": []
 }

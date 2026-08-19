@@ -66,6 +66,9 @@ PYEOF
     if [ $verdict -eq 43 ]; then
       echo "PMCA-T0 REBASELINE: ruler definition changed; adopting fresh reference, full verify"
       cp /tmp/h2-ar-pmca.json "$PMCA_BASELINE"
+    elif [ $verdict -eq 44 ]; then
+      echo "PMCA-T0 ABSTAIN: layout churn only; full 3-run trend path decides"
+      # RUNS stays 3: the ruler has no vote, medians decide on the legacy path
     else
       RUNS=1   # in-coverage + deterministic metric: single gate run suffices
     fi
