@@ -266,14 +266,14 @@ DEAD). style-LUT question: see bench-world-lightbuild-px in evidence. The
 census placement itself re-confirmed run #91: draw_face_spans additions =
 gate lottery (129px signature).
 
-### 20. DJGPP codegen census [PARTIALLY EXECUTED 2026-08-20d; remainder cheap]
-(c) FWAIT/control-word churn: DONE at mail triage - 1,444 fnstcw / 4,169
-fldcw / 1,905 fistp, hot fns enumerated, graduated into experiment #21.
-Remaining: (a) ceilf/floorf/fix-helper call sites per hot symbol
-(draw_face's 26 fnstcw INCLUDE the per-row ceilf casts - they share #21's
-fix machinery), (b) FDIV/FSQRT counts per hot function (prices #21 phase
-b's pool). One-script sweep via pm_mca.py analyze --objdump; any new hit
-becomes its own experiment with the pmca delta printed natively.
+### ~~20. DJGPP codegen census~~ DONE (2026-08-20 mail triage + run #94-era sweep)
+SW_RasterFlexEntity fdiv/fdivr 30, fistp 46, fldcw 54; draw_face fdiv/fdivr
+17, fistp 90(!), fldcw 112 (!! the #21 conversion-tax home); SW_RasterSky
+fistp 12; SW_RasterLights fdiv 8/fistp 8 (projection path only); draw_particle
+residual fistp 22 (pool tiny); SW_PutPixel fistp 2 (rarely called now).
+No ceilf/floorf helper CALLS in any hot symbol. draw_face_spans and
+span_raster_flex_opaque don't EXIST as symbols - inlined into draw_face /
+the flex entity walker (26 fnstcw ship under _draw_face per mail triage).
 
 ### 13. World span-prologue FDIV -> seed LUT + 1 Newton [MANIFEST-GATED first]
 GPT-prompted; survives only in this form. pm-mca-legal target (FDIV = 39cyc
@@ -283,6 +283,10 @@ and the #8/rsqrt precedent was T0-discard on layout churn for exactly this
 visibility gap. Precondition = manifest grows an opaque-span entry; then
 1-2K seed LUT + r*(2-w*r) NR, error budget derived from texel-movement, not
 IEEE. Do not run as T1-only on the DOSBox ruler (x87-tax refuted there).
+2026-08-20 structural finding: the world span per-px loop is INELIGIBLE for
+pm-mca v1 slicing (per-px/run/light-move branches everywhere - v1 needs a
+clean backward-jcc loop). Manifest entry needs a hand-factored CLEAN slice
+(build construct) or pm-mca v2 inner-branch support. Stays GATED.
 Variant (b) [IEEE-exact alternative]: software-pipeline the TRUE 1/w FDIV
 across the integer shading of the current block (Pentium FP/integer overlap;
 pm-mca models it) — same manifest gate. #18 halves this pool first.
