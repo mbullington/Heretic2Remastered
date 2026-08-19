@@ -22,7 +22,7 @@
    "trips": 831.09375,
    "est_cycles": 56514.4,
    "n_instr": 46,
-   "slice_id": "5a5c5c23fd061583",
+   "slice_id": "cd2e21b97ef155e7",
    "stalls": {
     "agi-in-pair": 1.0,
     "fp-operand": 17.0,

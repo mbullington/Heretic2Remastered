@@ -2292,6 +2292,38 @@ static void entity_transform_basis(const vec3_t origin, const float cr, const fl
 	output[2] = pitch[2] + origin[2];
 }
 
+// E7 (census decision from run #78): fuse View x Entity into one 3x3 per
+// entity-frame: flex proj fills then cost 9 mul + 9 add per vertex instead of
+// 21 mul + 18 add (entity_transform_basis roll/pitch/yaw + world_to_view).
+// Reassociates FLOAT position chains only; 2LSB gates arbitrate acceptance.
+static void flex_fused_view_matrix(const float cr, const float sr, const float cp, const float sp,
+	const float cy, const float sy, const vec3_t origin, float m[3][3], float t[3])
+{
+	// R = Ryaw * Rpitch * Rroll, matching entity_transform_basis exactly.
+	const float r00 = cy * cp;
+	const float r01 = cy * sp * sr - sy * cr;
+	const float r02 = cy * sp * cr + sy * sr;
+	const float r10 = sy * cp;
+	const float r11 = sy * sp * sr + cy * cr;
+	const float r12 = sy * sp * cr - cy * sr;
+	const float r20 = -sp;
+	const float r21 = cp * sr;
+	const float r22 = cp * cr;
+	// M = Vrows . R, t = Vrows . (origin - vieworg)
+	const vec3_t* vbasis[3] = { &view_right, &view_up, &view_forward };
+	const float rcols[3][3] = {{r00, r01, r02}, {r10, r11, r12}, {r20, r21, r22}};
+	const vec3_t o = { origin[0] - sw_refdef.vieworg[0], origin[1] - sw_refdef.vieworg[1],
+		origin[2] - sw_refdef.vieworg[2] };
+	for (int i = 0; i < 3; ++i)
+	{
+		const float *v = *vbasis[i];
+		m[i][0] = v[0] * rcols[0][0] + v[1] * rcols[1][0] + v[2] * rcols[2][0];
+		m[i][1] = v[0] * rcols[0][1] + v[1] * rcols[1][1] + v[2] * rcols[2][1];
+		m[i][2] = v[0] * rcols[0][2] + v[1] * rcols[1][2] + v[2] * rcols[2][2];
+		t[i] = dot3(v, o);
+	}
+}
+
 static int clip_flex_near(const flex_raster_vertex_t input[3], flex_raster_vertex_t output[5])
 {
 	int output_count = 0;
@@ -2893,16 +2925,19 @@ static void raster_flex_triangle(const flex_screen_vertex_t a, const flex_screen
 // and cache the screen coordinates plus inverse-z for every incident triangle
 // of this entity. Returns false when the vertex is behind the near plane, in
 // which case the caller must fall back to the general clipped path.
-static qboolean flex_proj_lookup(const entity_t *entity, const vec3_t lerped[], const float cr,
-	const float sr, const float cp, const float sp, const float cy, const float sy, const int vertex,
-	flex_proj_cache_t *out)
+static qboolean flex_proj_lookup(const entity_t *entity, const vec3_t lerped[], const float m[3][3],
+	const float t[3], const int vertex, flex_proj_cache_t *out)
 {
 	flex_proj_cache_t *cache = &sw_flex_proj_cache[vertex];
 	if (cache->entity_seq != sw_flex_proj_cache_entity_seq)
 	{
-		vec3_t world;
-		entity_transform_basis(entity->origin, cr, sr, cp, sp, cy, sy, lerped[vertex], world);
-		const sw_vertex_t view = world_to_view(world, 0.0f, 0.0f);
+		// E7: one fused View x Entity matrix per entity-frame; 9 mul + 9 add per
+		// vertex fill (was entity_transform_basis + world_to_view: 21 mul + 18 add).
+		sw_vertex_t view;
+		view.x = m[0][0] * lerped[vertex][0] + m[0][1] * lerped[vertex][1] + m[0][2] * lerped[vertex][2] + t[0];
+		view.y = m[1][0] * lerped[vertex][0] + m[1][1] * lerped[vertex][1] + m[1][2] * lerped[vertex][2] + t[1];
+		view.z = m[2][0] * lerped[vertex][0] + m[2][1] * lerped[vertex][1] + m[2][2] * lerped[vertex][2] + t[2];
+		(void)entity;
 		const float w = 1.0f / view.z;
 		cache->x = sw_refdef.x + sw_refdef.width * 0.5f + view.x * projection_x * w;
 		cache->y = sw_refdef.y + sw_refdef.height * 0.5f - view.y * projection_y * w;
@@ -3041,6 +3076,9 @@ void SW_RasterFlexEntity(const entity_t *entity, const sw_model_t *model, const 
 	const float sp = sinf(-entity->angles[0]);
 	const float cy = cosf(entity->angles[1]);
 	const float sy = sinf(entity->angles[1]);
+	float ent_view_m[3][3];
+	float ent_view_t[3];
+	flex_fused_view_matrix(cr, sr, cp, sp, cy, sy, entity->origin, ent_view_m, ent_view_t);
 	flex_proj_cache_reset();
 	const uclock_t swaprefs_start = uclock();
 	qboolean use_swap = flex->num_clusters > 0 && entity->swapFrame != NO_SWAP_FRAME &&
@@ -3209,7 +3247,7 @@ void SW_RasterFlexEntity(const entity_t *entity, const sw_model_t *model, const 
 				const int vertex = rt->vi[corner];
 				vertex_indices[corner] = vertex;
 				if (vertex < 0 || vertex >= SW_MAX_FLEX_VERTS ||
-					!flex_proj_lookup(entity, lerped, cr, sr, cp, sp, cy, sy, vertex, &projected[corner]))
+					!flex_proj_lookup(entity, lerped, ent_view_m, ent_view_t, vertex, &projected[corner]))
 					cache_ok = false;
 			}
 				// Early trivial-reject, identical to the checks inside
