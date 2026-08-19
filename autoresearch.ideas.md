@@ -8,6 +8,8 @@ bench are BUILT (SEG-7 baseline #75: pmca_est_us=625, 145,709 cycles).
 2026-08-20: external GPT code-review triaged against jsonl evidence - 2 new
 atoms admitted (#12 blend specialization, #13 manifest-gated reciprocal),
 7 re-pitches screened out with run citations (see dated section below).
+2026-08-19 (user): lanes + temporal backlog PROMOTED into the queue (#14/#15/
+#16) - combat bench is the workload contract, r_swtemporal defaults ON.
 
 SEG-7 pricing frame (supersedes the static-tutorial one):
 - Bench = tutorial2 combat (gorgon+rat_giant+angermonsters, orbiting camera,
@@ -58,6 +60,30 @@ Additive class (dlights) must NOT use the direct constant (n reaches 126,480 >
 instead. RENDER gate includes the pulse (fxload injects it per frame) => keep
 class requires true bit-exactness, not "close". Not in pm-mca manifest =>
 T1/T2 DOSBox trend path; ruler credits it (instruction-count mechanism).
+
+### 15. Light-disc stamps [bit-exact feasible; 13.7ms combat pool; sequence after #12]
+Promoted from lanes 2026-08-19 per user (combat bench prices lights: 13.7ms).
+SW_RasterLights @3715: sqrtf + per-px PutPixel inside a square-domain walk.
+Precompute per-radius row extents (dx per row) + radial factor table keyed by
+(radius, d2) populated with the IDENTICAL float expression (bit-exact by
+construction) => row blit with z-test, no sqrt/reject/divide. Additive class
+shares #12's exact-/255 machinery (dr + floor(sr*a/255) identity). Table
+size: radii 2..64 x d2<=radius^2, computed once, cacheable.
+Sibling approx variant is TURBO-CLASS ONLY: approx falloff (max + 3/8 mid +
+3/16 min, or rsqrt family) changes px values everywhere => gate-red class,
+needs user arbitration, NOT keep-fidelity like the stamp table.
+NB: fog = documented non-goal (adds px cost, would red gates).
+
+### 14. Deferred additive compositing — 8x8 tile accumulators [combat-priced fx overdraw]
+Pool: particles 34.6ms + additive passes (Raven postmortem: ~10x overdraw as
+their systemic unfixed cost). Accumulate additive fx into 8x8 tile per-channel
+accumulators; one fb READ+ADD+WRITE per tile instead of one per sprite.
+Legal: saturating nonneg addition commutes. In scope: blend path only; fx
+simulation stays in src/. Sibling mechanisms in the same family (pick on
+census, don't stack): particle stamps, sprite-atlas RLE spans (PS1
+transparent-pixel surgery), E65/E66 re-probe (combat de-quiesces their pools).
+Est unknown until an overdraw census lands — gate build on a #11-style
+counter run first; most complex mechanism in the queue.
 
 ### 5. r_swscan2 row-parity variant [turbo-class, ON est -5..9 vs columns' -4.3]
 PS2 field-render trick. Existing stripe infra (#71/#72) alternates 2px column
@@ -117,29 +143,16 @@ visibility gap. Precondition = manifest grows an opaque-span entry; then
 1-2K seed LUT + r*(2-w*r) NR, error budget derived from texel-movement, not
 IEEE. Do not run as T1-only on the DOSBox ruler (x87-tax refuted there).
 
-## Workload-gated lanes (combat bench now prices them)
-- Deferred additive compositing: accumulate additive fx into 8x8 tile
-  per-channel accumulators; one fb READ+ADD+WRITE per tile instead of one
-  per sprite. Legal because saturating nonneg addition commutes. In scope
-  (blend path only; fx simulation stays in src/). Raven's postmortem names
-  ~10x overdraw as the cost they never fixed systemically => combat prices it.
-- light-disc stamps (SW_RasterLights @3715: sqrtf + per-px PutPixel inside a
-  square-domain walk; 13.7ms pool): precompute per-radius row extents (dx per
-  row) + radial alpha keyed by d2 (or a pre-lit disc sprite) => row blit with
-  z-test, no sqrt/reject/divide. Shares #12's exact-/255 multiply machinery for
-  its additive class (dr + floor(sr*a/255) identity) => sequence after #12.
-  Particle stamps, sprite-atlas RLE spans (PS1 transparent-pixel surgery),
-  E65/E66 re-probe.
-- Approx-distance attenuation (max + 3/8 mid + 3/16 min, or rsqrt family)
-  for dlight falloff: pm-mca prices the FSQRT/FDIV it replaces; combat bench
-  prices the pool (13.7ms).
-- Fog: documented non-goal (adds px cost, would red gates).
-
-## Temporal polish backlog (small; bundle as one turbo-polish session)
-- radius-2 dilation ONLY for >1px residual reveal cracks (holes ~18/frame)
-- snapshot zb-16 (halve snapshot + parity traffic)
+### 16. Temporal polish bundle [promoted 2026-08-19: temporal is default-ON; one session]
+- radius-2 dilation ONLY for >1px residual reveal cracks (holes ~18/frame):
+  quality, kills the visible artifact class
+- snapshot zb-16 (halve snapshot store + parity traffic)
 - warp block tune 8 vs 16
-- flex-only face refresh when dynamic faces dominate
+- flex-only face refresh when dynamic faces dominate (combat monsters qualify)
+Bench-visibility caveat: warp-path items (zb-16, block tune, dilation) fire
+only on fake frames; the H2DOS_SWEEP orbit may hold the motion gate at REAL
+every frame — verify warp-cadence counters before/while tuning, or the bench
+never prices these.
 
 ## Awaiting user arbitration (evidence banked; do not rebuild)
 - rgb-affine flex turbo variant A: -12.1ms flex (frame 157.1 vs 160.7), GATE
