@@ -1,6 +1,31 @@
 # Autoresearch: minimize DOS soft-renderer frame time
 
-## SEG-6 (active): 320x240 RGB565 + correctness overhaul
+## SEG-7 (active): PMMX ruler (pm-mca) + staged harness + COMBAT workload
+
+Harness/metric/workload contract changed at the user's request (2026-08-19):
+- **Workload**: tutorial2 is no longer quiescent: deterministic combat driver
+  (gorgon + rat_giant planted beside the stationary player, `angermonsters`),
+  orbiting camera (H2DOS_SWEEP), and renderer-boundary fxload (64 typed
+  particles + 2 dlights + damage-blend pulse per frame). Pools now exercised:
+  particles 34ms / lights 14ms / blend 70ms / entities 41ms. Counters +
+  CLIENT.PPM bit-identical across reruns. Baseline counters:
+  autoresearch.combat-baseline.txt.
+- **Primary metric: `pmca_est_us`** = Σ(cycles/iter × trips/frame) over the
+  pm-mca manifest loops, scaled to PMMX-233 clocks. pm-mca is a STATIC
+  P55C instruction-window analyzer (U/V pairing, AGI, bank conflicts, x87
+  overlap, MMX resources, decode rules; tables cited from Agner Fog's 2025
+  manuals; selftest 16/16 incl. published schedules). Deterministic => no
+  medians needed. scripts/pm_mca_manifest.json is the coverage contract.
+  Build-state baseline: pmca_est_us=335 (78,070 cycles), flex cpi 89/79.
+- **Harness stages**: T0 = pm-mca report (sub-second; exit-42 early-discard
+  on deterministic regression; coverage gate routes foreign diffs to the
+  legacy path). T1 = ONE combat run + gates when in-coverage. T2 = 3x medians
+  for out-of-coverage/trend. T3 = checkpoint-cadence robustness, currently
+  the OLD static tutorial2 scene (scripts/run-dos-benchmark.py).
+- DOSBox trend telemetry (total_us et al.) remains tracked for seg chain,
+  now from combat evidence.
+
+## SEG-6 (archived 2026-08-19): 320x240 RGB565 + correctness overhaul
 
 Bench/display contract changed at the user's request: 320x200 INDEX8
 (quantized, palettized) -> 320x240 RGB565 (direct color). Seg-5 numbers are

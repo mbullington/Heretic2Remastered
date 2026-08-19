@@ -1,9 +1,12 @@
 #!/bin/bash
-# Autoresearch verify: incremental DJGPP build + DOSBox benchmark (median of 3)
-# + METRIC lines. ~90s. Single-run drift (sky_us flips 36<->56ms) is why we
-# take the MEDIAN: keep decisions out of the noise.
+# Autoresearch verify: incremental DJGPP build + DOSBox COMBAT-scene benchmark
+# (median of RUNS) + METRIC lines + T0 pm-mca deterministic pre-filter.
+# Single-run drift (sky_us flips 36<->56ms) is why out-of-coverage runs take
+# the MEDIAN: keep decisions out of the noise. In-coverage asm-lane runs use
+# the pm-mca ruler (deterministic) and take ONE gate run.
 set -euo pipefail
 cd "$(dirname "$0")"
+export H2DOS_COMBAT_RUN=COMBAT1
 
 NIXPKGS="github:NixOS/nixpkgs/f2b17eb1b90f6a359082035b4538d4c63017aec3"
 JOBS="${CMAKE_BUILD_PARALLEL_LEVEL:-8}"
@@ -53,7 +56,7 @@ PYEOF
   else
     python3 scripts/pm_mca.py report --exe .dos-build/guest/SILVER.EXE \
       --manifest scripts/pm_mca_manifest.json \
-      --evidence .dos-build/guest/BENCH-EVIDENCE.TXT \
+      --evidence .dos-build/guest/COMBAT-EVIDENCE.TXT \
       --baseline "$PMCA_BASELINE" --json /tmp/h2-ar-pmca.json
     verdict=$?
     if [ $verdict -eq 42 ]; then
@@ -69,14 +72,16 @@ PYEOF
   fi
 fi
 
-# Benchmark run(s); collect evidence copies per run, take per-metric medians.
+# Benchmark run(s) on the COMBAT scene (SEG-7 workload: tutorial2 +
+# angered planted monsters + deterministic fxload; counters bit-identical
+# across reruns, timings median-ed over RUNS runs like the old bench).
 for i in $(seq 1 "$RUNS"); do
-  rm -rf .dos-build/runs/bench-BENCH1
-  python3 scripts/run-dos-benchmark.py > /tmp/h2-ar-bench-$i.log 2>&1 || {
+  rm -rf .dos-build/runs/combat-COMBAT1
+  python3 scripts/run-dos-combat.py > /tmp/h2-ar-bench-$i.log 2>&1 || {
     tail -30 /tmp/h2-ar-bench-$i.log; exit 1; }
   grep -q '^status=PASS$' /tmp/h2-ar-bench-$i.log || {
     tail -30 /tmp/h2-ar-bench-$i.log; exit 1; }
-  cp .dos-build/guest/BENCH-EVIDENCE.TXT /tmp/h2-ar-evidence-$i.txt
+  cp .dos-build/guest/COMBAT-EVIDENCE.TXT /tmp/h2-ar-evidence-$i.txt
 done
 cp "/tmp/h2-ar-bench-$RUNS.log" /tmp/h2-ar-bench.log
 EVFILES=$(for i in $(seq 1 "$RUNS"); do printf '/tmp/h2-ar-evidence-%s.txt ' "$i"; done)
