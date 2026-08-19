@@ -78,6 +78,19 @@ typedef struct h2dos_soft_stats_s {
 	unsigned bench_walked_sprite;
 	unsigned long long bench_flex_vertex_lerps; // vertex posing work units in the entity pass
 	unsigned long long bench_us_flex_prologue;  // entity-pass time before triangle setup begins
+	unsigned long long bench_zcollide_eq;       // attempted writes at exactly the same depth key
+	unsigned long long bench_zcollide_near;     // attempted writes within +/-4 depth keys
+	unsigned bench_flex_tris_wind;              // flex triangles culled by GL-equivalent winding
+	unsigned bench_magenta_px;                  // total magenta framebuffer pixels across frames
+	unsigned bench_magenta_max;                 // largest magenta pixel count in one frame
+	unsigned bench_magenta_saved;               // MAGENTA.PPM capture written
+	unsigned bench_mag_world;                   // magenta written by the opaque world span loop
+	unsigned bench_mag_world_alpha;             // magenta written by the alpha world span loop
+	unsigned bench_mag_flex;                    // magenta written by flex span loops
+	unsigned bench_mag_putpixel;                // magenta written through SW_PutPixel (sprites/naive)
+	unsigned bench_mag_frame;                   // first frame that contained magenta
+	unsigned long long bench_mag_surface;       // magenta found in the converted present surface
+	unsigned bench_holes_topband;               // depth==0 pixels in top 60 rows this frame
 } h2dos_soft_stats_t;
 
 const h2dos_soft_stats_t *H2DOS_SoftGetStats(void);

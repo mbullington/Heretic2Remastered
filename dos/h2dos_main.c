@@ -29,6 +29,7 @@
 #define H2DOS_MARKER "SILVER.OK"
 #define H2DOS_ZONE_TAG 0x2d05
 #define H2DOS_MIN_FRAME_USEC 16667
+#define H2DOS_BENCH_RNG_SEED 1337u
 
 // DOS command lines are limited to ~126 characters by the PSP, so long proof
 // invocations also accept DJGPP environment variables as fallbacks.
@@ -852,6 +853,14 @@ static void log_bench_summary(void)
 		stats->bench_flex_spans, stats->bench_flex_blocks);
 	log_append("bench-sky-cache-hits=%u\nbench-sky-cache-misses=%u\n",
 		stats->sky_cache_hits, stats->sky_cache_misses);
+	log_append("bench-zcollide-eq=%llu\nbench-zcollide-near=%llu\nbench-flex-tris-wind=%u\n",
+		(unsigned long long)stats->bench_zcollide_eq, (unsigned long long)stats->bench_zcollide_near,
+		stats->bench_flex_tris_wind);
+	log_append("bench-magenta-px=%u\nbench-magenta-max=%u\nbench-magenta-saved=%u\n",
+		stats->bench_magenta_px, stats->bench_magenta_max, stats->bench_magenta_saved);
+	log_append("bench-mag-world=%u\nbench-mag-world-alpha=%u\nbench-mag-flex=%u\nbench-mag-putpixel=%u\nbench-mag-frame=%u\nbench-mag-surface=%llu\n",
+		stats->bench_mag_world, stats->bench_mag_world_alpha, stats->bench_mag_flex,
+		stats->bench_mag_putpixel, stats->bench_mag_frame, (unsigned long long)stats->bench_mag_surface);
 }
 
 static void begin_audio_proof(const qboolean realdata)
@@ -1022,6 +1031,7 @@ int main(const int argc, char** argv)
 	const int server_frame_start = sv.framenum;
 	previous = Sys_Microseconds() - 100000;
 	long long bench_time_us = 0;
+	qboolean bench_seeded = false;
 	for (frame = 0; frame < frame_limit; ++frame)
 	{
 		long long now = Sys_Microseconds();
@@ -1046,9 +1056,42 @@ int main(const int argc, char** argv)
 		curtime = bench_requested ? (int)(bench_time_us / 1000ll) : (int)(now / 1000ll);
 		Qcommon_Frame((int)elapsed);
 		previous = now;
+		if (bench_requested && realdata && !bench_seeded && cls.state == ca_active && cl.refresh_prepped)
+		{
+			// The sim and client share one libc PRNG; frames rendered before the
+			// map is active (loading screens) vary in count with wall time, so the
+			// rand state at activation would otherwise fork between runs.
+			srand(H2DOS_BENCH_RNG_SEED);
+			bench_seeded = true;
+			log_append("bench-rng-seeded=%u\n", (unsigned)H2DOS_BENCH_RNG_SEED);
+		}
 		if (realdata)
 			log_append("realdata-frame=%d cls-state=%d sv-state=%d initialized=%d\n",
 				frame, cls.state, sv.state, svs.initialized);
+		if (realdata && bench_requested && bench_seeded && getenv("H2DOS_SWEEP") != NULL)
+		{
+			// Deterministic camera orbit: each frame yaws by a fixed step so span
+			// and naive runs sweep identical angle sequences. Anything that differs
+			// per angle (coverage, objects) lands in the dumped frames.
+			cl.viewangles[0] = -10.0f;
+			cl.viewangles[1] = (float)(frame % 48) * (360.0f / 48.0f);
+		}
+		if (realdata && getenv("H2DOS_DUMPALL") != NULL)
+		{
+			// Name by renderer 3D frame (bf) so dumps align with bf= tagged
+			// diagnostics; skip iterations where no 3D render happened.
+			static unsigned last_rendered_frame = 0xFFFFFFFFu;
+			char name[16];
+			const h2dos_soft_stats_t *swst = H2DOS_SoftGetStats();
+			const unsigned bf = swst != NULL ? swst->bench_frames : 0;
+			if (bf != last_rendered_frame)
+			{
+				last_rendered_frame = bf;
+				snprintf(name, sizeof(name), "F%02d.PPM", (int)(bf > 0 ? bf - 1 : 0));
+				if (!H2DOS_SoftSavePPM(name))
+					Sys_Error("Could not save indexed client framebuffer %s", name);
+			}
+		}
 		if (integrated_proof && !audio_started && svs.initialized && svs.clients != NULL &&
 			svs.clients[0].state == cs_spawned && cls.state == ca_active && cl.refresh_prepped)
 		{

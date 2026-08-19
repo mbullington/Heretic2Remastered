@@ -102,10 +102,21 @@ def main() -> int:
             raise ProofError("Guest input contains a symlink")
 
         dosbox_executable()
+        # Diagnostic hooks: a host-side passthrough (default: none) that appends
+        # extra `set` lines to the guest autoexec. The pinned harness runs
+        # without it; instrumentation experiments set e.g.
+        #   H2DOS_BENCH_EXTRA_SET="H2DOS_SW_ZCOLLIDE=1"
+        extra_blocks = ""
+        extra_env = os.environ.get("H2DOS_BENCH_EXTRA_SET", "").strip()
+        if extra_env:
+            for item in extra_env.split():
+                if "=" in item and all(c.isalnum() or c in "_=.,-" for c in item):
+                    extra_blocks += f"set {item}\n"
         run_dosbox(
             GuestStage(stage_path, None, set()),
             f"set H2DOS_RUN_ID={RUN_ID}\nset H2DOS_FRAMES={FRAME_LIMIT}\n"
             "set H2DOS_RENDERER=1\nset H2DOS_AUDIO=1\nset H2DOS_REALDATA=1\nset H2DOS_BENCH=1\nset H2DOS_SW_WIDTH=320\nset H2DOS_SW_HEIGHT=240\n"
+            f"{extra_blocks}"
             "silver.exe -basedir H2REAL +set developer 1 +map tutorial2 > SWREAL.OUT",
             TIMEOUT_SECONDS,
             extra_sets=(f"cycles={CYCLES}",),
@@ -151,6 +162,10 @@ def main() -> int:
         )
         if (stage_path / "CLIENT.PPM").is_file():
             shutil.copyfile(stage_path / "CLIENT.PPM", ARTIFACT_DIR / "BENCH-CLIENT.PPM")
+        for cap in sorted(stage_path.glob("F[0-9]*.PPM")):
+            shutil.copyfile(cap, ARTIFACT_DIR / f"BENCH-{cap.name}")
+        if (stage_path / "MAGENTA.PPM").is_file():
+            shutil.copyfile(stage_path / "MAGENTA.PPM", ARTIFACT_DIR / "BENCH-MAGENTA.PPM")
         if (stage_path / "SWREAL.OUT").is_file():
             shutil.copyfile(stage_path / "SWREAL.OUT", ARTIFACT_DIR / "BENCH-SWREAL.OUT")
 

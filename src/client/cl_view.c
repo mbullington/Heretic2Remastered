@@ -318,6 +318,19 @@ void Activate_Screen_Shake(const float intensity, const float duration, const fl
 
 void Perform_Screen_Shake(vec3_t out, const float current_time)
 {
+// Bench determinism: the shake consumes rand() at a real-time-driven rate and
+// pushes wobble into refdef.viewangles, which forks the sim trajectory across
+// runs. Under H2DOS_BENCH the shake is a no-op so frame-to-frame captures are
+// comparable across renderer configurations.
+static int h2dos_bench_noshake = -1;
+	if (h2dos_bench_noshake < 0)
+		h2dos_bench_noshake = getenv("H2DOS_BENCH") != NULL;
+	if (h2dos_bench_noshake)
+	{
+		VectorClear(out);
+		return;
+	}
+
 #define LERP_DURATION	32.0f
 
 	VectorClear(out);

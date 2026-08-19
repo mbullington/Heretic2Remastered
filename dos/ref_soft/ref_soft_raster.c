@@ -358,23 +358,40 @@ static inline uint16_t span_modulate(const uint16_t texel, const uint32_t light_
 	return (uint16_t)(((r & 0xF8u) << 8) | ((g & 0xFCu) << 3) | (b >> 3));
 }
 
+static int sw_tag_face_paint_count;
+static int sw_tag_face_paint_last;
+
 static void draw_face_spans(const screen_vertex_t *verts, const int n, const sw_image_t *image,
 	const sw_bsp_t *bsp, const dface_t *face, const float texture_min_s, const float texture_min_t,
 	const int light_width, const int light_height, const float alpha, const int face_index,
 	const qboolean alpha_test)
 {
+	sw_tag_face_paint_count = 0;
 	if (n < 3 || image == NULL || image->pixels == NULL)
-		return;
-	// Cheap reject before gradient math: whole polygon outside the viewport.
 	{
-		float minx = verts[0].x, maxx = verts[0].x, miny = verts[0].y, maxy = verts[0].y;
+		if (face_index == sw_dbg_tag_face)
+			sw_ri.Con_Printf(PRINT_ALL, "tagface abort n3 bf=%u face=%d n=%d img=%p\n",
+				sw_stats.bench_frames, face_index, n, (const void *)image);
+		return;
+	}
+	// Cheap reject before gradient math: whole polygon outside the viewport.
+	float minx = verts[0].x, maxx = verts[0].x, miny = verts[0].y, maxy = verts[0].y;
+	{
 		for (int i = 1; i < n; ++i)
 		{
 			minx = min(minx, verts[i].x); maxx = max(maxx, verts[i].x);
 			miny = min(miny, verts[i].y); maxy = max(maxy, verts[i].y);
 		}
 		if (maxx < 0.0f || minx >= (float)sw_width || maxy < 0.0f || miny >= (float)sw_height)
+		{
+			if (face_index == sw_dbg_tag_face)
+				sw_ri.Con_Printf(PRINT_ALL, "tagface abort bbox bf=%u face=%d minx=%g maxx=%g miny=%g maxy=%g\n",
+					sw_stats.bench_frames, face_index, minx, maxx, miny, maxy);
 			return;
+		}
+		if (face_index == sw_dbg_tag_face)
+			sw_ri.Con_Printf(PRINT_ALL, "tagface pregrad bf=%u face=%d minx=%g maxx=%g miny=%g maxy=%g n=%d\n",
+				sw_stats.bench_frames, face_index, minx, maxx, miny, maxy, n);
 	}
 
 	// Plane gradients in screen space for the five interpolated attributes.
@@ -382,13 +399,51 @@ static void draw_face_spans(const screen_vertex_t *verts, const int n, const sw_
 	const screen_vertex_t *v0 = &verts[0];
 	const screen_vertex_t *v1 = &verts[1];
 	const screen_vertex_t *v2 = &verts[2];
-	const float x10 = v1->x - v0->x, y10 = v1->y - v0->y;
-	const float x20 = v2->x - v0->x, y20 = v2->y - v0->y;
-	const float denom = x10 * y20 - x20 * y10;
+	float x10 = v1->x - v0->x, y10 = v1->y - v0->y;
+	float x20 = v2->x - v0->x, y20 = v2->y - v0->y;
+	float denom = x10 * y20 - x20 * y10;
+	// The first three clipped vertices are arbitrary; on thin wall slivers they
+	// can lie almost on one polygon edge, making their triangle degenerate and
+	// dropping the whole face (holes flickering in/out as the denom crosses the
+	// threshold). Re-anchor on the largest-area vertex triple in that case.
+	const float bbox_area = (maxx - minx) * (maxy - miny);
+	if (fabsf(denom) < 0.05f * bbox_area)
+	{
+		float best = fabsf(denom);
+		const float target = bbox_area > 0.0f ? 0.2f * bbox_area : 0.0f;
+		qboolean done = false;
+		for (int i = 0; i < n - 2 && !done; ++i)
+			for (int j = i + 1; j < n - 1 && !done; ++j)
+				for (int k = j + 1; k < n && !done; ++k)
+				{
+					const float a = (verts[j].x - verts[i].x) * (verts[k].y - verts[i].y) -
+						(verts[k].x - verts[i].x) * (verts[j].y - verts[i].y);
+					if (fabsf(a) > best)
+					{
+						best = fabsf(a);
+						v0 = &verts[i];
+						v1 = &verts[j];
+						v2 = &verts[k];
+						denom = a;
+						done = best >= target;
+					}
+				}
+		x10 = v1->x - v0->x; y10 = v1->y - v0->y;
+		x20 = v2->x - v0->x; y20 = v2->y - v0->y;
+	}
 	if (!isfinite(denom) || fabsf(denom) < 0.0001f)
+	{
+		if (face_index == sw_dbg_tag_face)
+			sw_ri.Con_Printf(PRINT_ALL, "tagface abort denom bf=%u face=%d denom=%g v0=(%g,%g,w=%g) v1=(%g,%g,w=%g) v2=(%g,%g,w=%g) n=%d light=%dx%d\n",
+				sw_stats.bench_frames, face_index, denom, v0->x, v0->y, v0->inverse_z, v1->x, v1->y,
+				v1->inverse_z, v2->x, v2->y, v2->inverse_z, n, light_width, light_height);
 		return;
-	const float inv_denom = 1.0f / denom;
+	}
+	if (face_index == sw_dbg_tag_face)
+		sw_ri.Con_Printf(PRINT_ALL, "tagface enter bf=%u face=%d denom=%g light=%dx%d n=%d\n",
+			sw_stats.bench_frames, face_index, denom, light_width, light_height, n);
 	float gradient_uz_x, gradient_uz_y, gradient_vz_x, gradient_vz_y;
+	const float inv_denom = 1.0f / denom;
 	float gradient_w_x, gradient_w_y, gradient_lsz_x, gradient_lsz_y, gradient_ltz_x, gradient_ltz_y;
 #define SW_GRADIENT(attr, out_x, out_y) do { \
 		const float p10 = v1->attr - v0->attr; \
@@ -483,7 +538,12 @@ static void draw_face_spans(const screen_vertex_t *verts, const int n, const sw_
 	int scan_first = ClampI((int)ceilf(verts[top].y - 0.5f), 0, sw_height - 1);
 	int scan_last = ClampI((int)ceilf(verts[bottom].y - 0.5f) - 1, 0, sw_height - 1);
 	if (scan_first > scan_last)
+	{
+		if (face_index == sw_dbg_tag_face)
+			sw_ri.Con_Printf(PRINT_ALL, "tagface abort scanrange bf=%u face=%d first=%d last=%d top=%d(%g) bottom=%d(%g)\n",
+				sw_stats.bench_frames, face_index, scan_first, scan_last, top, verts[top].y, bottom, verts[bottom].y);
 		return;
+	}
 
 	int left_prev = top, left_cur = top;
 	int right_prev = top, right_cur = top;
@@ -524,7 +584,12 @@ static void draw_face_spans(const screen_vertex_t *verts, const int n, const sw_
 		int xa = ClampI((int)ceilf(min(left_x, right_x) - 0.5f), 0, sw_width - 1);
 		int xb = ClampI((int)ceilf(max(left_x, right_x) - 0.5f) - 1, 0, sw_width - 1);
 		if (xa > xb)
+		{
+			if (face_index == sw_dbg_tag_face)
+				sw_ri.Con_Printf(PRINT_ALL, "tagface emptyrow bf=%u face=%d y=%d lx=%g rx=%g lp=%d rp=%d lc=%d rc=%d\n",
+					sw_stats.bench_frames, face_index, y, left_x, right_x, left_prev, right_prev, left_cur, right_cur);
 			continue;
+		}
 
 		const float x_center = xa + 0.5f - v0->x;
 		float uz = v0->s_over_z + gradient_uz_x * x_center + gradient_uz_y * y_center;
@@ -542,7 +607,12 @@ static void draw_face_spans(const screen_vertex_t *verts, const int n, const sw_
 			++sw_stats.bench_world_blocks;
 			const int block = (x & (SW_WORLD_SPAN_STEP - 1)) ? min(remaining, SW_WORLD_SPAN_STEP - (x & (SW_WORLD_SPAN_STEP - 1))) : min(remaining, SW_WORLD_SPAN_STEP);
 			if (w <= 0.0f)
+			{
+				if (face_index == sw_dbg_tag_face)
+					sw_ri.Con_Printf(PRINT_ALL, "tagface abort w bf=%u face=%d y=%d x=%d w=%g paint=%d\n",
+						sw_stats.bench_frames, face_index, y, x, w, sw_tag_face_paint_count);
 				return;
+			}
 			const float w_end = w + gradient_w_x * block;
 			const float iz0 = 1.0f / w;
 			const float iz1 = 1.0f / max(w_end, 1e-20f);
@@ -604,7 +674,14 @@ static void draw_face_spans(const screen_vertex_t *verts, const int n, const sw_
 							light_g = (light_prev >> 10) & 1023u;
 							light_b = light_prev & 1023u;
 						}
-							fb_row[idx] = span_modulate3(texel, light_r, light_g, light_b);
+							const uint16_t wpx = span_modulate3(texel, light_r, light_g, light_b);
+							sw_stats.bench_mag_world += (wpx == 0xF81Fu);
+							sw_tag_face_paint_last = face_index;
+							++sw_tag_face_paint_count;
+							if (sw_dbg_tag_x == x && sw_dbg_tag_y == y)
+								sw_ri.Con_Printf(PRINT_ALL, "tagxy worldspan bf=%u face=%d texel=%04x out=%04x key=%u zb=%u light=%08x\n",
+									sw_stats.bench_frames, face_index, texel, wpx, ikey, zb_row[idx], light_prev);
+							fb_row[idx] = wpx;
 							zb_row[idx] = ikey;
 							++depth_writes;
 						}
@@ -651,7 +728,11 @@ static void draw_face_spans(const screen_vertex_t *verts, const int n, const sw_
 						const unsigned r = min(255u, (lr8 * (unsigned)sa + dr8 * (unsigned)dw) / 255u);
 						const unsigned g = min(255u, (lg8 * (unsigned)sa + dg8 * (unsigned)dw) / 255u);
 						const unsigned bb = min(255u, (lb8 * (unsigned)sa + db8 * (unsigned)dw) / 255u);
-						fb_row[idx] = SW_RGB565(r, g, bb);
+						const uint16_t apx = SW_RGB565(r, g, bb);
+						sw_stats.bench_mag_world_alpha += (apx == 0xF81Fu);
+						sw_tag_face_paint_last = face_index;
+						++sw_tag_face_paint_count;
+						fb_row[idx] = apx;
 						if (sa == 255 && alpha >= 1.0f)
 						{
 							zb_row[idx] = ikey;
@@ -780,10 +861,50 @@ static sw_deferred_face_t sw_deferred_faces[SW_MAX_DEFERRED_FACES];
 static int sw_deferred_face_count;
 static qboolean sw_deferral_bypass;
 
+static void sw_tag_report_face(const screen_vertex_t *verts, const int n, const sw_image_t *image,
+	const int face_index, const int flags)
+{
+	if (sw_dbg_tag_x < 0 || sw_dbg_tag_y < 0)
+		return;
+	const float px = sw_dbg_tag_x + 0.5f, py = sw_dbg_tag_y + 0.5f;
+	qboolean neg = false, pos = false;
+	for (int i = 0; i < n; ++i)
+	{
+		const float e = edge(verts[i], verts[(i + 1) % n], px, py);
+		neg |= e < 0.0f;
+		pos |= e > 0.0f;
+	}
+	if (neg && pos)
+	{
+		// Convex test failed; still report faces whose bbox contains the pixel
+		// (degenerate/non-convex fan triangles can paint it anyway).
+		float minx = verts[0].x, maxx = verts[0].x, miny = verts[0].y, maxy = verts[0].y;
+		qboolean wild = false;
+		for (int i = 1; i < n; ++i)
+		{
+			minx = min(minx, verts[i].x); maxx = max(maxx, verts[i].x);
+			miny = min(miny, verts[i].y); maxy = max(maxy, verts[i].y);
+		}
+		for (int i = 0; i < n; ++i)
+			wild |= !isfinite(verts[i].x) || !isfinite(verts[i].y) || !isfinite(verts[i].inverse_z) ||
+				fabsf(verts[i].x) > 1e6f || fabsf(verts[i].y) > 1e6f || verts[i].inverse_z > 0.02f;
+		if (wild || (px >= minx && px <= maxx && py >= miny && py <= maxy))
+			sw_ri.Con_Printf(PRINT_ALL, "tagxy worldface-bbox bf=%u face=%d tex=%s n=%d wild=%d w=(%g %g %g) v0=(%g,%g) v1=(%g,%g) v2=(%g,%g)\n",
+				sw_stats.bench_frames, face_index, image != NULL ? image->name : "?", n, (int)wild,
+				verts[0].inverse_z, verts[1].inverse_z, verts[2].inverse_z,
+				verts[0].x, verts[0].y, verts[1].x, verts[1].y, verts[2].x, verts[2].y);
+		return;
+	}
+	sw_ri.Con_Printf(PRINT_ALL, "tagxy worldface bf=%u face=%d tex=%s flags=%x w0=%g w1=%g w2=%g\n",
+		sw_stats.bench_frames, face_index, image != NULL ? image->name : "?", flags,
+		verts[0].inverse_z, verts[1].inverse_z, verts[2].inverse_z);
+}
+
 static void draw_face(const sw_bsp_t *bsp, const int face_index, const vec3_t origin, const int entity_frame)
 {
 	if (face_index < 0 || face_index >= bsp->num_faces)
 		return;
+	sw_dbg_tag_src = face_index;
 	++sw_stats.bench_world_faces;
 	const dface_t *face = &bsp->faces[face_index];
 	const int first_edge = LittleLong(face->firstedge);
@@ -921,15 +1042,35 @@ static void draw_face(const sw_bsp_t *bsp, const int face_index, const vec3_t or
 	screen_vertex_t projected[SW_MAX_FACE_VERTS + 2];
 	for (int i = 0; i < clipped_count; ++i)
 		projected[i] = project(clipped[i]);
-	if (sw_spans != NULL && sw_spans->value != 0.0f &&
+	sw_tag_report_face(projected, clipped_count, image, face_index, flags);
+	const qboolean tag_this_face = (face_index == sw_dbg_tag_face);
+	if (sw_spans != NULL && sw_spans->value != 0.0f && !sw_dbg_nospan &&
 		light_width <= SW_LIGHT_CACHE_MAX && light_height <= SW_LIGHT_CACHE_MAX)
 		draw_face_spans(projected, clipped_count, image, bsp, lighting_face, minimum_s,
 			minimum_t, light_width, light_height, alpha, face_index,
 			(flags & SURF_ALPHA_TEXTURE) != 0);
 	else
+	{
+		sw_tag_face_paint_count = 0;
 		for (int i = 1; i + 1 < clipped_count; ++i)
+		{
+			if (sw_dbg_tag_x >= 0 && sw_dbg_tag_y >= 0)
+			{
+				const float px = sw_dbg_tag_x + 0.5f, py = sw_dbg_tag_y + 0.5f;
+				const screen_vertex_t a = projected[0], b = projected[i], c = projected[i + 1];
+				const float e0 = edge(a, b, px, py), e1 = edge(b, c, px, py), e2 = edge(c, a, px, py);
+				if (!((e0 < 0.0f || e1 < 0.0f || e2 < 0.0f) && (e0 > 0.0f || e1 > 0.0f || e2 > 0.0f)))
+					sw_ri.Con_Printf(PRINT_ALL, "tagxy worldtri bf=%u face=%d tri=%d v0=(%g,%g,w=%g) v1=(%g,%g,w=%g) v2=(%g,%g,w=%g)\n",
+						sw_stats.bench_frames, face_index, i, a.x, a.y, a.inverse_z, b.x, b.y, b.inverse_z, c.x, c.y, c.inverse_z);
+			}
 			raster_triangle(projected[0], projected[i], projected[i + 1], image,
 				bsp, lighting_face, minimum_s, minimum_t, light_width, light_height, alpha);
+		}
+		sw_tag_face_paint_count = -1; // naive path: paints via SW_PutPixel (see tagxy lines)
+	}
+	if (tag_this_face)
+		sw_ri.Con_Printf(PRINT_ALL, "tagface bf=%u face=%d painted=%d\n",
+			sw_stats.bench_frames, face_index, sw_tag_face_paint_count);
 	if (animation_frames > 1) ++sw_stats.animated_faces;
 	if (flags & SURF_FLOWING) ++sw_stats.flowing_faces;
 	if (flags & SURF_WARP) ++sw_stats.turbulent_faces;
@@ -1078,6 +1219,14 @@ void SW_SkyCacheShutdown(void)
 	sky_cache_face_mask = 0;
 }
 
+static float sw_canon_angle(const float a)
+{
+	float c = fmodf(a, 360.0f);
+	if (c < 0.0f)
+		c += 360.0f;
+	return c;
+}
+
 static qboolean sky_cache_matches(const refdef_t *fd, const float rotation_angle)
 {
 	return sky_cache_key.valid && sky_cache_key.generation == sw_sky_generation &&
@@ -1085,9 +1234,9 @@ static qboolean sky_cache_matches(const refdef_t *fd, const float rotation_angle
 		sky_cache_key.x == fd->x && sky_cache_key.y == fd->y &&
 		sky_cache_key.width == fd->width && sky_cache_key.height == fd->height &&
 		sky_cache_key.fov_x == fd->fov_x && sky_cache_key.fov_y == fd->fov_y &&
-		sky_cache_key.viewangles[0] == fd->viewangles[0] &&
-		sky_cache_key.viewangles[1] == fd->viewangles[1] &&
-		sky_cache_key.viewangles[2] == fd->viewangles[2] &&
+		sky_cache_key.viewangles[0] == sw_canon_angle(fd->viewangles[0]) &&
+		sky_cache_key.viewangles[1] == sw_canon_angle(fd->viewangles[1]) &&
+		sky_cache_key.viewangles[2] == sw_canon_angle(fd->viewangles[2]) &&
 		sky_cache_key.rotation_angle == rotation_angle;
 }
 
@@ -1123,6 +1272,10 @@ void SW_RasterSky(const refdef_t *fd)
 	if (!rotating && sky_cache != NULL && sky_cache_matches(fd, rotation_angle))
 	{
 		++sw_stats.sky_cache_hits;
+		if (sw_dbg_skydiag)
+			sw_ri.Con_Printf(PRINT_ALL, "sky: hit rframe=%u mask=%02x angles=%.4f %.4f %.4f holes=%u\n",
+				sw_stats.bench_frames, sky_cache_face_mask, fd->viewangles[0], fd->viewangles[1],
+				fd->viewangles[2], sw_stats.bench_holes_topband);
 		for (int y = minimum_y; y < maximum_y; ++y)
 		{
 			const uint32_t *zb_row = sw_depth + (size_t)y * sw_width;
@@ -1130,13 +1283,21 @@ void SW_RasterSky(const refdef_t *fd)
 			uint16_t *dst = sw_color + y * sw_width + minimum_x;
 			for (int x = 0; x < maximum_x - minimum_x; ++x)
 				if (zb_row[minimum_x + x] == 0)
+				{
 					dst[x] = src[x];
+					if (sw_dbg_tag_x == minimum_x + x && sw_dbg_tag_y == y)
+						sw_ri.Con_Printf(PRINT_ALL, "tagxy sky-cache bf=%u color=%04x\n", sw_stats.bench_frames, src[x]);
+				}
 		}
 		sw_stats.sky_pixels += (unsigned)drawn_pixels;
 		sw_stats.sky_face_mask |= sky_cache_face_mask;
 		return;
 	}
 	++sw_stats.sky_cache_misses;
+	if (sw_dbg_skydiag)
+		sw_ri.Con_Printf(PRINT_ALL, "sky: MISS/rebuild rframe=%u angles=%.4f %.4f %.4f holes=%u\n",
+			sw_stats.bench_frames, fd->viewangles[0], fd->viewangles[1], fd->viewangles[2],
+			sw_stats.bench_holes_topband);
 	// Rotating the per-pixel direction by the swirl rotation is linear, so the
 	// whole transform folds into the basis vectors once per frame. Direction is
 	// then stepped incrementally across each scanline (3 adds per pixel) instead
@@ -1206,6 +1367,9 @@ void SW_RasterSky(const refdef_t *fd)
 						const int texture_x = ClampI(is >> 16, 0, image->width - 1);
 						const int texture_y = ClampI(it >> 16, 0, image->height - 1);
 						const uint16_t color = image->pixels[texture_y * image->width + texture_x];
+						if (sw_dbg_tag_x == x && sw_dbg_tag_y == y)
+							sw_ri.Con_Printf(PRINT_ALL, "tagxy sky bf=%u face=%d color=%04x\n",
+								sw_stats.bench_frames, face0, color);
 						fb_row[x] = color;
 						if (cache_row != NULL)
 							cache_row[x] = color;
@@ -1253,7 +1417,9 @@ void SW_RasterSky(const refdef_t *fd)
 		sky_cache_key.height = fd->height;
 		sky_cache_key.fov_x = fd->fov_x;
 		sky_cache_key.fov_y = fd->fov_y;
-		VectorCopy(fd->viewangles, sky_cache_key.viewangles);
+		sky_cache_key.viewangles[0] = sw_canon_angle(fd->viewangles[0]);
+		sky_cache_key.viewangles[1] = sw_canon_angle(fd->viewangles[1]);
+		sky_cache_key.viewangles[2] = sw_canon_angle(fd->viewangles[2]);
 		sky_cache_key.rotation_angle = rotation_angle;
 		sky_cache_key.generation = sw_sky_generation;
 		sky_cache_key.valid = true;
@@ -2125,6 +2291,9 @@ static void span_raster_flex_triangle(const flex_screen_vertex_t a, const flex_s
 			{
 				++sw_stats.bench_pixels_flex;
 				const size_t idx = (size_t)x;
+				if (sw_dbg_tag_x == x && sw_dbg_tag_y == y)
+					sw_ri.Con_Printf(PRINT_ALL, "tagxy flexspan bf=%u cat=%d key=%u zb=%u iu=%d it=%d\n",
+						sw_stats.bench_frames, sw_bench_tri_category, ikey, zb_row[idx], iu >> 16, it >> 16);
 				if (!no_depth_test && ikey < zb_row[idx])
 					goto advance;
 				{
@@ -2146,14 +2315,18 @@ static void span_raster_flex_triangle(const flex_screen_vertex_t a, const flex_s
 					if (additive)
 					{
 						const uint16_t dst = fb_row[idx];
-						fb_row[idx] = SW_RGB565(
+						const uint16_t fpx = SW_RGB565(
 							min(255u, (min(255u, mr) * (unsigned)salpha + (((unsigned)dst >> 8) & 0xF8u) * 255u) / 255u),
 							min(255u, (min(255u, mg) * (unsigned)salpha + (((unsigned)dst >> 3) & 0xFCu) * 255u) / 255u),
 							min(255u, (min(255u, mb) * (unsigned)salpha + (((unsigned)dst << 3) & 0xF8u) * 255u) / 255u));
+						sw_stats.bench_mag_flex += (fpx == 0xF81Fu);
+						fb_row[idx] = fpx;
 					}
 					else if (salpha == 255)
 					{
-						fb_row[idx] = SW_RGB565(min(255u, mr), min(255u, mg), min(255u, mb));
+						const uint16_t fpx = SW_RGB565(min(255u, mr), min(255u, mg), min(255u, mb));
+						sw_stats.bench_mag_flex += (fpx == 0xF81Fu);
+						fb_row[idx] = fpx;
 						if (depth_write && !no_depth_test)
 						{
 							zb_row[idx] = ikey;
@@ -2164,10 +2337,12 @@ static void span_raster_flex_triangle(const flex_screen_vertex_t a, const flex_s
 					{
 						const uint16_t dst = fb_row[idx];
 						const unsigned dw = 255u - (unsigned)salpha;
-						fb_row[idx] = SW_RGB565(
+						const uint16_t fpx = SW_RGB565(
 							min(255u, (min(255u, mr) * (unsigned)salpha + (((unsigned)dst >> 8) & 0xF8u) * dw) / 255u),
 							min(255u, (min(255u, mg) * (unsigned)salpha + (((unsigned)dst >> 3) & 0xFCu) * dw) / 255u),
 							min(255u, (min(255u, mb) * (unsigned)salpha + (((unsigned)dst << 3) & 0xF8u) * dw) / 255u));
+						sw_stats.bench_mag_flex += (fpx == 0xF81Fu);
+						fb_row[idx] = fpx;
 					}
 				}
 advance:
@@ -2299,9 +2474,22 @@ static void dispatch_flex_screen_triangle(const flex_screen_vertex_t a, const fl
 	const flex_screen_vertex_t c, const sw_image_t *image, const qboolean depth_write, const qboolean additive)
 {
 	static cvar_t *sw_spans;
+	sw_dbg_tag_src = sw_bench_tri_category == 2 ? -3 : -2;
+	if (sw_dbg_tag_x >= 0 && sw_dbg_tag_y >= 0)
+	{
+		const float px = sw_dbg_tag_x + 0.5f, py = sw_dbg_tag_y + 0.5f;
+		const float e0 = flex_edge(a, b, px, py);
+		const float e1 = flex_edge(b, c, px, py);
+		const float e2 = flex_edge(c, a, px, py);
+		if (!((e0 < 0.0f || e1 < 0.0f || e2 < 0.0f) && (e0 > 0.0f || e1 > 0.0f || e2 > 0.0f)))
+			sw_ri.Con_Printf(PRINT_ALL, "tagxy %s bf=%u img=%s iz=(%g %g %g) dw=%d add=%d\n",
+				sw_bench_tri_category == 2 ? "sprite" : "flex", sw_stats.bench_frames,
+				image != NULL ? image->name : "?", a.inverse_z, b.inverse_z, c.inverse_z,
+				(int)depth_write, (int)additive);
+	}
 	if (sw_spans == NULL)
 		sw_spans = sw_ri.Cvar_Get("r_swspans", "1", 0);
-	if (sw_spans != NULL && sw_spans->value != 0.0f)
+	if (sw_spans != NULL && sw_spans->value != 0.0f && !sw_dbg_nospan)
 		span_raster_flex_triangle(a, b, c, image, depth_write, additive);
 	else
 		raster_flex_triangle(a, b, c, image, depth_write, additive);
@@ -2845,6 +3033,10 @@ static void draw_particle(const particle_t *particle, const qboolean additive)
 	if (!isfinite(projected_radius))
 		return;
 	const int radius = ClampI((int)min(projected_radius, 16.0f), 1, 16);
+	if (sw_dbg_tag_x >= 0 && sw_dbg_tag_x >= x - radius && sw_dbg_tag_x <= x + radius &&
+		sw_dbg_tag_y >= y - radius && sw_dbg_tag_y <= y + radius)
+		sw_ri.Con_Printf(PRINT_ALL, "tagxy particle bf=%u at=%d,%d r=%d add=%d type=%d iz=%g\n",
+			sw_stats.bench_frames, x, y, radius, (int)additive, (int)(particle->type & PFL_FLAG_MASK), depth);
 	const byte type_index = (byte)(particle->type & PFL_FLAG_MASK);
 	const sw_image_t *image = additive ? sw_aparticle_tex : sw_particle_tex;
 	paletteRGBA_t color = particle->color;
@@ -2932,6 +3124,41 @@ int SW_RenderFrame(const refdef_t *fd)
 	if (fd == NULL || sw_color == NULL || fd->width <= 0 || fd->height <= 0 ||
 		fd->fov_x <= 1.0f || fd->fov_x >= 179.0f || fd->fov_y <= 1.0f || fd->fov_y >= 179.0f)
 		return 0;
+	// Diagnostic camera tour (H2DOS_SW_TOUR=radius[,zoff]): move the refdef
+	// vieworg on a deterministic circle around the first-rendered position so
+	// parallax, near-plane crossings and PVS transitions actually exercise the
+	// rasterizers. 64-frame bench: the client sweep already orbits viewangles.
+	refdef_t tour_fd;
+	{
+		static int tour_init = -1;
+		static float tour_radius, tour_zoff;
+		static vec3_t tour_base;
+		if (tour_init < 0)
+		{
+			const char *spec = getenv("H2DOS_SW_TOUR");
+			tour_init = 1;
+			tour_radius = 0.0f;
+			tour_zoff = 0.0f;
+			if (spec != NULL && *spec != '\0')
+			{
+				tour_radius = (float)atof(spec);
+				const char *comma = strchr(spec, ',');
+				if (comma != NULL)
+					tour_zoff = (float)atof(comma + 1);
+			}
+			VectorCopy(fd->vieworg, tour_base);
+		}
+		if (tour_radius > 0.0f)
+		{
+			const float ang = (float)(sw_stats.bench_frames % 48) * (6.283185307f / 48.0f);
+			tour_fd = *fd;
+			tour_fd.vieworg[0] += tour_radius * cosf(ang);
+			tour_fd.vieworg[1] += tour_radius * sinf(ang);
+			tour_fd.vieworg[2] += tour_zoff;
+			(void)tour_base;
+			fd = &tour_fd;
+		}
+	}
 	sw_refdef = *fd;
 	setup_view(fd);
 	if (fd->rdflags & RDF_NOWORLDMODEL)
@@ -2987,7 +3214,18 @@ int SW_RenderFrame(const refdef_t *fd)
 	{
 		const uclock_t next = uclock();
 		sw_stats.bench_us_blend += (unsigned long long)(next - mark);
-		sw_stats.bench_us_frame += (unsigned long long)(next - frame_start);
+		mark = next;
+	}
+	{
+		// Coverage audit: count sky-visible (depth==0) pixels in the top 60
+		// rows so sky-band flicker can be attributed to world coverage
+		// holes rather than sky rendering itself.
+		unsigned holes = 0;
+		for (size_t i = 0; i < (size_t)60 * (size_t)sw_width; ++i)
+			holes += sw_depth[i] == 0;
+		sw_stats.bench_holes_topband = holes;
+		(void)mark;
+		sw_stats.bench_us_frame += (unsigned long long)(uclock() - frame_start);
 		++sw_stats.bench_frames;
 	}
 	return 0;

@@ -17,6 +17,30 @@ static uint16_t sw_pack_texel(const unsigned r, const unsigned g, const unsigned
 	return v != 0 ? v : 1;
 }
 
+// Magenta/trace diagnostics: the renderer never intentionally generates
+// 0xF81F, so any magenta in converted pixels identifies the converter or a
+// source using 255,0,255 as content. Also flags texel==0 in images that are
+// not carrying colorkey semantics (opaque-black becoming a hole risk).
+static void audit_image(const sw_image_t *image)
+{
+	if (image == NULL || image->pixels == NULL)
+		return;
+	const size_t count = (size_t)image->width * (size_t)image->height;
+	size_t magentas = 0, zeros = 0;
+	for (size_t i = 0; i < count; ++i)
+	{
+		if (image->pixels[i] == 0xF81Fu)
+			++magentas;
+		else if (image->pixels[i] == 0)
+			++zeros;
+	}
+	if (magentas > 0 || (zeros > 0 && !image->has_alpha))
+		sw_ri.Con_Printf(PRINT_DEVELOPER,
+			"ref_soft: image-audit %s magenta=%u transparent=%u has_alpha=%d synthetic=%d\n",
+			image->name, (unsigned)magentas, (unsigned)zeros, image->has_alpha ? 1 : 0,
+			image->synthetic_fallback ? 1 : 0);
+}
+
 static sw_image_t sw_images[SW_MAX_IMAGES];
 static int sw_num_images;
 static sw_image_t *sw_fallback;
@@ -118,6 +142,7 @@ static sw_image_t *load_m8(const char *name, const sw_image_kind_t kind)
 			image->has_alpha |= alpha != 255;
 		}
 		++sw_stats.m8_images;
+		audit_image(image);
 	}
 	sw_ri.FS_FreeFile(file);
 	return image;
@@ -166,6 +191,7 @@ static sw_image_t *load_m32(const char *name, const sw_image_kind_t kind)
 			image->has_alpha |= kind != SW_IMAGE_WALL && source[i * 4 + 3] != 255;
 		}
 		++sw_stats.m32_images;
+		audit_image(image);
 	}
 	sw_ri.FS_FreeFile(file);
 	return image;

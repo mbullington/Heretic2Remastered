@@ -185,6 +185,17 @@ extern float sw_sky_rotate;
 extern vec3_t sw_sky_axis;
 extern unsigned sw_sky_generation;
 extern h2dos_soft_stats_t sw_stats;
+extern int sw_dbg_clear_cyan;
+extern int sw_dbg_zcollide;
+extern int sw_dbg_zviz;
+extern int sw_dbg_zstrict;
+extern int sw_dbg_skydiag;
+extern int sw_dbg_nospan;
+extern int sw_dbg_tag_x;
+extern int sw_dbg_tag_y;
+extern int sw_dbg_tag_face;
+extern int sw_dbg_tag_src; // current painter class/face for tagxy attribution (>=0: world face_index)
+void SW_TagProbe(const char *where);
 
 qboolean SW_FrameBufferInit(void *window);
 void SW_FrameBufferShutdown(void);

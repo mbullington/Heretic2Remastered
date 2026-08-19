@@ -13,6 +13,7 @@ uint32_t *sw_depth;
 int sw_width;
 int sw_height;
 h2dos_soft_stats_t sw_stats;
+qboolean SW_SavePPM(const char *path);
 
 static SDL_Window *sw_window;
 static SDL_Surface *sw_surface;
@@ -148,12 +149,70 @@ void SW_FrameBufferShutdown(void)
 }
 
 static uint16_t sw_clear_color;
+int sw_dbg_clear_cyan;
+int sw_dbg_zcollide;
+int sw_dbg_zviz;
+int sw_dbg_zstrict;
+int sw_dbg_skydiag;
+int sw_dbg_nospan;
+int sw_dbg_tag_x = -1;
+int sw_dbg_tag_src = -1;
+int sw_dbg_tag_y = -1;
+int sw_dbg_tag_face = -1;
+
+static void sw_debug_env_init(void)
+{
+	static int done;
+	if (done)
+		return;
+	done = 1;
+	sw_dbg_clear_cyan = getenv("H2DOS_SW_CLEAR_CYAN") != NULL;
+	sw_dbg_zcollide = getenv("H2DOS_SW_ZCOLLIDE") != NULL;
+	sw_dbg_zviz = getenv("H2DOS_SW_ZVIZ") != NULL;
+	sw_dbg_zstrict = getenv("H2DOS_SW_ZSTRICT") != NULL;
+	sw_dbg_skydiag = getenv("H2DOS_SW_SKYDIAG") != NULL;
+	sw_dbg_nospan = getenv("H2DOS_SW_NOSPAN") != NULL; // diagnostic: force naive rasters
+	{ // diagnostic pixel attribution: H2DOS_SW_TAGXY=x,y / face: H2DOS_SW_TAGFACE=n
+		const char *tag = getenv("H2DOS_SW_TAGXY");
+		if (tag != NULL)
+		{
+			sw_dbg_tag_x = (int)atof(tag);
+			const char *comma = strchr(tag, ',');
+			if (comma != NULL)
+				sw_dbg_tag_y = (int)atof(comma + 1);
+		}
+		const char *tagface = getenv("H2DOS_SW_TAGFACE");
+		if (tagface != NULL)
+			sw_dbg_tag_face = (int)atof(tagface);
+	}
+}
+
+void SW_TagProbe(const char *where)
+{
+	if (sw_dbg_tag_x < 0 || sw_dbg_tag_y < 0 || !sw_color || !sw_depth)
+		return;
+	sw_debug_env_init();
+	const size_t index = (size_t)sw_dbg_tag_y * (size_t)sw_width + (size_t)sw_dbg_tag_x;
+	sw_ri.Con_Printf(PRINT_ALL, "tagxy probe %s bf=%u zb=%u pix=%04x\n", where,
+		sw_stats.bench_frames, sw_depth[index], sw_color[index]);
+}
 
 void SW_Clear(const uint16_t color)
 {
 	const uclock_t start = uclock();
 	const size_t pixels = (size_t)sw_width * (size_t)sw_height;
+	sw_debug_env_init();
 	sw_clear_color = color;
+	SW_TagProbe("clear");
+	if (sw_dbg_clear_cyan)
+	{
+		// Debug: clear BOTH targets every frame to a conspicuous color so
+		// coverage holes/raster cracks appear as stable cyan instead of
+		// stale previous-frame pixels.
+		size_t i;
+		for (i = 0; i < pixels; ++i)
+			sw_color[i] = 0x07FFu;
+	}
 	// Color fill is deferred: SW_RasterFrame re-fills only frames without a
 	// worldmodel. Worldmodel frames are fully repainted by world/sky spans.
 	// Depth stores inverse-z (larger = closer), so the far plane is zero.
@@ -178,17 +237,36 @@ void SW_PutPixel(const int x, const int y, const float depth, const uint16_t col
 	const size_t index = (size_t)y * (size_t)sw_width + (size_t)x;
 	// All stored depths are 31-bit linear fixed-point inverse-z keys (see
 	// SW_DEPTH_SCALE in ref_soft_local.h); larger = closer, 0 = far/sky.
+	sw_debug_env_init();
 	uint32_t depth_key;
 	if (depth > 1e30f)
 		depth_key = 0xFFFFFFFFu;
 	else
 		depth_key = (uint32_t)(depth * SW_DEPTH_SCALE);
-	if (depth_key < sw_depth[index])
+	if (sw_dbg_tag_x == x && sw_dbg_tag_y == y)
+		sw_ri.Con_Printf(PRINT_ALL, "tagxy putpixel bf=%u src=%d key=%u zb=%u color=%04x a=%d dw=%d add=%d\n",
+			sw_stats.bench_frames, sw_dbg_tag_src, depth_key, sw_depth[index], color, (int)alpha,
+			(int)depth_write, (int)additive);
+	if (sw_dbg_zcollide && sw_depth[index] != 0)
+	{
+		const int64_t delta = (int64_t)depth_key - (int64_t)sw_depth[index];
+		if (delta == 0)
+			++sw_stats.bench_zcollide_eq;
+		else if (delta >= -4 && delta <= 4)
+			++sw_stats.bench_zcollide_near;
+		if (sw_dbg_zviz && delta >= -4 && delta <= 4)
+		{
+			sw_color[index] = 0xFFE0u; // bright yellow collision marker
+			return;
+		}
+	}
+	if (sw_dbg_zstrict ? (depth_key <= sw_depth[index]) : (depth_key < sw_depth[index]))
 		return;
 
 	if (alpha == 255 && !additive)
 	{
 		sw_color[index] = color;
+		sw_stats.bench_mag_putpixel += (color == 0xF81Fu);
 	}
 	else if (alpha != 0)
 	{
@@ -204,7 +282,9 @@ void SW_PutPixel(const int x, const int y, const float depth, const uint16_t col
 		const unsigned r = min(255u, (sr * (unsigned)source_weight + dr * (unsigned)destination_weight) / 255u);
 		const unsigned g = min(255u, (sg * (unsigned)source_weight + dg * (unsigned)destination_weight) / 255u);
 		const unsigned b = min(255u, (sb * (unsigned)source_weight + db * (unsigned)destination_weight) / 255u);
-		sw_color[index] = SW_RGB565(r, g, b);
+		const uint16_t out = SW_RGB565(r, g, b);
+		sw_color[index] = out;
+		sw_stats.bench_mag_putpixel += (out == 0xF81Fu);
 	}
 
 	if (depth_write)
@@ -232,6 +312,30 @@ void SW_Present(void)
 	const uclock_t start = uclock();
 	if (sw_surface == NULL || sw_color == NULL)
 		return;
+	// Per-frame magenta scanner: texels are audited clean at load, so any
+	// 0xF81F in the internal framebuffer came from the rasterizers. Count it
+	// every frame and save a capture the FIRST time it appears so the
+	// transient is inspectable after the run.
+	{
+		const size_t pixels = (size_t)sw_width * (size_t)sw_height;
+		size_t magenta = 0;
+		for (size_t i = 0; i < pixels; ++i)
+			magenta += sw_color[i] == 0xF81Fu;
+		sw_stats.bench_magenta_px += (unsigned)magenta;
+		if (magenta > 0 && sw_stats.bench_magenta_max < (unsigned)magenta)
+		{
+			sw_stats.bench_magenta_max = (unsigned)magenta;
+			if (sw_stats.bench_mag_frame == 0)
+				sw_stats.bench_mag_frame = sw_stats.frames_presented + 1;
+			sw_ri.Con_Printf(PRINT_ALL, "ref_soft: frame %u magenta-px=%u\n",
+				sw_stats.frames_presented + 1, (unsigned)magenta);
+			if (sw_stats.bench_magenta_saved == 0)
+			{
+				sw_stats.bench_magenta_saved = 1;
+				SW_SavePPM("MAGENTA.PPM");
+			}
+		}
+	}
 	bool ready = true;
 	if (sw_surface->format == SDL_PIXELFORMAT_INDEX8 && sw_present_lut != NULL)
 	{
@@ -259,6 +363,20 @@ void SW_Present(void)
 		ready = SDL_ConvertPixels(sw_width, sw_height,
 			SDL_PIXELFORMAT_RGB565, sw_color, sw_width * (int)sizeof(*sw_color),
 			sw_surface->format, sw_surface->pixels, sw_surface->pitch);
+		// Present-layer audit: if the internal framebuffer is clean but the
+		// converted surface carries 0xF81F, the magenta lives in conversion.
+		if (ready && sw_surface->format == SDL_PIXELFORMAT_RGB565)
+		{
+			size_t surface_magenta = 0;
+			for (int yy = 0; yy < sw_height; ++yy)
+			{
+				const uint16_t *row = (const uint16_t *)((const byte *)sw_surface->pixels +
+					(size_t)yy * (size_t)sw_surface->pitch);
+				for (int xx = 0; xx < sw_width; ++xx)
+					surface_magenta += row[xx] == 0xF81Fu;
+			}
+			sw_stats.bench_mag_surface += (unsigned)surface_magenta;
+		}
 		SDL_UnlockSurface(sw_surface);
 	}
 	if (!ready || !SDL_UpdateWindowSurface(sw_window))
