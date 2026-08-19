@@ -684,6 +684,7 @@ static void draw_face_spans(const screen_vertex_t *verts, const int n, const sw_
 							fb_row[idx] = wpx;
 							zb_row[idx] = ikey;
 							++depth_writes;
+							++sw_stats.bench_world_zaccepted;
 						}
 					}
 					iu += iu_step; it += it_step; ils += ils_step; ilt += ilt_step; ikey += (uint32_t)ikey_step;
@@ -737,6 +738,7 @@ static void draw_face_spans(const screen_vertex_t *verts, const int n, const sw_
 						{
 							zb_row[idx] = ikey;
 							++sw_stats.depth_writes;
+							++sw_stats.bench_world_zaccepted;
 						}
 					}
 					++sw_stats.bench_pixels_world;
@@ -1285,6 +1287,7 @@ void SW_RasterSky(const refdef_t *fd)
 				if (zb_row[minimum_x + x] == 0)
 				{
 					dst[x] = src[x];
+					++sw_stats.bench_sky_holes;
 					if (sw_dbg_tag_x == minimum_x + x && sw_dbg_tag_y == y)
 						sw_ri.Con_Printf(PRINT_ALL, "tagxy sky-cache bf=%u color=%04x\n", sw_stats.bench_frames, src[x]);
 				}
@@ -1371,6 +1374,7 @@ void SW_RasterSky(const refdef_t *fd)
 							sw_ri.Con_Printf(PRINT_ALL, "tagxy sky bf=%u face=%d color=%04x\n",
 								sw_stats.bench_frames, face0, color);
 						fb_row[x] = color;
+						++sw_stats.bench_sky_holes;
 						if (cache_row != NULL)
 							cache_row[x] = color;
 					}
@@ -1391,6 +1395,7 @@ void SW_RasterSky(const refdef_t *fd)
 						const int texture_y = ClampI((int)(t * (image->height - 1)), 0, image->height - 1);
 						const uint16_t color = image->pixels[texture_y * image->width + texture_x];
 						fb_row[x] = color;
+						++sw_stats.bench_sky_holes;
 						if (cache_row != NULL)
 							cache_row[x] = color;
 						rendered_face_mask |= 1u << face;
@@ -1439,6 +1444,39 @@ void SW_RasterWorldTrans(void)
 	sw_deferral_bypass = false;
 }
 
+// E59: front-to-back BSP traversal. Node face lists partition the BSP, so
+// walking near-subtree -> node faces -> far-subtree draws every PVS-marked
+// face exactly once while making nearer content win the z-test FIRST: a
+// later far-face candidate is rejected at the zb compare before any texel or
+// light work, converting shaded-then-overwritten pixels into cheap rejects.
+// Depth writes are unchanged, so entity/sky gating and coplanar-tie semantics
+// stay z-domain (first painter wins an exact key tie; gates arbitrate).
+static void draw_world_node_ftb(const sw_bsp_t *bsp, const int node_index, const vec3_t vieworg,
+	const byte *visible_faces, const int entity_frame)
+{
+	if (node_index < 0)
+		return; // leaf: no faces of its own (node lists partition all faces)
+	const dnode_t *node = &bsp->nodes[node_index];
+	const dplane_t *plane = &bsp->planes[LittleLong(node->planenum)];
+	const float distance = vieworg[0] * LittleFloat(plane->normal[0]) +
+		vieworg[1] * LittleFloat(plane->normal[1]) + vieworg[2] * LittleFloat(plane->normal[2]) -
+		LittleFloat(plane->dist);
+	const int side = distance < 0.0f ? 1 : 0;
+	draw_world_node_ftb(bsp, LittleLong(node->children[side]), vieworg, visible_faces, entity_frame);
+	const int first = little_ushort(node->firstface);
+	const int count = little_ushort(node->numfaces);
+	for (int i = 0; i < count; ++i)
+	{
+		const int index = first + i;
+		if (visible_faces[index])
+		{
+			const vec3_t zero = { 0.0f, 0.0f, 0.0f };
+			draw_face(bsp, index, zero, entity_frame);
+		}
+	}
+	draw_world_node_ftb(bsp, LittleLong(node->children[side ^ 1]), vieworg, visible_faces, entity_frame);
+}
+
 void SW_RasterWorld(const refdef_t *fd)
 {
 	if (sw_world_model == NULL || sw_world_model->bsp == NULL || (fd->rdflags & RDF_NOWORLDMODEL))
@@ -1481,10 +1519,19 @@ void SW_RasterWorld(const refdef_t *fd)
 				visible_faces[index] = 1;
 		}
 	}
-	const vec3_t zero = { 0.0f, 0.0f, 0.0f };
-	for (int i = 0; i < bsp->num_faces; ++i)
-		if (visible_faces[i])
-			draw_face(bsp, i, zero, (int)(fd->time * 2.0f));
+	if (bsp->submodels != NULL && bsp->num_submodels > 0)
+	{
+		const int head_node = LittleLong(bsp->submodels[0].headnode);
+		if (head_node >= 0 && head_node < bsp->num_nodes)
+			draw_world_node_ftb(bsp, head_node, fd->vieworg, visible_faces, (int)(fd->time * 2.0f));
+		else
+		{
+			const vec3_t zero = { 0.0f, 0.0f, 0.0f };
+			for (int i = 0; i < bsp->num_faces; ++i)
+				if (visible_faces[i])
+					draw_face(bsp, i, zero, (int)(fd->time * 2.0f));
+		}
+	}
 	free(visible_faces);
 }
 

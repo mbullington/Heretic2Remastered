@@ -91,6 +91,8 @@ typedef struct h2dos_soft_stats_s {
 	unsigned bench_mag_frame;                   // first frame that contained magenta
 	unsigned long long bench_mag_surface;       // magenta found in the converted present surface
 	unsigned bench_holes_topband;               // depth==0 pixels in top 60 rows this frame
+	unsigned bench_world_zaccepted;             // world span px that won the z-test (true coverage)
+	unsigned bench_sky_holes;                   // px with zb==0 at sky time (sky-visible holes)
 } h2dos_soft_stats_t;
 
 const h2dos_soft_stats_t *H2DOS_SoftGetStats(void);
