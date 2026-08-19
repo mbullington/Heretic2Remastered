@@ -78,6 +78,12 @@ typedef struct h2dos_soft_stats_s {
 	unsigned bench_walked_sprite;
 	unsigned long long bench_flex_vertex_lerps; // vertex posing work units in the entity pass
 	unsigned long long bench_us_flex_prologue;  // entity-pass time before triangle setup begins
+	// E3 census (ideas #3): flex projection-cache and cluster-rotation pools
+	unsigned long long bench_flex_proj_lookups;  // corners needing a projected vertex
+	unsigned long long bench_flex_proj_fills;    // proj-cache misses (real fills)
+	unsigned long long bench_us_flex_proj_fills; // uclock spent inside fills
+	unsigned long long bench_flex_rotate_calls;  // RotatePointAboutLocalOrigin calls
+	unsigned long long bench_us_flex_rotate;     // uclock inside rotate_flex_clusters
 	unsigned long long bench_zcollide_eq;       // attempted writes at exactly the same depth key
 	unsigned long long bench_zcollide_near;     // attempted writes within +/-4 depth keys
 	unsigned bench_flex_tris_wind;              // flex triangles culled by GL-equivalent winding

@@ -851,6 +851,10 @@ static void log_bench_summary(void)
 		stats->bench_flex_tris_bbox, stats->bench_flex_tris_behind,
 		stats->bench_us_ent_brush / frames, stats->bench_brush_faces, stats->bench_brush_culled,
 		stats->bench_flex_spans, stats->bench_flex_blocks);
+	log_append("bench-flex-proj-lookups=%llu\nbench-flex-proj-fills=%llu\n"
+		"bench-us-flex-proj-fills=%llu\nbench-flex-rotate-calls=%llu\nbench-us-flex-rotate=%llu\n",
+		stats->bench_flex_proj_lookups, stats->bench_flex_proj_fills,
+		stats->bench_us_flex_proj_fills, stats->bench_flex_rotate_calls, stats->bench_us_flex_rotate);
 	log_append("bench-sky-cache-hits=%u\nbench-sky-cache-misses=%u\n",
 		stats->sky_cache_hits, stats->sky_cache_misses);
 	log_append("bench-world-zaccepted=%u\nbench-world-zreject=%u\nbench-sky-pixels=%u\nbench-sky-holes=%u\nbench-flex-tris-affine=%u\n",

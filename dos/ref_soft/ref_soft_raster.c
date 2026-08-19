@@ -2232,10 +2232,15 @@ static void rotate_flex_clusters(const sw_flex_t *flex,
 	const Placement_t joints[SW_MAX_FLEX_JOINTS],
 	const matrix3_t rotations[SW_MAX_FLEX_JOINTS], vec3_t *vertices)
 {
+	const uclock_t rotate_start = uclock();
 	for (int joint = flex->num_clusters - 1; joint >= 0; --joint)
 		for (int index = 0; index < flex->cluster_counts[joint]; ++index)
+		{
 			RotatePointAboutLocalOrigin(rotations[joint], joints[joint].origin,
 				vertices[flex->cluster_vertices[joint][index]]);
+			++sw_stats.bench_flex_rotate_calls;
+		}
+	sw_stats.bench_us_flex_rotate += (unsigned long long)(uclock() - rotate_start);
 }
 
 static void entity_transform_basis(const vec3_t origin, const float cr, const float sr, const float cp,
@@ -2768,8 +2773,10 @@ static qboolean flex_proj_lookup(const entity_t *entity, const vec3_t lerped[], 
 	flex_proj_cache_t *out)
 {
 	flex_proj_cache_t *cache = &sw_flex_proj_cache[vertex];
+	++sw_stats.bench_flex_proj_lookups;
 	if (cache->entity_seq != sw_flex_proj_cache_entity_seq)
 	{
+		const uclock_t fill_start = uclock();
 		vec3_t world;
 		entity_transform_basis(entity->origin, cr, sr, cp, sp, cy, sy, lerped[vertex], world);
 		const sw_vertex_t view = world_to_view(world, 0.0f, 0.0f);
@@ -2779,6 +2786,8 @@ static qboolean flex_proj_lookup(const entity_t *entity, const vec3_t lerped[], 
 		cache->z = view.z;
 		cache->inverse_z = w;
 		cache->entity_seq = sw_flex_proj_cache_entity_seq;
+		++sw_stats.bench_flex_proj_fills;
+		sw_stats.bench_us_flex_proj_fills += (unsigned long long)(uclock() - fill_start);
 	}
 	*out = *cache;
 	return cache->z >= SW_NEAR_CLIP;
