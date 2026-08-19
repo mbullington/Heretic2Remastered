@@ -3695,6 +3695,48 @@ void SW_RasterParticles(const refdef_t *fd)
 		draw_particle(&fd->aparticles[i], true);
 }
 
+// ---------------------------------------------------------------------------
+// E15/ideas#15 light-disc stamps. SW_RasterLights used to walk a (2r+1)^2
+// square per dlight, paying sqrtf + the full SW_PutPixel body per candidate
+// pixel. The tables below precompute, per integer radius: the exact in-disc
+// extent of each row (from the identical sqrtf predicate) and the radial
+// falloff 1 - sqrtf(d2)/r. Every float the per-px chain consumes is then the
+// same value the old code computed, so output is bit-identical:
+// alpha = (byte)(factor * color.a * 0.35f) preserves the original
+// ((1-d/r)*a)*0.35 order, and the additive blend uses
+// dr + floor(sr*a/255) == floor((sr*a + dr*255)/255) with the swept identity
+// (m*0x8081)>>23 == m/255 for m <= 248*255. Debug flags fall back to the
+// original per-pixel walk (TAGXY prints, ZCOLLIDE counters, ZVIZ, ZSTRICT).
+#define SW_DL_RADIUS_MAX 64
+#define SW_DL_STRIDE (2 * SW_DL_RADIUS_MAX + 1)
+#define SW_DL_FACTOR_SIZE (2 * SW_DL_RADIUS_MAX * SW_DL_RADIUS_MAX + 1)
+static float sw_dl_factor[SW_DL_RADIUS_MAX + 1][SW_DL_FACTOR_SIZE];
+static byte sw_dl_extent[SW_DL_RADIUS_MAX + 1][SW_DL_STRIDE];
+static byte sw_dl_built[SW_DL_RADIUS_MAX + 1];
+
+static void sw_dl_build(const int radius)
+{
+	sw_dl_built[radius] = 1;
+	for (int py = 0; py <= radius; ++py)
+	{
+		int xmax = 0;
+		for (int px = 0; px <= radius; ++px)
+		{
+			const float distance = sqrtf((float)(px * px + py * py));
+			if (distance > radius)
+				break;
+			xmax = px;
+		}
+		sw_dl_extent[radius][SW_DL_RADIUS_MAX + py] = (byte)xmax;
+		sw_dl_extent[radius][SW_DL_RADIUS_MAX - py] = (byte)xmax;
+		for (int px = 0; px <= xmax; ++px)
+		{
+			const int d2 = px * px + py * py;
+			sw_dl_factor[radius][d2] = 1.0f - sqrtf((float)d2) / radius;
+		}
+	}
+}
+
 void SW_RasterLights(const refdef_t *fd)
 {
 	for (int i = 0; i < fd->num_dlights; ++i)
@@ -3709,15 +3751,59 @@ void SW_RasterLights(const refdef_t *fd)
 		if (!isfinite(projected_radius))
 			continue;
 		const int radius = ClampI((int)min(projected_radius, 64.0f), 2, 64);
+		if (sw_dbg_tag_x >= 0 || sw_dbg_zcollide || sw_dbg_zviz || sw_dbg_zstrict)
+		{
+			for (int py = -radius; py <= radius; ++py)
+				for (int px = -radius; px <= radius; ++px)
+				{
+					const float distance = sqrtf((float)(px * px + py * py));
+					if (distance > radius)
+						continue;
+					const byte alpha = (byte)((1.0f - distance / radius) * light->color.a * 0.35f);
+					SW_PutPixel(x + px, y + py, depth,
+						SW_RGB565(light->color.r, light->color.g, light->color.b), alpha, false, true);
+				}
+			++sw_stats.dynamic_lights;
+			continue;
+		}
+		if (!sw_dl_built[radius])
+			sw_dl_build(radius);
+		const uint16_t color = SW_RGB565(light->color.r, light->color.g, light->color.b);
+		const uint32_t key = (depth > 1e30f) ? 0xFFFFFFFFu : (uint32_t)(depth * SW_DEPTH_SCALE);
+		const unsigned sr = (color >> 8) & 0xF8u;
+		const unsigned sg = (color >> 3) & 0xFCu;
+		const unsigned sb = (color << 3) & 0xF8u;
+		const float *const factor = sw_dl_factor[radius];
+		unsigned mag = 0;
 		for (int py = -radius; py <= radius; ++py)
-			for (int px = -radius; px <= radius; ++px)
+		{
+			const int dy = y + py;
+			if ((unsigned)dy >= (unsigned)sw_height)
+				continue;
+			const int xmax = sw_dl_extent[radius][SW_DL_RADIUS_MAX + py];
+			const int px0 = max(-(int)xmax, -x);
+			const int px1 = min((int)xmax, sw_width - 1 - x);
+			uint16_t *const dst = sw_color + (size_t)dy * (size_t)sw_width + x;
+			const uint32_t *const zbr = sw_depth + (size_t)dy * (size_t)sw_width + x;
+			const int py2 = py * py;
+			for (int px = px0; px <= px1; ++px)
 			{
-				const float distance = sqrtf((float)(px * px + py * py));
-				if (distance > radius)
+				// SW_PutPixel production z-guard: writes iff key >= stored (rejects key < zb).
+				if (zbr[px] > key)
 					continue;
-				const byte alpha = (byte)((1.0f - distance / radius) * light->color.a * 0.35f);
-				SW_PutPixel(x + px, y + py, depth, SW_RGB565(light->color.r, light->color.g, light->color.b), alpha, false, true);
+				const byte alpha = (byte)(factor[py2 + px * px] * light->color.a * 0.35f);
+				if (alpha == 0)
+					continue;
+				const uint16_t dcol = dst[px];
+				const unsigned r = min(255u, ((dcol >> 8) & 0xF8u) + (((sr * alpha) * 0x8081u) >> 23));
+				const unsigned g = min(255u, ((dcol >> 3) & 0xFCu) + (((sg * alpha) * 0x8081u) >> 23));
+				const unsigned b = min(255u, ((dcol << 3) & 0xF8u) + (((sb * alpha) * 0x8081u) >> 23));
+				const uint16_t out = SW_RGB565(r, g, b);
+				dst[px] = out;
+				mag += (out == 0xF81Fu);
 			}
+		}
+		sw_stats.bench_mag_putpixel += mag;
 		++sw_stats.dynamic_lights;
 	}
 }
