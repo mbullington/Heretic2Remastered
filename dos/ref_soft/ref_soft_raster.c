@@ -3484,6 +3484,36 @@ static void sw_temporal_snapshot(const refdef_t *fd)
 	sw_snap_valid = true;
 }
 
+// E61 stage 2: one exact reprojection chain per source px is cost-equal to
+// the world pass itself on the flat harness (measured: world 105.2 vs 104.0
+// OFF) — the warp only pays if its per-px math degenerates to a handful of
+// adds. So: reproject 32-px SEGMENT ENDPOINTS exactly, walk the segment's
+// destination span linearly (affine per segment; turbo-class).
+#define SW_WARP_SEG 32
+static void sw_temporal_warp_point(const refdef_t *fd, const float dir_x, const float dir_y,
+	const uint32_t key_s, float *out_x, float *out_y, float *out_w)
+{
+	const float z_s = SW_DEPTH_SCALE / (float)key_s;
+	const float vx = dir_x * z_s;
+	const float vy = dir_y * z_s;
+	const float wx = sw_snap_vieworg[0] + vx * sw_snap_right[0] + vy * sw_snap_up[0] + z_s * sw_snap_forward[0];
+	const float wy = sw_snap_vieworg[1] + vx * sw_snap_right[1] + vy * sw_snap_up[1] + z_s * sw_snap_forward[1];
+	const float wz = sw_snap_vieworg[2] + vx * sw_snap_right[2] + vy * sw_snap_up[2] + z_s * sw_snap_forward[2];
+	const vec3_t mv = { wx - fd->vieworg[0], wy - fd->vieworg[1], wz - fd->vieworg[2] };
+	const float dx = dot3(mv, view_right);
+	const float dy = dot3(mv, view_up);
+	const float dz = dot3(mv, view_forward);
+	if (dz <= 1e-6f)
+	{
+		*out_w = 0.0f;
+		return;
+	}
+	const float iz = 1.0f / dz;
+	*out_x = fd->x + fd->width * 0.5f + dx * projection_x * iz;
+	*out_y = fd->y + fd->height * 0.5f - dy * projection_y * iz;
+	*out_w = iz;
+}
+
 static void sw_temporal_warp(const refdef_t *fd)
 {
 	// Destination depth restarts at far; disocclusions become sky holes.
@@ -3493,43 +3523,47 @@ static void sw_temporal_warp(const refdef_t *fd)
 	const float vstep_s = 1.0f / sw_snap_projection_y;
 	const float cx_s = sw_snap_x + sw_snap_width * 0.5f;
 	const float cy_s = sw_snap_y + sw_snap_height * 0.5f;
-	const int max_index = sw_width * sw_height;
 	for (int y = 0; y < sw_height; ++y)
 	{
-		float dir_x = (0.5f - cx_s) * hstep_s;
 		const float dir_y = (cy_s - (y + 0.5f)) * vstep_s;
 		const uint32_t *szb_row = sw_snap_zb + (size_t)y * (size_t)sw_width;
 		const uint16_t *scol_row = sw_snap_color + (size_t)y * (size_t)sw_width;
-		for (int x = 0; x < sw_width; ++x, dir_x += hstep_s)
+		for (int xs = 0; xs < sw_width; xs += SW_WARP_SEG)
 		{
-			const uint32_t key_s = szb_row[x];
-			if (key_s == 0)
-				continue; // source sky pixel: leave dest hole for the sky pass
-			const float z_s = SW_DEPTH_SCALE / (float)key_s;
-			const float vx = dir_x * z_s;
-			const float vy = dir_y * z_s;
-			const float wx = sw_snap_vieworg[0] + vx * sw_snap_right[0] + vy * sw_snap_up[0] + z_s * sw_snap_forward[0];
-			const float wy = sw_snap_vieworg[1] + vx * sw_snap_right[1] + vy * sw_snap_up[1] + z_s * sw_snap_forward[1];
-			const float wz = sw_snap_vieworg[2] + vx * sw_snap_right[2] + vy * sw_snap_up[2] + z_s * sw_snap_forward[2];
-			const vec3_t mv = { wx - fd->vieworg[0], wy - fd->vieworg[1], wz - fd->vieworg[2] };
-			const float dx = dot3(mv, view_right);
-			const float dy = dot3(mv, view_up);
-			const float dz = dot3(mv, view_forward);
-			if (dz <= 1e-6f)
+			const int x_end = min(xs + SW_WARP_SEG, sw_width) - 1;
+			const uint32_t k0 = szb_row[xs];
+			const uint32_t k1 = szb_row[x_end];
+			if (k0 == 0 && k1 == 0)
+				continue; // all-sky segment (interior treated below anyway)
+			float ex0, ey0, ew0, ex1, ey1, ew1;
+			if (k0 == 0) { ew0 = 0.0f; ex0 = ey0 = 0.0f; }
+			else sw_temporal_warp_point(fd, (xs + 0.5f - cx_s) * hstep_s, dir_y, k0, &ex0, &ey0, &ew0);
+			if (k1 == 0) { ew1 = 0.0f; ex1 = ey1 = 0.0f; }
+			else sw_temporal_warp_point(fd, (x_end + 0.5f - cx_s) * hstep_s, dir_y, k1, &ex1, &ey1, &ew1);
+			if (ew0 <= 0.0f && ew1 <= 0.0f)
 				continue;
-			const float iz = 1.0f / dz;
-			const int xd = (int)(fd->x + fd->width * 0.5f + dx * projection_x * iz);
-			const int yd = (int)(fd->y + fd->height * 0.5f - dy * projection_y * iz);
-			if (xd < 0 || xd >= sw_width || yd < 0 || yd >= sw_height)
-				continue;
-			const size_t idx = (size_t)yd * (size_t)sw_width + (size_t)xd;
-			if (idx >= (size_t)max_index)
-				continue;
-			const uint32_t key_d = (uint32_t)(iz * SW_DEPTH_SCALE);
-			if (key_d >= sw_depth[idx])
+			const float seg_len = (float)(x_end - xs);
+			const float tx = (ex1 - ex0) / max(seg_len, 1.0f);
+			const float ty = (ey1 - ey0) / max(seg_len, 1.0f);
+			const float tw = (ew1 - ew0) / max(seg_len, 1.0f);
+			float px = ex0, py = ey0, pw = ew0;
+			for (int x = xs; x <= x_end; ++x, px += tx, py += ty, pw += tw)
 			{
-				sw_depth[idx] = key_d;
-				sw_color[idx] = scol_row[x];
+				if (szb_row[x] == 0)
+					continue; // source sky pixel
+				if (pw <= 1e-6f)
+					continue;
+				const int xd = (int)px;
+				const int yd = (int)py;
+				if (xd < 0 || xd >= sw_width || yd < 0 || yd >= sw_height)
+					continue;
+				const size_t idx = (size_t)yd * (size_t)sw_width + (size_t)xd;
+				const uint32_t key_d = (uint32_t)(pw * SW_DEPTH_SCALE);
+				if (key_d >= sw_depth[idx])
+				{
+					sw_depth[idx] = key_d;
+					sw_color[idx] = scol_row[x];
+				}
 			}
 		}
 	}
@@ -3606,7 +3640,7 @@ int SW_RenderFrame(const refdef_t *fd)
 		sw_stats.bench_us_sky += (unsigned long long)(next - mark);
 		mark = next;
 	}
-	if (!sw_temporal_warp_now && sw_snap_width == sw_width && sw_temporal_enabled())
+	if (!sw_temporal_warp_now && sw_temporal_enabled())
 		sw_temporal_snapshot(fd); // world+sky only: entities never enter the snapshot
 	SW_RasterEntities(fd);
 	{
