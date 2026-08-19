@@ -561,6 +561,7 @@ static void draw_face_spans(const screen_vertex_t *verts, const int n, const sw_
 		return;
 	}
 
+	const qboolean stripe_checker = sw_scan2_active();
 	int left_prev = top, left_cur = top;
 	int right_prev = top, right_cur = top;
 	float left_x = 0.0f, right_x = 0.0f, left_slope = 0.0f, right_slope = 0.0f;
@@ -693,7 +694,7 @@ static void draw_face_spans(const screen_vertex_t *verts, const int n, const sw_
 						const size_t idx = (size_t)x;
 						// per-px coverage bit: in a mixed word, only empty bits paint
 						const uint32_t bit = 1u << (x & 31);
-						if ((per_px_mask & bit) == 0)
+						if ((per_px_mask & bit) == 0 && (!stripe_checker || ((x >> 1) & 1) == sw_scan_phase))
 						{
 							const uint16_t texel = image->pixels[((it >> 16) & mask_h) * image->width + ((iu >> 16) & mask_w)];
 							// Alpha-test faces (SURF_ALPHA_TEXTURE): texel 0x0000 is the
@@ -757,7 +758,7 @@ static void draw_face_spans(const screen_vertex_t *verts, const int n, const sw_
 					const uint16_t lit = span_modulate(texel,
 						light_cache[(int)((unsigned)ilt >> 20) * light_stride + (int)((unsigned)ils >> 20)]);
 					const int sa = lit != 0 ? sa_base : 0;
-					if (sa != 0 && ikey >= zb_row[idx] && (!sw_scan2_active() || ((x >> 1) & 1) == sw_scan_phase))
+					if (sa != 0 && ikey >= zb_row[idx] && (!stripe_checker || ((x >> 1) & 1) == sw_scan_phase))
 					{
 						const uint16_t dst = fb_row[idx];
 						const int dw = 255 - sa;
@@ -1385,6 +1386,7 @@ void SW_RasterSky(const refdef_t *fd)
 	}
 	const float rotation_angle = sw_sky_rotate == 0.0f ? 0.0f : sw_refdef.time * sw_sky_rotate;
 	const qboolean rotating = sw_sky_rotate != 0.0f;
+	const qboolean sky_checker2 = sw_scan2_active();
 	const size_t drawn_pixels = (size_t)max(0, maximum_x - minimum_x) * (size_t)max(0, maximum_y - minimum_y);
 	if (!rotating && sky_cache != NULL && sky_cache_matches(fd, rotation_angle))
 	{
@@ -1494,7 +1496,7 @@ void SW_RasterSky(const refdef_t *fd)
 				const int x_end = x + block;
 				while (x < x_end)
 				{
-					if (zb_row[x] == 0 && (!sw_scan2_active() || ((x >> 1) & 1) == sw_scan_phase))
+					if (zb_row[x] == 0 && (!sky_checker2 || ((x >> 1) & 1) == sw_scan_phase))
 					{
 						const int texture_x = ClampI(is >> 16, 0, image->width - 1);
 						const int texture_y = ClampI(it >> 16, 0, image->height - 1);
@@ -1515,7 +1517,7 @@ void SW_RasterSky(const refdef_t *fd)
 			{
 				for (int i = 0; i < block; ++i, ++x)
 				{
-					if (zb_row[x] == 0 && (!sw_scan2_active() || ((x >> 1) & 1) == sw_scan_phase))
+					if (zb_row[x] == 0 && (!sky_checker2 || ((x >> 1) & 1) == sw_scan_phase))
 					{
 						float s, t;
 						const int face = sky_coordinates(direction, &s, &t);
