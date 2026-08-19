@@ -371,10 +371,106 @@ static qboolean bsp_semantics_valid(const sw_bsp_t *bsp)
 	return true;
 }
 
+static void bake_face_packets(sw_bsp_t *bsp)
+{
+	bsp->packets = calloc((size_t)bsp->num_faces, sizeof(*bsp->packets));
+	if (bsp->packets == NULL)
+		return;
+	for (int face_index = 0; face_index < bsp->num_faces; ++face_index)
+	{
+		sw_face_packet_t *packet = &bsp->packets[face_index];
+		const dface_t *face = &bsp->faces[face_index];
+		const int first_edge = LittleLong(face->firstedge);
+		const int edge_count = LittleShort(face->numedges);
+		const int texinfo_index = LittleShort(face->texinfo);
+		if (edge_count < 3 || edge_count > SW_MAX_FACE_VERTS || first_edge < 0 ||
+			first_edge > bsp->num_surfedges - edge_count || texinfo_index < 0 ||
+			texinfo_index >= bsp->num_texinfo)
+			continue;
+		const texinfo_t *texture = &bsp->texinfo[texinfo_index];
+		float *verts = malloc((size_t)edge_count * 5u * sizeof(*verts));
+		if (verts == NULL)
+			continue;
+		float minimum_s = FLT_MAX;
+		float minimum_t = FLT_MAX;
+		float maximum_s = -FLT_MAX;
+		float maximum_t = -FLT_MAX;
+		qboolean bad = false;
+		for (int i = 0; i < edge_count; ++i)
+		{
+			const int surface_edge = LittleLong(bsp->surfedges[first_edge + i]);
+			if (surface_edge == INT_MIN)
+			{
+				bad = true;
+				break;
+			}
+			const int edge_index = abs(surface_edge);
+			if (edge_index >= bsp->num_edges)
+			{
+				bad = true;
+				break;
+			}
+			const int vertex_index = little_ushort(bsp->edges[edge_index].v[surface_edge >= 0 ? 0 : 1]);
+			if (vertex_index < 0 || vertex_index >= bsp->num_vertices)
+			{
+				bad = true;
+				break;
+			}
+			float local[3];
+			for (int axis = 0; axis < 3; ++axis)
+				local[axis] = LittleFloat(bsp->vertices[vertex_index].point[axis]);
+			// identical float chain to draw_face's runtime projection: baked once
+			const float base_s = local[0] * LittleFloat(texture->vecs[0][0]) +
+				local[1] * LittleFloat(texture->vecs[0][1]) + local[2] * LittleFloat(texture->vecs[0][2]) +
+				LittleFloat(texture->vecs[0][3]);
+			const float base_t = local[0] * LittleFloat(texture->vecs[1][0]) +
+				local[1] * LittleFloat(texture->vecs[1][1]) + local[2] * LittleFloat(texture->vecs[1][2]) +
+				LittleFloat(texture->vecs[1][3]);
+			verts[i * 5 + 0] = local[0];
+			verts[i * 5 + 1] = local[1];
+			verts[i * 5 + 2] = local[2];
+			verts[i * 5 + 3] = base_s;
+			verts[i * 5 + 4] = base_t;
+			minimum_s = min(minimum_s, base_s);
+			minimum_t = min(minimum_t, base_t);
+			maximum_s = max(maximum_s, base_s);
+			maximum_t = max(maximum_t, base_t);
+		}
+		if (bad)
+		{
+			free(verts);
+			continue;
+		}
+		minimum_s = floorf(minimum_s / 16.0f) * 16.0f;
+		minimum_t = floorf(minimum_t / 16.0f) * 16.0f;
+		const float light_width_value = (ceilf(maximum_s / 16.0f) * 16.0f - minimum_s) / 16.0f + 1.0f;
+		const float light_height_value = (ceilf(maximum_t / 16.0f) * 16.0f - minimum_t) / 16.0f + 1.0f;
+		if (!isfinite(light_width_value) || !isfinite(light_height_value) ||
+			light_width_value < 1.0f || light_height_value < 1.0f ||
+			light_width_value > 4096.0f || light_height_value > 4096.0f)
+		{
+			free(verts);
+			continue;
+		}
+		packet->light_min_s = minimum_s;
+		packet->light_min_t = minimum_t;
+		packet->light_width = (int)light_width_value;
+		packet->light_height = (int)light_height_value;
+		packet->num_verts = edge_count;
+		packet->verts = verts;
+	}
+}
+
 static void free_bsp(sw_bsp_t *bsp)
 {
 	if (bsp == NULL)
 		return;
+	if (bsp->packets != NULL)
+	{
+		for (int i = 0; i < bsp->num_faces; ++i)
+			free(bsp->packets[i].verts);
+		free(bsp->packets);
+	}
 	free(bsp->texinfo_images);
 	if (bsp->file != NULL)
 		sw_ri.FS_FreeFile(bsp->file);
@@ -472,6 +568,7 @@ static sw_bsp_t *load_bsp(const char *name)
 		Com_sprintf(texture_name, sizeof(texture_name), "textures/%s.m8", base);
 		bsp->texinfo_images[i] = SW_FindImage(texture_name, SW_IMAGE_WALL);
 	}
+	bake_face_packets(bsp);
 	return bsp;
 }
 

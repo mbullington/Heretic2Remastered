@@ -58,6 +58,20 @@ typedef struct sw_sprite_frame_s {
 	sw_image_t *image;
 } sw_sprite_frame_t;
 
+// E58: per-face baked render packets. Everything draw_face() reconstructs
+// per frame that is actually map-static: vertex indices/local coords, the
+// base_s/base_t texture projections (same float products the runtime loop
+// would compute, so bits are identical), and light-grid minima/dimensions.
+// Dynamic pieces (undulate/warp/flowing offsets, transforms, clipping,
+// animation-frame selection) stay in draw_face(). Faces failing static
+// validation get verts == NULL and take the original runtime path.
+typedef struct sw_face_packet_s {
+	float light_min_s, light_min_t;
+	int light_width, light_height;
+	int num_verts;
+	float *verts; // num_verts * 5: local x, y, z, base_s, base_t
+} sw_face_packet_t;
+
 typedef struct sw_bsp_s {
 	byte *file;
 	int length;
@@ -87,6 +101,7 @@ typedef struct sw_bsp_s {
 	const byte *visibility;
 	int visibility_length;
 	sw_image_t **texinfo_images;
+	sw_face_packet_t *packets; // E58: per-face baked static geometry, NULL until baked
 } sw_bsp_t;
 
 typedef struct sw_flex_vertex_s {

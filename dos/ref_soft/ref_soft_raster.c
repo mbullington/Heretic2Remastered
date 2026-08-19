@@ -960,10 +960,15 @@ static void draw_face(const sw_bsp_t *bsp, const int face_index, const vec3_t or
 	const float flowing_scroll = (flags & SURF_FLOWING) ?
 		-64.0f * (sw_refdef.time * 0.5f - floorf(sw_refdef.time * 0.5f)) : 0.0f;
 	sw_vertex_t view_vertices[SW_MAX_FACE_VERTS];
+	int light_width;
+	int light_height;
 	float minimum_s = FLT_MAX;
 	float minimum_t = FLT_MAX;
 	float maximum_s = -FLT_MAX;
 	float maximum_t = -FLT_MAX;
+	const sw_face_packet_t *packet = bsp->packets != NULL ? &bsp->packets[face_index] : NULL;
+	if (packet == NULL || packet->verts == NULL || packet->num_verts != edge_count)
+	{
 	for (int i = 0; i < edge_count; ++i)
 	{
 		const int surface_edge = LittleLong(bsp->surfedges[first_edge + i]);
@@ -1020,14 +1025,55 @@ static void draw_face(const sw_bsp_t *bsp, const int face_index, const vec3_t or
 	}
 	minimum_s = floorf(minimum_s / 16.0f) * 16.0f;
 	minimum_t = floorf(minimum_t / 16.0f) * 16.0f;
-	const float light_width_value = (ceilf(maximum_s / 16.0f) * 16.0f - minimum_s) / 16.0f + 1.0f;
-	const float light_height_value = (ceilf(maximum_t / 16.0f) * 16.0f - minimum_t) / 16.0f + 1.0f;
-	if (!isfinite(light_width_value) || !isfinite(light_height_value) ||
-		light_width_value < 1.0f || light_height_value < 1.0f ||
-		light_width_value > 4096.0f || light_height_value > 4096.0f)
-		return;
-	const int light_width = (int)light_width_value;
-	const int light_height = (int)light_height_value;
+	{
+		const float light_width_value = (ceilf(maximum_s / 16.0f) * 16.0f - minimum_s) / 16.0f + 1.0f;
+		const float light_height_value = (ceilf(maximum_t / 16.0f) * 16.0f - minimum_t) / 16.0f + 1.0f;
+		if (!isfinite(light_width_value) || !isfinite(light_height_value) ||
+			light_width_value < 1.0f || light_height_value < 1.0f ||
+			light_width_value > 4096.0f || light_height_value > 4096.0f)
+			return;
+		light_width = (int)light_width_value;
+		light_height = (int)light_height_value;
+	}
+	}
+	else // E58: baked render packet available
+	{
+		for (int i = 0; i < edge_count; ++i)
+		{
+			const float *pv = &packet->verts[i * 5];
+			vec3_t point;
+			for (int axis = 0; axis < 3; ++axis)
+			{
+				point[axis] = pv[axis] + origin[axis];
+				if (!isfinite(point[axis]))
+					return;
+			}
+			const float base_s = pv[3];
+			const float base_t = pv[4];
+			if (flags & SURF_UNDULATE)
+				point[2] += turbsin[TURBSIN_V0(pv[0], pv[1], sw_refdef.time)] * 0.25f +
+				turbsin[TURBSIN_V1(pv[0], pv[1], sw_refdef.time)] * 0.125f;
+			if (quake_amount != 0.0f)
+				point[2] += turbsin[TURBSIN_V0(pv[0], pv[1], sw_refdef.time)] * quake_amount * 0.5f +
+				turbsin[TURBSIN_V1(pv[0], pv[1], sw_refdef.time)] * quake_amount * 0.25f;
+			float s = base_s + flowing_scroll;
+			float t = base_t;
+			if (flags & SURF_WARP)
+			{
+				s = (base_s + turbsin[(int)((base_t * 0.125f + sw_refdef.time) * TURBSCALE) & 255] +
+					flowing_scroll) * image->width / 64.0f;
+				t = (base_t + turbsin[(int)((base_s * 0.125f + sw_refdef.time) * TURBSCALE) & 255]) *
+					image->height / 64.0f;
+			}
+			view_vertices[i] = world_to_view(point, s, t);
+			view_vertices[i].light_s = base_s;
+			view_vertices[i].light_t = base_t;
+		}
+		minimum_s = packet->light_min_s;
+		minimum_t = packet->light_min_t;
+		light_width = packet->light_width;
+		light_height = packet->light_height;
+	}
 	sw_vertex_t clipped[SW_MAX_FACE_VERTS + 2];
 	const int clipped_count = clip_near(view_vertices, edge_count, clipped);
 	if (clipped_count < 3)
