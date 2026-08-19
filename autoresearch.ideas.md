@@ -10,7 +10,12 @@ WASH: E57 coverage-driven sky (40-tile span masks bit-exact): sky -3.7 == covera
 WASH: E62 PVS decode-once + gen stamps: per-leaf RLE re-decode was small vs leaf struct loads; +45 lines for noise.
 POOL-FALSIFIED: E63 (flex px only 11.3K/frame: tile-z pool ~1.5ms == build cost; self-occlusion needs per-px anyway), E64 (45% tris already bbox-culled pre-fill; B3-D: rejects free; multi-monster play only), E65/E66 (lights+particles = 3us each quiescent; combat-scene workload needed — new-workload gate).
 USER-GATED TURBO BANK (fidelity-ceiling class, per step-64 precedent): rgb-affine flex variant A measured -12.1ms flex pool / frame 157.1 vs 160.7 bit-exact — GATE RED 210-211px (0.27%, 4.6x budget) on synthetic flex fixture; UV-affine measured bit-NEUTRAL (210 vs 211 same pixels => ceiling break is rgb chain physics: 565->888 quantum = 8/255 > 2LSB).
-E61 MEASURED BOUND (H2DOS_SW_TEMPSKIP probe, reverted 2026-08-18): skipping world+sky+trans+clears on odd frames: frame 161.5->100.2 (-61.2); world exactly halves; clear halves; entities -3.3 (noise); present unchanged. Real design pays a sky-class warp kernel (~8-16ms per skipped frame) + disocclusion hole handling + entity-trail treatment => NET est -40..50ms/frame bench-class. Visual change: world one frame stale + warp filter error + hole artifacts = permanently turbo-class (opt-in cvar + mode-refresh of baselines). Engineering size: LARGE (warp kernel + snapshots + pipeline plumbing).
+E61 SHIPPED as opt-in turbo (r_swtemporal, env H2DOS_SW_TEMPORAL seats; OFF = bit-exact default):
+- bound probe (skip everything on odd frames): frame -61.2ms = technique ceiling.
+- stage 1 exact per-px warp (799b8071 infra keep): FALSIFIED, ~0 net — warp px chain (30 float-ops) cost-equal to the 25-op world px on the flat harness (world 105.2 vs 104.0 OFF).
+- stage 2 segment-affine warp (a8997ffb, KEPT): 2 endpoint reprojects per 32-px source segment + linear splat walk; warp ~57ms/odd-frame (6.4x cheaper than exact). ENABLED: frame 158.9->136.5 (-22.4ms, -14%); world bucket 104->80.7 incl. snapshot+zb-zero; sky +0.2..6.9 (disocclusion sky-fill; mode-A only); total ~164.5 (-10.2%). Visual review: coherent warp, no holes/tears at gameplay scale.
+- turbo hardening backlog: hole dilation pass (reduce sky fills); snapshot 2 memcpys (zb16?); moving brush models leave disocclusion ghosts by design; first-frame/no-worldmodel fallback verified.
+
 METHOD: bench is RUN-BIMODAL across invocations (mode A sky 17.5/world 105.9, mode B sky 12.2/world 104.9, rng-seeded both) — per-run medians poisoned; compare like-modes via /tmp/h2-ar-evidence-N.txt. walked_world_px jitters +0.1-0.4% from pre-activation wall-clock rand forking.
 
 
