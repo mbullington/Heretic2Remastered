@@ -58,6 +58,32 @@ Fidelity plan: sweep levels 16/32/64/128 on the synthetic flex fixture that
 killed E55 variant A. 16 = gate-red by construction; 128 -> error ~1/888,
 borderline-inside budget. Find the knee, then arbitrate keep vs turbo-bank.
 
+### 5. Eager per-entity projection pass [sub-ULP position, est -1..3ms + MMX-batch enabler]  
+From census #78: proj fills = 794/frame @4.7us = 3.7ms/frame, all scattered
+lazily through the tri loop with per-corner seq-check branching. Project
+render_num_xyz in ONE straight-line pass per entity (fills already exist as
+flex_proj_lookup): kills the scatter/branch overhead, converts lazy-cache
+checks into plain array reads, and produces the exact loop shape PMMX batch
+projection needs later. Sub-ULP position argument (same math, new order);
+expect <1px. Overlaps #6's win: it subsumes the scatter/branch part of #5;
+expected marginal after #5 lands.
+
+### 6. Entity x View matrix fusion per entity [sub-ULP position, est -1..2.5]  
+From census #78 (the gated precondition is MET: 794 fills/frame @3.7ms):
+compose View x Entity once per entity (~12 mul + 9 add) instead of
+entity_transform_basis + world_to_view separately per fill (~21 mul + 19 add
+per unique vertex). Reassociates POSITION chains only: per the 2026-08-19
+hindsight note, expected <1px flips, NOT the E55/E56 color-chain death.
+Caveat: only if measure shows fills/basis actually dominate the 3.7ms (vs
+the contained divide + screenmap), pick-2 with #5.
+
+### 7. Proj-cache copy elimination (pointer API) [bit-exact, trivial, est -0.5..1.5]
+From census #78 (80% hit rate): flex_proj_lookup returns *out = *cache =
+~45B memcpy x 3,970 lookups/frame ~= 160KB/frame of pure copy for hits that
+are read-only until the corner is consumed. Return a pointer to the slot
+(or index) instead. Zero math change; mechanically small. Ship first as a
+warm-up for the lane; #5/#6 change the surrounding shape anyway.
+
 ### 5. r_swscan2 row-parity variant [turbo-class, ON est -5..9 vs columns' -4.3]
 PS2 field-render trick. Existing stripe infra (#71/#72) alternates 2px column
 pairs: ON = -4.3. Row parity additionally kills span-row prologues (4.7K
@@ -66,7 +92,25 @@ same. Predicate-level change on existing machinery; snapshot already samples
 both phases. Known anti-synergy: sky row-skip dies under stripes (#72
 learning). User-grant class mirrors scan2 (stipple-adjacent turbo).
 
-### 6. normalize_checked rsqrt variant [sub-ULP; ruler now prices it directly]
+### 6. Eager per-entity projection pass [sub-ULP position, est -1..3ms + MMX-batch enabler]
+From census #78: proj fills = 794/frame @4.7us = 3.7ms/frame, all scattered
+lazily through the tri loop with per-corner seq-check branching. Project
+render_num_xyz in ONE straight-line pass per entity (fills already exist as
+flex_proj_lookup): kills the scatter/branch overhead, converts lazy-cache
+checks into plain array reads, and produces the exact loop shape PMMX batch
+projection needs later. Sub-ULP position argument (same math, new order);
+expect <1px. Overlaps #7's win: it subsumes the scatter/branch part of #7.
+
+### 7. Entity x View matrix fusion per entity [sub-ULP position, est -1..2.5]
+From census #78 (the gated precondition is MET: 794 fills/frame @3.7ms):
+compose View x Entity once per entity (~12 mul + 9 add) instead of
+entity_transform_basis + world_to_view separately per fill (~21 mul + 19 add
+per unique vertex). Reassociates POSITION chains only: per the 2026-08-19
+hindsight note, expected <1px flips, NOT the E55/E56 color-chain death.
+Caveat: only if measure shows fills/basis actually dominate the 3.7ms (vs
+the contained divide + screenmap), pick-2 with #6.
+
+### 8. normalize_checked rsqrt variant [sub-ULP; ruler now prices it directly]
 normalize_checked pays serialized FSQRT (70 cyc) + FDIV (33 cyc), modeled in
 pm_mca_data.py; it runs ~2x per flex joint per entity (flex_joint_rotation
 dir/up) plus sprite bases. Call sites in-scope, visual-only => Q_rsqrt + 1
@@ -75,7 +119,14 @@ sub-ULP position argument per the fusion note, expect <1px flip). Collision
 / physics sqrt sites stay exact. Natural asm-lane T0 citizen once LUT refs
 exist in the manifest for those loops.
 
-### 7. MMX movq bulk-copy probe [bit-exact, trigger-gated, est -1..3ms]
+### 9. Proj-cache copy elimination (pointer API) [bit-exact, trivial, est -0.5..1.5]
+From census #78 (80% hit rate): flex_proj_lookup returns *out = *cache =
+~45B memcpy x 3,970 lookups/frame ~= 160KB/frame of pure copy for hits that
+are read-only until the corner is consumed. Return a pointer to the slot
+(or index) instead. Zero math change; mechanically small. Ship first as a
+warm-up for the lane; #6/#7 change the surrounding shape anyway.
+
+### 10. MMX movq bulk-copy probe [bit-exact, trigger-gated, est -1..3ms]
 Axis boundary: PER-PX MMX math stays closed (run #38 parity tax; #39).
 movq COPY loops differ: fewer instructions, pure-copy bit-exact, pm-mca can
 now price them precisely (movq U-only-pair rules + store-early rule are
@@ -84,12 +135,7 @@ Form: __m64 builtins with -mmmx inside one copy function (no raw asm blocks
 = no scheduler fences), single emms at function exit, alignment at alloc.
 Do not reopen the per-px modulate axis here.
 
-### 8. World texel+light run census [measurement-only; decides a -1..3ms idea]
-30-line histogram in the opaque pow2 lane: exact (texel-addr, lidx, z-state)
-run lengths. If mean run >= ~2.5px, bulk-fill same-colour runs (skip texel
-fetch + lidx + modulate on continuing px; store + zb stay per-px). W1 says
-uniform runs may be rarer than intuition, and the post-temporal px pool is
-thin — census first, build only if the histogram is favorable.
+### 11. World texel+light run census [measurement-only; decides a -1..3ms idea]
 
 ## Workload-gated lanes (combat bench now prices them)
 - Deferred additive compositing: accumulate additive fx into 8x8 tile
