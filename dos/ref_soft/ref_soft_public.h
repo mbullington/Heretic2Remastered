@@ -62,6 +62,7 @@ typedef struct h2dos_soft_stats_s {
 	unsigned bench_blend_frames;     // frames reaching the blend call site
 	unsigned bench_blend_alpha0;     // of those, frames with pulse alpha == 0 (no tint work)
 	unsigned bench_post_blend_writes; // px written by UI/2D paths after the pulse (census F)
+	unsigned bench_flex_white[2];    // census E: opaque tris w/ bitwise r==g==b corners
 	unsigned bench_world_lightbuild_px; // face-light miniature pixels rebuilt
 	unsigned long long bench_us_world_setup;  // draw_face work before span emission
 	unsigned long long bench_us_world_spans;  // span rasterization (draw_face_spans)

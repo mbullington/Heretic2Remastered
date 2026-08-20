@@ -2809,6 +2809,10 @@ advance:
 static void span_raster_flex_opaque(const flex_screen_vertex_t a, const flex_screen_vertex_t b,
 	const flex_screen_vertex_t c, const sw_image_t *image)
 {
+	// census E (ideas E-B): per-tri whiteness, bitwise gouraud compare.
+	++sw_stats.bench_flex_white[a.red_over_z == a.green_over_z && a.red_over_z == a.blue_over_z &&
+		b.red_over_z == b.green_over_z && b.red_over_z == b.blue_over_z &&
+		c.red_over_z == c.green_over_z && c.red_over_z == c.blue_over_z];
 	const qboolean clut = sw_clut_frame && image->src8 != NULL;
 	const float x10 = b.x - a.x, y10 = b.y - a.y;
 	const float x20 = c.x - a.x, y20 = c.y - a.y;

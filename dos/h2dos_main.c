@@ -875,6 +875,8 @@ static void log_bench_summary(void)
 	}
 	log_append("bench-blend-frames=%u\nbench-blend-alpha0=%u\nbench-post-blend-writes=%u\n",
 		stats->bench_blend_frames, stats->bench_blend_alpha0, stats->bench_post_blend_writes);
+	log_append("bench-flex-white=%u\nbench-flex-color=%u\n",
+		stats->bench_flex_white[1], stats->bench_flex_white[0]);
 }
 
 static void begin_audio_proof(const qboolean realdata)
