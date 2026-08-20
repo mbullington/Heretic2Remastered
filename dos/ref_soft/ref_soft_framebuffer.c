@@ -444,19 +444,27 @@ void SW_BlendRect(const int x, const int y, const int w, const int h, const uint
 	const unsigned sr = ((color >> 8) & 0xF8u) * src_weight;
 	const unsigned sg = ((color >> 3) & 0xFCu) * src_weight;
 	const unsigned sb = ((color << 3) & 0xF8u) * src_weight;
+	uint16_t rmap[32], gmap[64], bmap[32];
+	for (unsigned d = 0; d < 32; ++d)
+	{
+		const unsigned r = ((sr + (d << 3) * dst_weight) * 0x8081u) >> 23;
+		const unsigned b = ((sb + (d << 3) * dst_weight) * 0x8081u) >> 23;
+		rmap[d] = (uint16_t)((r & 0xF8u) << 8);
+		bmap[d] = (uint16_t)(b >> 3);
+	}
+	for (unsigned d = 0; d < 64; ++d)
+	{
+		const unsigned g = ((sg + (d << 2) * dst_weight) * 0x8081u) >> 23;
+		gmap[d] = (uint16_t)((g & 0xFCu) << 3);
+	}
 	unsigned mag = 0;
-	// The P55C MMX kernel is disabled: live combat proved it corrupts the
-	// fullscreen tint. Use the exact scalar path for every pixel.
 	for (int row = start_y; row < end_y; ++row)
 	{
 		uint16_t *const dst = sw_color + (size_t)(y + row) * (size_t)sw_width + x;
 		for (int column = start_x; column < end_x; ++column)
 		{
 			const uint16_t d = dst[column];
-			const unsigned r = ((sr + ((d >> 8) & 0xF8u) * dst_weight) * 0x8081u) >> 23;
-			const unsigned g = ((sg + ((d >> 3) & 0xFCu) * dst_weight) * 0x8081u) >> 23;
-			const unsigned b = ((sb + ((d << 3) & 0xF8u) * dst_weight) * 0x8081u) >> 23;
-			const uint16_t out = SW_RGB565(r, g, b);
+			const uint16_t out = (uint16_t)(rmap[d >> 11] | gmap[(d >> 5) & 63u] | bmap[d & 31u]);
 			dst[column] = out;
 			mag += (out == 0xF81Fu);
 		}

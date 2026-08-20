@@ -1,8 +1,9 @@
 # Segment 15 untried hypotheses
 
-1. **Restore exact B1 MMX BlendRect** — current validated source has regressed
-   to the 40.5 ms scalar fullscreen blend. Reapply the previously gate-passing
-   P55C PMULLW/PMULHW sign-corrected four-wide kernel (measured 9.2 ms).
+1. **Explicit-assembly BlendRect replacement** — the old intrinsic B1 kernel
+   is retired after two user-visible catastrophic-corruption runs. Revisit only
+   with a standalone full-buffer oracle and an assembly routine that proves ABI,
+   register, MMX/x87-state, alignment, and tail behavior before integration.
 2. **Assembly mixed-coverage world kernel** — extend the fixed-ABI kernel across
    partially covered words; current C fallback retains the per-pixel branch/
    counter tax there. Pool is bounded by 6.5K z-reject pixels/frame.
