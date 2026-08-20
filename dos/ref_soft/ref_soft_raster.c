@@ -410,6 +410,7 @@ extern qboolean sw_temporal_warp_now;
 // emitted in strict front-to-back BSP order. Brush entities and temporal
 // repair passes do not satisfy that invariant.
 static qboolean sw_world_ftb_mask_active;
+static qboolean sw_brush_span_active;
 static qboolean project_point(const vec3_t point, int *x, int *y, float *depth);
 
 static int sw_tag_face_paint_count;
@@ -442,14 +443,16 @@ typedef struct sw_world_paint_ctx_s {
 	int ikey_step;
 	int light_prev_idx;
 	unsigned mag;
+	unsigned accepted;
 } sw_world_paint_ctx_t;
 
-typedef char sw_world_paint_ctx_size_check[sizeof(sw_world_paint_ctx_t) == 104 ? 1 : -1];
+typedef char sw_world_paint_ctx_size_check[sizeof(sw_world_paint_ctx_t) == 108 ? 1 : -1];
 typedef char sw_world_paint_ctx_iu_check[offsetof(sw_world_paint_ctx_t, iu) == 56 ? 1 : -1];
 typedef char sw_world_paint_ctx_key_check[offsetof(sw_world_paint_ctx_t, ikey) == 88 ? 1 : -1];
 
 static sw_world_paint_ctx_t sw_world_paint_ctx;
 extern void sw_world_paint_run_pmmx(void);
+extern void sw_world_paint_zrun_pmmx(void);
 extern uint32_t *sw_world_patch_sites[4];
 
 __asm__(
@@ -550,6 +553,102 @@ __asm__(
 	"jnz _sw_world_kernel_px_prefix\n"
 	".globl _sw_world_kernel_end\n"
 	"_sw_world_kernel_end:\n"
+	"mov DWORD PTR [_sw_world_paint_ctx+88], ebp\n"
+	"pop edi\n"
+	"pop esi\n"
+	"pop ebx\n"
+	"pop ebp\n"
+	"ret\n"
+	".align 16\n"
+	".globl _sw_world_paint_zrun_pmmx\n"
+	"_sw_world_paint_zrun_pmmx:\n"
+	"push ebp\n"
+	"push ebx\n"
+	"push esi\n"
+	"push edi\n"
+	"mov edi, DWORD PTR [_sw_world_paint_ctx+0]\n"
+	"mov esi, DWORD PTR [_sw_world_paint_ctx+4]\n"
+	"mov ebp, DWORD PTR [_sw_world_paint_ctx+88]\n"
+	"_sw_world_zkernel_px_prefix:\n"
+	"cmp ebp, DWORD PTR [esi]\n"
+	"jb _sw_world_zkernel_advance\n"
+	"mov eax, DWORD PTR [_sw_world_paint_ctx+60]\n"
+	"sar eax, 16\n"
+	"and eax, DWORD PTR [_sw_world_paint_ctx+44]\n"
+	"imul eax, DWORD PTR [_sw_world_paint_ctx+36]\n"
+	"mov ecx, DWORD PTR [_sw_world_paint_ctx+56]\n"
+	"sar ecx, 16\n"
+	"and ecx, DWORD PTR [_sw_world_paint_ctx+40]\n"
+	"add eax, ecx\n"
+	"mov edx, DWORD PTR [_sw_world_paint_ctx+8]\n"
+	"movzx ebx, WORD PTR [edx+eax*2]\n"
+	"mov eax, DWORD PTR [_sw_world_paint_ctx+68]\n"
+	"shr eax, 20\n"
+	"imul eax, DWORD PTR [_sw_world_paint_ctx+48]\n"
+	"mov ecx, DWORD PTR [_sw_world_paint_ctx+64]\n"
+	"shr ecx, 20\n"
+	"add eax, ecx\n"
+	"cmp eax, DWORD PTR [_sw_world_paint_ctx+96]\n"
+	"je _sw_world_zkernel_shade_store\n"
+	"mov DWORD PTR [_sw_world_paint_ctx+96], eax\n"
+	"mov edx, DWORD PTR [_sw_world_paint_ctx+12]\n"
+	"mov edx, DWORD PTR [edx+eax*4]\n"
+	"mov eax, edx\n"
+	"shr eax, 20\n"
+	"and eax, 1023\n"
+	"shl eax, 5\n"
+	"add eax, DWORD PTR [_sw_world_paint_ctx+16]\n"
+	"mov DWORD PTR [_sw_world_paint_ctx+24], eax\n"
+	"mov eax, edx\n"
+	"shr eax, 10\n"
+	"and eax, 1023\n"
+	"shl eax, 6\n"
+	"add eax, DWORD PTR [_sw_world_paint_ctx+20]\n"
+	"mov DWORD PTR [_sw_world_paint_ctx+28], eax\n"
+	"and edx, 1023\n"
+	"shl edx, 5\n"
+	"add edx, DWORD PTR [_sw_world_paint_ctx+16]\n"
+	"mov DWORD PTR [_sw_world_paint_ctx+32], edx\n"
+	"_sw_world_zkernel_shade_store:\n"
+	"mov eax, ebx\n"
+	"shr eax, 5\n"
+	"and eax, 63\n"
+	"mov edx, DWORD PTR [_sw_world_paint_ctx+28]\n"
+	"movzx ecx, BYTE PTR [edx+eax]\n"
+	"shl ecx, 5\n"
+	"mov eax, ebx\n"
+	"shr eax, 11\n"
+	"mov edx, DWORD PTR [_sw_world_paint_ctx+24]\n"
+	"movzx eax, BYTE PTR [edx+eax]\n"
+	"shl eax, 11\n"
+	"or ecx, eax\n"
+	"and ebx, 31\n"
+	"mov edx, DWORD PTR [_sw_world_paint_ctx+32]\n"
+	"movzx eax, BYTE PTR [edx+ebx]\n"
+	"or eax, ecx\n"
+	"test ax, ax\n"
+	"jz _sw_world_zkernel_advance\n"
+	"xor edx, edx\n"
+	"cmp ax, 0xf81f\n"
+	"sete dl\n"
+	"add DWORD PTR [_sw_world_paint_ctx+100], edx\n"
+	"mov WORD PTR [edi], ax\n"
+	"mov DWORD PTR [esi], ebp\n"
+	"inc DWORD PTR [_sw_world_paint_ctx+104]\n"
+	"_sw_world_zkernel_advance:\n"
+	"mov eax, DWORD PTR [_sw_world_paint_ctx+72]\n"
+	"add DWORD PTR [_sw_world_paint_ctx+56], eax\n"
+	"mov eax, DWORD PTR [_sw_world_paint_ctx+76]\n"
+	"add DWORD PTR [_sw_world_paint_ctx+60], eax\n"
+	"mov eax, DWORD PTR [_sw_world_paint_ctx+80]\n"
+	"add DWORD PTR [_sw_world_paint_ctx+64], eax\n"
+	"mov eax, DWORD PTR [_sw_world_paint_ctx+84]\n"
+	"add DWORD PTR [_sw_world_paint_ctx+68], eax\n"
+	"add ebp, DWORD PTR [_sw_world_paint_ctx+92]\n"
+	"add edi, 2\n"
+	"add esi, 4\n"
+	"dec DWORD PTR [_sw_world_paint_ctx+52]\n"
+	"jnz _sw_world_zkernel_px_prefix\n"
 	"mov DWORD PTR [_sw_world_paint_ctx+88], ebp\n"
 	"pop edi\n"
 	"pop esi\n"
@@ -1022,9 +1121,38 @@ static void draw_face_spans(const screen_vertex_t *verts, const int n, const sw_
 			}
 			else
 			{
-				// Preserves the old (255 * alpha_fixed) >> 8 source-alpha scale.
-				const int sa_base = (int)((255u * (unsigned)(int)(alpha * 256.0f + 0.5f)) >> 8);
-				for (int i = 0; i < block; ++i, ++x)
+				const qboolean use_z_kernel = sw_brush_span_active && alpha >= 1.0f &&
+					twist_pow2 && theight_pow2 && !stripe_checker && !alpha_test &&
+					(sw_dbg_tag_y != y || sw_dbg_tag_x < x || sw_dbg_tag_x >= x + block);
+				if (use_z_kernel)
+				{
+					if (!sw_shade_ready)
+						sw_shade_init();
+					sw_world_paint_ctx = (sw_world_paint_ctx_t){
+						fb_row + x, zb_row + x, image->pixels, light_cache,
+						&sw_mul5shade[0][0], &sw_mul6shade[0][0],
+						sw_mul5shade[256], sw_mul6shade[256], sw_mul5shade[256],
+						image->width, mask_w, mask_h, light_stride, block,
+						iu, it, ils, ilt, iu_step, it_step, ils_step, ilt_step,
+						ikey, ikey_step, -1, 0, 0
+					};
+					sw_world_paint_zrun_pmmx();
+					iu = sw_world_paint_ctx.iu; it = sw_world_paint_ctx.it;
+					ils = sw_world_paint_ctx.ils; ilt = sw_world_paint_ctx.ilt;
+					ikey = sw_world_paint_ctx.ikey;
+					sw_stats.bench_mag_world_alpha += sw_world_paint_ctx.mag;
+					sw_stats.depth_writes += sw_world_paint_ctx.accepted;
+					sw_stats.bench_world_zaccepted += sw_world_paint_ctx.accepted;
+					sw_stats.bench_pixels_world += (unsigned)block;
+					sw_tag_face_paint_last = face_index;
+					sw_tag_face_paint_count += (int)sw_world_paint_ctx.accepted;
+					x += block;
+				}
+				else
+				{
+					// Preserves the old (255 * alpha_fixed) >> 8 source-alpha scale.
+					const int sa_base = (int)((255u * (unsigned)(int)(alpha * 256.0f + 0.5f)) >> 8);
+					for (int i = 0; i < block; ++i, ++x)
 				{
 					const size_t idx = (size_t)x;
 					int tx, ty;
@@ -1070,7 +1198,8 @@ static void draw_face_spans(const screen_vertex_t *verts, const int n, const sw_
 						}
 					}
 					++sw_stats.bench_pixels_world;
-					iu += iu_step; it += it_step; ils += ils_step; ilt += ilt_step; ikey += (uint32_t)ikey_step;
+						iu += iu_step; it += it_step; ils += ils_step; ilt += ilt_step; ikey += (uint32_t)ikey_step;
+					}
 				}
 			}
 			(void)gradient_w_x;
@@ -4246,6 +4375,7 @@ void SW_RasterEntities(const refdef_t *fd)
 				}
 				else
 				{
+					sw_brush_span_active = true;
 					// GL-equivalent backface cull: BSP planes are single-sided, and GL
 					// renders bmodels with face culling enabled. Translate the plane into
 					// world space by the entity origin (the soft rasterizer never rotates
@@ -4279,6 +4409,7 @@ void SW_RasterEntities(const refdef_t *fd)
 							continue;
 						draw_face(model->bsp, model->first_face + face, entity->origin, entity->frame);
 					}
+					sw_brush_span_active = false;
 				}
 				sw_stats.bench_us_ent_brush += (unsigned long long)(uclock() - tmark);
 				sw_stats.bench_brush_faces += (unsigned)model->num_faces;
