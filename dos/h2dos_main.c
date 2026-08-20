@@ -877,6 +877,10 @@ static void log_bench_summary(void)
 		stats->bench_blend_frames, stats->bench_blend_alpha0, stats->bench_post_blend_writes);
 	log_append("bench-flex-white=%u\nbench-flex-color=%u\n",
 		stats->bench_flex_white[1], stats->bench_flex_white[0]);
+	log_append("bench-flex-area-hist=%u,%u,%u,%u,%u,%u,%u\nbench-flex-unique-px=%u\n",
+		stats->bench_flex_area_hist[0], stats->bench_flex_area_hist[1], stats->bench_flex_area_hist[2],
+		stats->bench_flex_area_hist[3], stats->bench_flex_area_hist[4], stats->bench_flex_area_hist[5],
+		stats->bench_flex_area_hist[6], stats->bench_flex_unique_px);
 	log_append("bench-flex-nodes=%u\nbench-flex-nodes-culled=%u\n",
 		stats->bench_flex_nodes, stats->bench_flex_nodes_culled);
 }

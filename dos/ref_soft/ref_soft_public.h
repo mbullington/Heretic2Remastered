@@ -63,6 +63,8 @@ typedef struct h2dos_soft_stats_s {
 	unsigned bench_blend_alpha0;     // of those, frames with pulse alpha == 0 (no tint work)
 	unsigned bench_post_blend_writes; // px written by UI/2D paths after the pulse (census F)
 	unsigned bench_flex_white[2];    // census E: opaque tris w/ bitwise r==g==b corners
+	unsigned bench_flex_area_hist[7]; // census B: tris by painted area bucket (<0.25..>=8px)
+	unsigned bench_flex_unique_px;   // census C: unique px painted by flex last frame
 	unsigned bench_flex_nodes;       // mesh nodes bbox-tested (E-B2)
 	unsigned bench_flex_nodes_culled; // mesh nodes fully offscreen (E-B2)
 	unsigned bench_world_lightbuild_px; // face-light miniature pixels rebuilt

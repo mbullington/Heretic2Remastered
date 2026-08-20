@@ -2813,6 +2813,31 @@ advance:
 static byte sw_flex5lut[513][32];
 static byte sw_flex6lut[513][64];
 static qboolean sw_flexlut_ready;
+
+// census C (ideas): unique painted-flex-px bitmap for overdraw ratio.
+// Cleared at each SW_RenderFrame; marked at flex paint; counted at frame end.
+#define SW_FLEX_MASK_BYTES 9616
+static byte sw_flex_px_mask[SW_FLEX_MASK_BYTES];
+static inline void sw_flex_mark_px(const int x, const int y)
+{
+	const int i = y * sw_width + x;
+	if (i >= 0 && i < SW_FLEX_MASK_BYTES * 8)
+		sw_flex_px_mask[i >> 3] |= (byte)(1u << (i & 7));
+}
+static unsigned sw_flex_count_unique_px(void)
+{
+	unsigned n = 0;
+	for (int i = 0; i < SW_FLEX_MASK_BYTES; ++i)
+	{
+		unsigned v = sw_flex_px_mask[i];
+		while (v != 0u) { n += v & 1u; v >>= 1; }
+	}
+	return n;
+}
+static void sw_flex_clear_mask(void)
+{
+	memset(sw_flex_px_mask, 0, sizeof(sw_flex_px_mask));
+}
 static void sw_flex_lut_init(void)
 {
 	sw_flexlut_ready = true;
@@ -2844,6 +2869,13 @@ static void span_raster_flex_opaque(const flex_screen_vertex_t a, const flex_scr
 	const float denom = x10 * y20 - x20 * y10;
 	if (!isfinite(denom) || fabsf(denom) < 0.0001f)
 		return;
+	// census B (ideas): projected triangle area bucket (px^2).
+	{
+		const float area_px = fabsf(denom) * 0.5f;
+		const int bucket = area_px < 0.25f ? 0 : area_px < 0.5f ? 1 : area_px < 1.0f ? 2 :
+			area_px < 2.0f ? 3 : area_px < 4.0f ? 4 : area_px < 8.0f ? 5 : 6;
+		++sw_stats.bench_flex_area_hist[bucket];
+	}
 	const float inv = 1.0f / denom;
 	float guz_x, guz_y, gvz_x, gvz_y, gw_x, gw_y;
 	float gr_x, gr_y, gg_x, gg_y, gb_x, gb_y;
@@ -3013,6 +3045,7 @@ static void span_raster_flex_opaque(const flex_screen_vertex_t a, const flex_scr
 							fb_row[idx] = fpx;
 							zb_row[idx] = ikey;
 							++sw_stats.depth_writes;
+							sw_flex_mark_px(x, y);
 						}
 					}
 					iu += du; it += dt; ir += dr; ig += dg; ib += db; ikey += (uint32_t)ikey_step;
@@ -4505,6 +4538,9 @@ int SW_RenderFrame(const refdef_t *fd)
 	if (fd == NULL || sw_color == NULL || fd->width <= 0 || fd->height <= 0 ||
 		fd->fov_x <= 1.0f || fd->fov_x >= 179.0f || fd->fov_y <= 1.0f || fd->fov_y >= 179.0f)
 		return 0;
+	if (sw_stats.bench_frames > 0)
+		sw_stats.bench_flex_unique_px = sw_flex_count_unique_px(); // previous frame total
+	sw_flex_clear_mask();
 	refdef_t fx_fd;
 	if (getenv("H2DOS_SW_FXLOAD") != NULL)
 	{
