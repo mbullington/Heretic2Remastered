@@ -1,73 +1,64 @@
 # Autoresearch: DOS combat renderer
 
-## Active Segment 22: explicit interactive 320x240 performance mode
+## Active Segment 25: full-resolution temporal architecture
 
-Commit `62dbd5fa` is the truthful full-quality source: the world/material and
-entity optimizations are retained, Corvus uses the retail 1,433-frame model,
-and the logical player animation table is name-mapped to retail physical frame
-order. The corrected frozen combat frame is 112.569 ms: world 69.663 ms,
-entities 25.651 ms, blend 12.494 ms, and particles 3.480 ms.
+Commit `3a4bd08c` is the corrected-Corvus full-quality baseline: 112.569 ms per
+frozen combat frame, including 69.663 ms world, 25.651 ms entities, 12.494 ms
+blend, and 3.480 ms particles. The rejected half-resolution world and its
+mode-specific gate are removed before this segment's baseline.
 
 ### Objective and frozen workload
 
-Reach an interactive `frame_us <= 66,667` (15 fps) at a 320x240 RGB565 output,
-with a 50,000 us (20 fps) stretch target. Keep the corrected-Corvus tutorial2
+Reach `frame_us <= 66,667` (15 fps), with a 50,000 us stretch target, while
+retaining a genuine 320x240 RGB565 world. Keep the corrected-Corvus tutorial2
 combat sweep, deterministic effects, 7.5-degree camera orbit, model count, and
-all gameplay fixed. This new segment may reduce the internal world sampling
-rate or interleave world samples across frames, but entities, particles, weapon,
-HUD, menus, and final output remain 320x240. Such modes must be explicit
-renderer performance modes, never benchmark detection.
+all gameplay fixed. Do not reduce spatial resolution, interleave pixels, use
+mesh LOD, skip simulation, or lower entity/effect/HUD cadence.
 
-The existing projective temporal path is not a path to the target: its clean
-1-degree rotation ruler measured a 131.249 ms real render versus 146.938 ms
-with temporal reuse. It performs a floating divide for every destination pixel
-and then walks the world again for repair. Keep its explicit diagnostic switch
-working, but stop enabling a slower path by default. Favor less world work over
-reprojecting a full-resolution world expensively.
+The existing rotation-only temporal path establishes the root problem: on a
+clean 1-degree ruler, reuse measured 146.938 ms versus 131.249 ms for a real
+render. Although its comments describe endpoint interpolation, the kernel still
+executes a floating reciprocal for every destination pixel and then invokes a
+world repair traversal. A viable design must remove both costs rather than tune
+the surrounding scheduler.
 
 ### Metric contract
 
 - **Primary**: frozen combat `frame_us`, lower is better.
-- **Target-pool metrics**: `world_us`, `sky_us`, `clear_us`, `entities_us`,
-  `blend_us`, `particles_us`, present cost, world pixels/spans/blocks, and P55C
-  static telemetry.
+- **Target-pool metrics**: `world_us`, `sky_us`, `entities_us`, `blend_us`,
+  `particles_us`, clear/present cost, temporal warp count, world pixels, and
+  P55C static telemetry.
 - **Hard functional guards**: combat `status=PASS`; P55C-compatible code; no
-  gameplay, workload, camera, model-count, benchmark, dynamic-resolution,
-  entity-cadence, or simulation shortcuts. Final output stays 320x240 RGB565.
-- **Full-quality guard**: with performance modes disabled, every existing image
-  gate remains unchanged and the slower temporal path stays available only by
-  explicit opt-in for diagnosis.
-- **Interactive-mode guard**: entities, particles, depth occlusion, HUD, menus,
-  and weapon remain full-resolution. World approximation must reach at least
-  32 dB whole-frame RGB PSNR and no more than 45% of pixels over 2 LSB on the
-  frozen captures, with direct inspection rejecting holes, depth leaks,
-  unstable edges, objectionable texture crawl, or one-frame flashing.
-- **Mode policy**: an accepted low-work mode may be explicit rather than the
-  full-quality default, but it must be usable in ordinary play and exposed by a
-  stable cvar/environment switch.
+  gameplay, workload, camera, model-count, benchmark, spatial-resolution,
+  simulation, rendering-cadence, or entity-cadence shortcuts.
+- **Output guards**: retain the existing EFFECTS exact budget and the 2%/32 dB
+  RENDER, flex, and COMBAT gates. Full-resolution depth must continue to occlude
+  native entities and effects correctly.
+- **Motion guards**: inspect accepted temporal output for disocclusion holes,
+  edge doubling, stale animated/flowing surfaces, one-frame flashes, and texture
+  crawl. A still-frame PSNR pass is necessary but not sufficient.
+- **Mode policy**: temporal reuse may remain an explicit ordinary renderer mode
+  until motion inspection proves it safe as a default. The diagnostic exact
+  fallback must remain available.
 
-The combat runner records `world-half=1` in its evidence only when the ordinary
-`H2DOS_SW_WORLD_HALF=1` setting is present; backpressure selects the performance
-combat gate from that persisted evidence. Unaffected synthetic captures keep
-their historical exact/2% gates. This corrected metadata wiring starts a new
-segment and requires a fresh full-quality baseline before any mode can be retained.
-
-The ruler separates realistic cases: normal corrected combat is 112.569 ms,
-while the established winding-cull A/B moves the same entity workload by about
-14.3 ms. The existing scan-interleave mode previously moved a real renderer
-frame by 4.3 ms even though it disabled the assembly fast lane, proving the
-frame ruler observes reduced world work. Harness, workload, and metrics freeze
-at the new baseline.
+The ruler separates realistic cases: the normal frozen combat frame is
+112.569 ms; the same renderer's clean temporal ruler is 15.689 ms slower on a
+reuse frame. The combat sweep's 7.5-degree steps currently force real rendering,
+so an accepted kernel must both handle that motion and report nonzero temporal
+warps. Harness, workload, metrics, and gates freeze after the new baseline.
 
 ### Planned mechanisms and stop conditions
 
-First establish the corrected-Corvus baseline. Then (1) make the temporal path
-opt-in because it is slower than a real render, (2) make the existing two-phase
-world interleave use a dedicated assembly paint lane instead of falling back to
-slow C, and (3) if 15 fps remains out of reach, render only the world/sky into a
-half-resolution internal target and upscale color plus depth before drawing
-full-resolution entities. Stop at 66,667 us, after three distinct low-work
-architectures fail, on user interruption, or at a tooling dead end.
+First remove the rejected spatial-scaling code and establish a fresh baseline.
+Then compare three distinct full-resolution mechanisms: (1) block-endpoint
+projective mapping with fixed-point interior steps and no per-pixel reciprocal,
+(2) repair driven by explicit dynamic-surface ownership plus bounded edge-hole
+tiles instead of a broad second world traversal, and (3) source-forward depth
+splatting if backward repair remains dominant. Independently attack the stable
+12.494 ms blend transfer function only after temporal world reuse is genuinely
+faster. Stop at 66,667 us, after all three temporal architectures fail, after
+three consecutive mechanism-level rejects, on user interruption, or at a
+tooling dead end.
 
 ## Segment 20: retail player frame-order correctness
 

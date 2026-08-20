@@ -4987,104 +4987,12 @@ static int sw_temporal_warp_budget;
 qboolean sw_temporal_warp_now;
 static cvar_t *sw_cvar_temporal;
 static cvar_t *sw_cvar_scan2;
-static cvar_t *sw_cvar_world_half;
-static uint16_t *sw_world_half_color;
-static uint32_t *sw_world_half_depth;
-static size_t sw_world_half_pixels;
 int sw_scan_phase; // stripe-parity of the column pairs the world paints this frame
 qboolean sw_scan2_active(void)
 {
 	if (sw_cvar_scan2 == NULL)
 		sw_cvar_scan2 = sw_ri.Cvar_Get("r_swscan2", getenv("H2DOS_SW_SCAN2") != NULL ? "1" : "0", 0);
 	return sw_cvar_scan2 != NULL && sw_cvar_scan2->value != 0.0f;
-}
-
-static qboolean sw_world_half_enabled(void)
-{
-	if (sw_cvar_world_half == NULL)
-		sw_cvar_world_half = sw_ri.Cvar_Get("r_swworldhalf", getenv("H2DOS_SW_WORLD_HALF") != NULL ? "1" : "0", 0);
-	return sw_cvar_world_half != NULL && sw_cvar_world_half->value != 0.0f;
-}
-
-static qboolean sw_world_half_prepare(const int width, const int height)
-{
-	const size_t pixels = (size_t)((width + 1) >> 1) * (size_t)((height + 1) >> 1);
-	if (pixels <= sw_world_half_pixels)
-		return true;
-	uint16_t *new_color = realloc(sw_world_half_color, pixels * sizeof(*new_color));
-	if (new_color == NULL)
-		return false;
-	sw_world_half_color = new_color;
-	uint32_t *new_depth = realloc(sw_world_half_depth, pixels * sizeof(*new_depth));
-	if (new_depth == NULL)
-		return false;
-	sw_world_half_depth = new_depth;
-	sw_world_half_pixels = pixels;
-	return true;
-}
-
-static void sw_render_world_half(const refdef_t *fd)
-{
-	uint16_t *const full_color = sw_color;
-	uint32_t *const full_depth = sw_depth;
-	const int full_width = sw_width;
-	const int full_height = sw_height;
-	const int half_width = (full_width + 1) >> 1;
-	const int half_height = (full_height + 1) >> 1;
-	refdef_t half_fd = *fd;
-	half_fd.x >>= 1;
-	half_fd.y >>= 1;
-	half_fd.width = (fd->width + 1) >> 1;
-	half_fd.height = (fd->height + 1) >> 1;
-
-	sw_color = sw_world_half_color;
-	sw_depth = sw_world_half_depth;
-	sw_width = half_width;
-	sw_height = half_height;
-	memset(sw_depth, 0, (size_t)half_width * half_height * sizeof(*sw_depth));
-	sw_refdef = half_fd;
-	setup_view(&half_fd);
-	const uclock_t world_start = uclock();
-	SW_RasterWorld(&half_fd);
-	const uclock_t sky_start = uclock();
-	SW_RasterSky(&half_fd);
-	const uclock_t upscale_start = uclock();
-
-	sw_color = full_color;
-	sw_depth = full_depth;
-	sw_width = full_width;
-	sw_height = full_height;
-	for (int source_y = 0; source_y < half_height; ++source_y)
-	{
-		const uint16_t *const source_color = sw_world_half_color + (size_t)source_y * half_width;
-		const uint32_t *const source_depth = sw_world_half_depth + (size_t)source_y * half_width;
-		const int target_y = source_y << 1;
-		uint16_t *const color0 = full_color + (size_t)target_y * full_width;
-		uint16_t *const color1 = full_color + (size_t)min(target_y + 1, full_height - 1) * full_width;
-		uint32_t *const depth0 = full_depth + (size_t)target_y * full_width;
-		uint32_t *const depth1 = full_depth + (size_t)min(target_y + 1, full_height - 1) * full_width;
-		for (int source_x = 0; source_x < half_width; ++source_x)
-		{
-			const int target_x = source_x << 1;
-			const int target_x1 = min(target_x + 1, full_width - 1);
-			const uint16_t color = source_color[source_x];
-			color0[target_x] = color;
-			color0[target_x1] = color;
-			color1[target_x] = color;
-			color1[target_x1] = color;
-			const uint32_t depth = source_depth[source_x];
-			depth0[target_x] = depth;
-			depth0[target_x1] = depth;
-			depth1[target_x] = depth;
-			depth1[target_x1] = depth;
-		}
-	}
-	sw_refdef = *fd;
-	setup_view(fd);
-	const uclock_t finish = uclock();
-	sw_stats.bench_us_world += (unsigned long long)(sky_start - world_start);
-	sw_stats.bench_us_sky += (unsigned long long)(upscale_start - sky_start) +
-		(unsigned long long)(finish - upscale_start);
 }
 
 // Hole-repair scissor: after the homography warp, the world pass is re-run
@@ -5378,9 +5286,7 @@ int SW_RenderFrame(const refdef_t *fd)
 		SW_ClearColorFill();
 	sw_temporal_warp_now = false;
 	sw_scissor_active = false;
-	const qboolean world_half = !(fd->rdflags & RDF_NOWORLDMODEL) && sw_world_half_enabled() &&
-		sw_world_half_prepare(sw_width, sw_height);
-	if (!world_half && !(fd->rdflags & RDF_NOWORLDMODEL) && sw_temporal_enabled())
+	if (!(fd->rdflags & RDF_NOWORLDMODEL) && sw_temporal_enabled())
 	{
 		if (sw_snap_world != sw_world_model || sw_snap_width != sw_width || sw_snap_height != sw_height)
 			sw_temporal_invalidate();
@@ -5421,39 +5327,31 @@ int SW_RenderFrame(const refdef_t *fd)
 	uclock_t mark = frame_start;
 	// Sky runs AFTER the world pass and writes only where depth is still far
 	// (the sky draws no depth, so world-covered pixels cost one int compare).
-	if (world_half)
+	if (sw_temporal_warp_now)
 	{
-		sw_render_world_half(fd);
-		mark = uclock();
+		sw_temporal_warp(fd);
+		// Refresh pass: hole tiles (warp gaps) + dynamic faces (animation,
+		// flowing/warped/undulating surfaces, nonzero lightstyles) re-render
+		// fresh every frame; static warped snapshot covers only the rest.
+		sw_world_repair_pass = true;
+		SW_RasterWorld(fd);
+		sw_world_repair_pass = false;
 	}
 	else
+		SW_RasterWorld(fd);
 	{
-		if (sw_temporal_warp_now)
-		{
-			sw_temporal_warp(fd);
-			// Refresh pass: hole tiles (warp gaps) + dynamic faces (animation,
-			// flowing/warped/undulating surfaces, nonzero lightstyles) re-render
-			// fresh every frame; static warped snapshot covers only the rest.
-			sw_world_repair_pass = true;
-			SW_RasterWorld(fd);
-			sw_world_repair_pass = false;
-		}
-		else
-			SW_RasterWorld(fd);
-		{
-			const uclock_t next = uclock();
-			sw_stats.bench_us_world += (unsigned long long)(next - mark);
-			mark = next;
-		}
-		SW_RasterSky(fd);
-		{
-			const uclock_t next = uclock();
-			sw_stats.bench_us_sky += (unsigned long long)(next - mark);
-			mark = next;
-		}
-		if (!sw_temporal_warp_now && sw_temporal_enabled())
-			sw_temporal_snapshot(fd); // world+sky only: entities never enter the snapshot
+		const uclock_t next = uclock();
+		sw_stats.bench_us_world += (unsigned long long)(next - mark);
+		mark = next;
 	}
+	SW_RasterSky(fd);
+	{
+		const uclock_t next = uclock();
+		sw_stats.bench_us_sky += (unsigned long long)(next - mark);
+		mark = next;
+	}
+	if (!sw_temporal_warp_now && sw_temporal_enabled())
+		sw_temporal_snapshot(fd); // world+sky only: entities never enter the snapshot
 	SW_RasterEntities(fd);
 	{
 		const uclock_t next = uclock();
