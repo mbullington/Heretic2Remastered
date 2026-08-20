@@ -1,13 +1,13 @@
 #!/usr/bin/env python3
 """P55C path-class ruler for the dominant opaque FTB world lane.
 
-The frozen baseline uses exact instruction windows from source commit 8e2d8e3.
-A candidate assembly kernel exposes global labels for the same path fragments;
-when those labels exist this script prices those real bytes instead. Frequencies
-come from the deterministic 144-frame combat capture and stay frozen.
+Baseline CPIs and class frequencies were frozen from the validated 8e2d8e3
+binary before SEG-14. A candidate kernel exposes four global labels delimiting
+its real loop fragments; only those paint CPIs are replaced. Covered runs and
+block setup keep their frozen C prices, so unrelated code layout cannot move
+the ruler.
 """
 import os
-import re
 import subprocess
 import sys
 
@@ -31,89 +31,72 @@ else:
 
 funcs = pm_mca.parse_objdump_symbols(text)
 
-
-def cut(a0: str, a1: str) -> list[str]:
-    lo, hi = int(a0, 16), int(a1, 16)
-    lines = []
-    for line in text.splitlines():
-        match = re.match(r"^\s*([0-9a-f]+):", line)
-        if match and lo <= int(match.group(1), 16) <= hi:
-            lines.append(line)
-    if not lines:
-        raise SystemExit(f"empty frozen window {a0}..{a1}; baseline code moved")
-    return lines
-
-
-def raw_symbol(name: str) -> list[str]:
-    if name not in funcs:
-        raise KeyError(name)
-    return [ins.raw for ins in funcs[name] if ins.mne not in ("ret", "retf")]
-
-
-def score(name: str, lines: list[str], trips: float) -> float:
-    instrs = [
-        ins for ins in pm_mca.parse_objdump("\n".join(lines))
-        if ins.mne not in ("jmp", "call", "ret", "retf")
-    ]
-    tail = pm_mca.parse_asm("jne loop_head\nloop_head:")[:1]
-    result = pm_mca.analyze_slice(instrs + tail, pm_mca.Ctx(), iterations=12, inner_jcc="nottaken")
-    cpi = result["cycles_per_iter"]
-    stalls = {key: round(value, 1) for key, value in result["stats"]["stalls"].items()}
-    cycles = cpi * trips
-    print(
-        f"{name:18s} n={len(instrs) + 1:3d} cpi={cpi:3d} "
-        f"trips/frame={trips:9,.0f} cycles/frame={cycles:12,.0f} stalls={stalls}"
-    )
-    return cycles
-
-
-# Frozen per-frame class frequencies from the 144-frame combat capture.
+# Frozen deterministic 144-frame combat frequencies.
 PAINT = 11250273 / 144
 ZREJ = 932836 / 144
 LMOVE = 1258210 / 144
 BLOCKS = 475409 / 144
 
-# Assembly candidates expose fragments of their real loop as global labels.
-# Objdump assigns bytes through the next global label to each fragment.
-fragments = {
+# Frozen 8e2d8e3 compiler CPIs, measured by the SEG-14 ruler.
+BASE_CPI = {
+    "paint_nomove": 102,
+    "paint_lmove": 118,
+    "zreject_px": 27,
+    "skip_run": 95,
+    "block_prologue": 387,
+    "block_advance": 28,
+}
+
+
+def symbol_instructions(name: str):
+    return [ins for ins in funcs[name] if ins.mne not in ("ret", "retf")]
+
+
+def analyze_fragments(parts) -> tuple[int, int]:
+    instrs = [ins for part in parts for ins in part if ins.mne not in ("jmp", "call", "ret", "retf")]
+    tail = pm_mca.parse_asm("jne loop_head\nloop_head:")[:1]
+    result = pm_mca.analyze_slice(instrs + tail, pm_mca.Ctx(), iterations=12, inner_jcc="nottaken")
+    stalls = {key: round(value, 1) for key, value in result["stats"]["stalls"].items()}
+    print(f"  candidate n={len(instrs) + 1} stalls={stalls}")
+    return result["cycles_per_iter"], len(instrs) + 1
+
+
+def emit(name: str, cpi: int, trips: float, n: int | None = None) -> float:
+    cycles = cpi * trips
+    shape = f"n={n:3d} " if n is not None else "frozen    "
+    print(f"{name:18s} {shape}cpi={cpi:3d} trips/frame={trips:9,.0f} cycles/frame={cycles:12,.0f}")
+    return cycles
+
+
+symbols = {
     name: f"_sw_world_kernel_{name}"
     for name in ("px_prefix", "light_reload", "shade_store", "advance")
 }
-using_kernel = all(symbol in funcs for symbol in fragments.values())
+using_kernel = all(symbol in funcs for symbol in symbols.values())
+paint_nomove_cpi = BASE_CPI["paint_nomove"]
+paint_lmove_cpi = BASE_CPI["paint_lmove"]
+paint_nomove_n = None
+paint_lmove_n = None
 
 if using_kernel:
-    part = {name: raw_symbol(symbol) for name, symbol in fragments.items()}
-    paint_nomove = part["px_prefix"] + part["shade_store"] + part["advance"]
-    paint_lmove = part["px_prefix"] + part["light_reload"] + part["shade_store"] + part["advance"]
-    print("PMCA-WORLD source=assembly-kernel")
+    part = {name: symbol_instructions(symbol) for name, symbol in symbols.items()}
+    paint_nomove_cpi, paint_nomove_n = analyze_fragments(
+        [part["px_prefix"], part["shade_store"], part["advance"]]
+    )
+    paint_lmove_cpi, paint_lmove_n = analyze_fragments(
+        [part["px_prefix"], part["light_reload"], part["shade_store"], part["advance"]]
+    )
+    print("PMCA-WORLD source=assembly-kernel+frozen-C-remainder")
 else:
-    # Exact compiler bytes for 8e2d8e3. The non-linear order mirrors GCC's
-    # branch layout: advance is before the paint body and skip-run after it.
-    paint_prefix = cut("1d237", "1d2c8")
-    light_reload = cut("1d2ca", "1d312")
-    shade_store = cut("1d318", "1d3c3")
-    advance = cut("1d1ee", "1d22b")
-    paint_nomove = paint_prefix + shade_store + advance
-    paint_lmove = paint_prefix + light_reload + shade_store + advance
     print("PMCA-WORLD source=frozen-8e2d8e3-compiler")
 
-# Covered/mixed runs and block setup remain in the frozen C path for the first
-# kernel experiment, so both baseline and candidate price those same bytes.
-zreject = cut("1d237", "1d24c") + cut("1d1e8", "1d22b")
-skiprun = cut("1d121", "1d178") + cut("1d3c8", "1d42d")
-block_prologue = cut("1ce41", "1d09f")
-block_advance = cut("1d44b", "1d498")
-
 total = 0.0
-total += score("paint_nomove", paint_nomove, PAINT - LMOVE)
-total += score("paint_lmove", paint_lmove, LMOVE)
-total += score("zreject_px", zreject, ZREJ)
-total += score("skip_run", skiprun, ZREJ)
-total += score("block_prologue", block_prologue, BLOCKS)
-total += score("block_advance", block_advance, BLOCKS)
-print(
-    f"{'TOTAL world lane':18s} cycles/frame={total:12,.0f} "
-    f"~= {total / 233e6 * 1e6:,.0f} us @PMMX-233"
-)
+total += emit("paint_nomove", paint_nomove_cpi, PAINT - LMOVE, paint_nomove_n)
+total += emit("paint_lmove", paint_lmove_cpi, LMOVE, paint_lmove_n)
+total += emit("zreject_px", BASE_CPI["zreject_px"], ZREJ)
+total += emit("skip_run", BASE_CPI["skip_run"], ZREJ)
+total += emit("block_prologue", BASE_CPI["block_prologue"], BLOCKS)
+total += emit("block_advance", BASE_CPI["block_advance"], BLOCKS)
+print(f"{'TOTAL world lane':18s} cycles/frame={total:12,.0f} ~= {total / 233e6 * 1e6:,.0f} us @PMMX-233")
 print(f"METRIC pmca_world_cycles={int(round(total))}")
 print(f"METRIC pmca_world_est_us={int(round(total / 233e6 * 1e6))}")
