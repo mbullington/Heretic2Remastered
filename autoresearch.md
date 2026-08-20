@@ -1,6 +1,69 @@
 # Autoresearch: DOS combat renderer
 
-## Active Segment 19: retail player frame-order correctness
+## Active Segment 21: interactive 320x240 architecture
+
+Commit `62dbd5fa` is the truthful full-quality source: the world/material and
+entity optimizations are retained, Corvus uses the retail 1,433-frame model,
+and the logical player animation table is name-mapped to retail physical frame
+order. The corrected frozen combat frame is 112.569 ms: world 69.663 ms,
+entities 25.651 ms, blend 12.494 ms, and particles 3.480 ms.
+
+### Objective and frozen workload
+
+Reach an interactive `frame_us <= 66,667` (15 fps) at a 320x240 RGB565 output,
+with a 50,000 us (20 fps) stretch target. Keep the corrected-Corvus tutorial2
+combat sweep, deterministic effects, 7.5-degree camera orbit, model count, and
+all gameplay fixed. This new segment may reduce the internal world sampling
+rate or interleave world samples across frames, but entities, particles, weapon,
+HUD, menus, and final output remain 320x240. Such modes must be explicit
+renderer performance modes, never benchmark detection.
+
+The existing projective temporal path is not a path to the target: its clean
+1-degree rotation ruler measured a 131.249 ms real render versus 146.938 ms
+with temporal reuse. It performs a floating divide for every destination pixel
+and then walks the world again for repair. Keep its explicit diagnostic switch
+working, but stop enabling a slower path by default. Favor less world work over
+reprojecting a full-resolution world expensively.
+
+### Metric contract
+
+- **Primary**: frozen combat `frame_us`, lower is better.
+- **Target-pool metrics**: `world_us`, `sky_us`, `clear_us`, `entities_us`,
+  `blend_us`, `particles_us`, present cost, world pixels/spans/blocks, and P55C
+  static telemetry.
+- **Hard functional guards**: combat `status=PASS`; P55C-compatible code; no
+  gameplay, workload, camera, model-count, benchmark, dynamic-resolution,
+  entity-cadence, or simulation shortcuts. Final output stays 320x240 RGB565.
+- **Full-quality guard**: with performance modes disabled, every existing image
+  gate remains unchanged and the slower temporal path stays available only by
+  explicit opt-in for diagnosis.
+- **Interactive-mode guard**: entities, particles, depth occlusion, HUD, menus,
+  and weapon remain full-resolution. World approximation must reach at least
+  22 dB whole-frame RGB PSNR and no more than 35% of pixels over 2 LSB on the
+  frozen captures, with direct inspection rejecting holes, depth leaks,
+  unstable edges, objectionable texture crawl, or one-frame flashing.
+- **Mode policy**: an accepted low-work mode may be explicit rather than the
+  full-quality default, but it must be usable in ordinary play and exposed by a
+  stable cvar/environment switch.
+
+The ruler separates realistic cases: normal corrected combat is 112.569 ms,
+while the established winding-cull A/B moves the same entity workload by about
+14.3 ms. The existing scan-interleave mode previously moved a real renderer
+frame by 4.3 ms even though it disabled the assembly fast lane, proving the
+frame ruler observes reduced world work. Harness, workload, and metrics freeze
+at the new baseline.
+
+### Planned mechanisms and stop conditions
+
+First establish the corrected-Corvus baseline. Then (1) make the temporal path
+opt-in because it is slower than a real render, (2) make the existing two-phase
+world interleave use a dedicated assembly paint lane instead of falling back to
+slow C, and (3) if 15 fps remains out of reach, render only the world/sky into a
+half-resolution internal target and upscale color plus depth before drawing
+full-resolution entities. Stop at 66,667 us, after three distinct low-work
+architectures fail, on user interruption, or at a tooling dead end.
+
+## Segment 20: retail player frame-order correctness
 
 Commit `a53e866e` made the retail Corvus visible and replaced the incompatible
 185-frame watcher model with the 1,433-frame `models/player/elf/tris.fm` asset.
