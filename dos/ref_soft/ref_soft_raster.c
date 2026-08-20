@@ -2952,6 +2952,16 @@ static void span_raster_flex_opaque(const flex_screen_vertex_t a, const flex_scr
 			uint32_t ikey = (uint32_t)(w * SW_DEPTH_SCALE);
 			uint32_t ikey_end = (uint32_t)(max(w_end, 0.0f) * SW_DEPTH_SCALE);
 			const int ikey_step = ((int)ikey_end - (int)ikey) / block;
+			// E-D/ideas: u,v are affine over the block => px values stay inside
+			// [min(iu,iu_end)..max(...)]; monotonicity makes the per-px clamps
+			// redundant when BOTH block endpoints are in-texture range.
+			const int iu_last = iu + (block - 1) * du;
+			const int it_last = it + (block - 1) * dt;
+			const qboolean su_in = min(iu, iu_last) >= 0 &&
+				max(iu, iu_last) <= ((image->width - 1) << 16);
+			const qboolean st_in = min(it, it_last) >= 0 &&
+				max(it, it_last) <= ((image->height - 1) << 16);
+			const qboolean has_key = !image->no_zero_texel;
 			if (clut)
 				for (int i = 0; i < block; ++i, ++x)
 				{
@@ -2987,12 +2997,12 @@ static void span_raster_flex_opaque(const flex_screen_vertex_t a, const flex_scr
 					const size_t idx = (size_t)x;
 					if (ikey >= zb_row[idx])
 					{
-						const int tx = ClampI(iu >> 16, 0, image->width - 1);
-						const int ty = ClampI(it >> 16, 0, image->height - 1);
+						const int tx = su_in ? (iu >> 16) : ClampI(iu >> 16, 0, image->width - 1);
+						const int ty = st_in ? (it >> 16) : ClampI(it >> 16, 0, image->height - 1);
 						const uint16_t texel = image->pixels[ty * image->width + tx];
 						// texel 0x0000 is the colorkey: identical semantics to the
 						// salpha==0 branch (no paint, no depth write).
-						if (texel != 0)
+						if (!has_key || texel != 0)
 						{
 							const int cr = min(512, max(0, ir >> 9)); // fixed [0..512]: 256 == 1.0
 							const int cg = min(512, max(0, ig >> 9));

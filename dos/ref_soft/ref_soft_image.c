@@ -134,13 +134,16 @@ static sw_image_t *load_m8(const char *name, const sw_image_kind_t kind)
 	{
 		image->num_frames = max(1, num_frames);
 		const byte *indices = (const byte *)file + offset;
+		qboolean has_zero = false;
 		for (size_t i = 0; i < (size_t)width * height; ++i)
 		{
 			const paletteRGB_t color = mip->palette[indices[i]];
 			const byte alpha = ((kind == SW_IMAGE_SPRITE || kind == SW_IMAGE_SKIN) && indices[i] == 255) ? 0 : 255;
 			image->pixels[i] = sw_pack_texel(color.r, color.g, color.b, alpha);
 			image->has_alpha |= alpha != 255;
+			has_zero |= image->pixels[i] == 0;
 		}
+		image->no_zero_texel = !has_zero;
 		// E4 (ideas #4): retain the index8 source + packed palette row for
 		// skin images so the intensity-shade CLUT can be built per entity.
 		if (kind == SW_IMAGE_SKIN)
@@ -192,6 +195,7 @@ static sw_image_t *load_m32(const char *name, const sw_image_kind_t kind)
 	{
 		image->num_frames = max(1, num_frames);
 		const byte *source = (const byte *)file + offset;
+		qboolean has_zero = false;
 		for (size_t i = 0; i < count; ++i)
 		{
 			// WALL textures render through alpha-ignoring paths, so their zero
@@ -200,7 +204,9 @@ static sw_image_t *load_m32(const char *name, const sw_image_kind_t kind)
 			const byte a = kind == SW_IMAGE_WALL ? 255 : source[i * 4 + 3];
 			image->pixels[i] = sw_pack_texel(source[i * 4], source[i * 4 + 1], source[i * 4 + 2], a);
 			image->has_alpha |= kind != SW_IMAGE_WALL && source[i * 4 + 3] != 255;
+			has_zero |= image->pixels[i] == 0;
 		}
+		image->no_zero_texel = !has_zero;
 		++sw_stats.m32_images;
 		audit_image(image);
 	}

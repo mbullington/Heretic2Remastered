@@ -50,6 +50,7 @@ typedef struct image_s {
 	byte *src8;           // NULL for non-m8 and non-skin images
 	uint16_t pal565[256];
 	qboolean has_alpha;
+	qboolean no_zero_texel;    // E-D: provably no 0x0000 texels => skip colorkey test
 	qboolean synthetic_fallback;
 	int registration_sequence;
 } sw_image_t;
