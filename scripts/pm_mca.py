@@ -592,7 +592,7 @@ class Sim:
     retire into the pipelined x87 scoreboard, so integer issue continues [MA
     4.5]; the divider is non-pipelined [IT p]."""
 
-    def __init__(self, instrs: list[Ins], ctx: Ctx):
+    def __init__(self, instrs: list[Ins], ctx: Ctx, inner_jcc: str = "reject"):
         if len(instrs) < 2:
             raise ValueError("slice needs >= 2 instructions")
         for ins in instrs:
@@ -602,6 +602,11 @@ class Sim:
             raise ValueError("v1 slice must end in the (backward) conditional jump")
         for ins in instrs[:-1]:
             if ins.is_branch():
+                if inner_jcc == "nottaken" and ins.row.extra.get("branch") == "jcc":
+                    # v2-D: dominant-path pricing: inner direct jccs are modeled
+                    # by their row's 1-clk issue cost (P55C BTB steady state),
+                    # never taken within the slice.
+                    continue
                 raise ValueError(f"v1 slice contains inner control flow: {ins.raw!r}")
         self.ins = instrs
         self.ctx = ctx
@@ -1068,8 +1073,9 @@ def pair_occupy(sim: "Sim", u: Ins, v: Ins, e: int) -> int:
 # Analysis driver
 # ==========================================================================
 
-def analyze_slice(instrs: list[Ins], ctx: Ctx | None = None, iterations: int = 12) -> dict:
-    sim = Sim(instrs, ctx or Ctx())
+def analyze_slice(instrs: list[Ins], ctx: Ctx | None = None, iterations: int = 12,
+                  inner_jcc: str = "reject") -> dict:
+    sim = Sim(instrs, ctx or Ctx(), inner_jcc=inner_jcc)
     res = sim.run(iterations=iterations)
     steady = res["per_iter"]
     cpi = steady[len(steady) // 2]
