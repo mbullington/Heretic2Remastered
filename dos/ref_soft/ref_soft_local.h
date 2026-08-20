@@ -210,6 +210,7 @@ extern uint32_t *sw_depth; // depth as non-negative float bits (ordered as int)
 extern int sw_width;
 extern int sw_scan_phase;
 qboolean sw_scan2_active(void);
+extern qboolean sw_blend_pending; // census F: fd->blend pulse ran this frame; UI writes follow
 extern int sw_height;
 extern refdef_t sw_refdef;
 extern sw_model_t *sw_world_model;

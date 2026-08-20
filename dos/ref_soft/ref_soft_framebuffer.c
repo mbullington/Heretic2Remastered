@@ -12,6 +12,7 @@
 #include <time.h>
 
 uint16_t *sw_color;
+qboolean sw_blend_pending;
 static bool sw_color_owns;
 static byte *sw_present_lut;
 uint32_t *sw_depth;
@@ -287,6 +288,8 @@ void SW_PutPixel(const int x, const int y, const float depth, const uint16_t col
 	// All stored depths are 31-bit linear fixed-point inverse-z keys (see
 	// SW_DEPTH_SCALE in ref_soft_local.h); larger = closer, 0 = far/sky.
 	sw_debug_env_init();
+	if (sw_blend_pending)
+		++sw_stats.bench_post_blend_writes;
 	uint32_t depth_key;
 	if (depth > 1e30f)
 		depth_key = 0xFFFFFFFFu;
@@ -469,10 +472,13 @@ void SW_BlendRect(const int x, const int y, const int w, const int h, const uint
 		}
 	}
 	sw_stats.bench_mag_putpixel += mag;
+	if (sw_blend_pending)
+		sw_stats.bench_post_blend_writes += (unsigned)((end_x - start_x) * (end_y - start_y));
 }
 
 void SW_Present(void)
 {
+	sw_blend_pending = false; // census F: UI window for this frame is closed
 	const uclock_t start = uclock();
 	if (sw_surface == NULL || sw_color == NULL)
 		return;

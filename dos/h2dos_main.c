@@ -873,6 +873,8 @@ static void log_bench_summary(void)
 				if (stats->bench_flex_wind[c][f] != 0)
 					log_append("bench-flex-wind-%s-f%d=%u\n", names[c], f, stats->bench_flex_wind[c][f]);
 	}
+	log_append("bench-blend-frames=%u\nbench-blend-alpha0=%u\nbench-post-blend-writes=%u\n",
+		stats->bench_blend_frames, stats->bench_blend_alpha0, stats->bench_post_blend_writes);
 }
 
 static void begin_audio_proof(const qboolean realdata)

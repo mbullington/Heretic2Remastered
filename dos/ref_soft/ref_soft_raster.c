@@ -4553,12 +4553,19 @@ int SW_RenderFrame(const refdef_t *fd)
 		sw_stats.bench_us_lights += (unsigned long long)(next - mark);
 		mark = next;
 	}
+	// census F (ideas B2): frame classes + post-blend write traffic.
+	++sw_stats.bench_blend_frames;
 	if (fd->blend[3] > 0.0f)
+	{
 		SW_BlendRect(0, 0, sw_width, sw_height, SW_RGB565(
 			ClampI((int)(fd->blend[0] * 255.0f), 0, 255),
 			ClampI((int)(fd->blend[1] * 255.0f), 0, 255),
 			ClampI((int)(fd->blend[2] * 255.0f), 0, 255)),
 			(byte)ClampI((int)(fd->blend[3] * 255.0f), 0, 255));
+		sw_blend_pending = true;
+	}
+	else
+		++sw_stats.bench_blend_alpha0;
 	{
 		const uclock_t next = uclock();
 		sw_stats.bench_us_blend += (unsigned long long)(next - mark);
