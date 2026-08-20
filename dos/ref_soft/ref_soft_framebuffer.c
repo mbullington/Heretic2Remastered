@@ -15,6 +15,7 @@ uint16_t *sw_color;
 qboolean sw_blend_pending;
 static bool sw_color_owns;
 static byte *sw_present_lut;
+static uint16_t sw_blend_rgmap[2048];
 uint32_t *sw_depth;
 int sw_width;
 int sw_height;
@@ -457,16 +458,38 @@ void SW_BlendRect(const int x, const int y, const int w, const int h, const uint
 		const unsigned g = ((sg + (d << 2) * dst_weight) * 0x8081u) >> 23;
 		gmap[d] = (uint16_t)((g & 0xFCu) << 3);
 	}
+	const int pixel_count = (end_x - start_x) * (end_y - start_y);
+	const qboolean use_rgmap = pixel_count >= 4096;
+	if (use_rgmap)
+		for (unsigned d = 0; d < 2048; ++d)
+			sw_blend_rgmap[d] = (uint16_t)(rmap[d >> 6] | gmap[d & 63u]);
 	unsigned mag = 0;
-	for (int row = start_y; row < end_y; ++row)
+	if (use_rgmap)
 	{
-		uint16_t *const dst = sw_color + (size_t)(y + row) * (size_t)sw_width + x;
-		for (int column = start_x; column < end_x; ++column)
+		for (int row = start_y; row < end_y; ++row)
 		{
-			const uint16_t d = dst[column];
-			const uint16_t out = (uint16_t)(rmap[d >> 11] | gmap[(d >> 5) & 63u] | bmap[d & 31u]);
-			dst[column] = out;
-			mag += (out == 0xF81Fu);
+			uint16_t *const dst = sw_color + (size_t)(y + row) * (size_t)sw_width + x;
+			for (int column = start_x; column < end_x; ++column)
+			{
+				const uint16_t d = dst[column];
+				const uint16_t out = (uint16_t)(sw_blend_rgmap[d >> 5] | bmap[d & 31u]);
+				dst[column] = out;
+				mag += (out == 0xF81Fu);
+			}
+		}
+	}
+	else
+	{
+		for (int row = start_y; row < end_y; ++row)
+		{
+			uint16_t *const dst = sw_color + (size_t)(y + row) * (size_t)sw_width + x;
+			for (int column = start_x; column < end_x; ++column)
+			{
+				const uint16_t d = dst[column];
+				const uint16_t out = (uint16_t)(rmap[d >> 11] | gmap[(d >> 5) & 63u] | bmap[d & 31u]);
+				dst[column] = out;
+				mag += (out == 0xF81Fu);
+			}
 		}
 	}
 	sw_stats.bench_mag_putpixel += mag;
