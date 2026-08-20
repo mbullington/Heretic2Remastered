@@ -3011,6 +3011,29 @@ static byte sw_flex5lut[513][32];
 static byte sw_flex6lut[513][64];
 static qboolean sw_flexlut_ready;
 
+extern uint32_t *sw_flex_skin_patch_sites[2];
+
+__asm__(
+	".data\n"
+	".align 4\n"
+	".globl _sw_flex_skin_patch_sites\n"
+	"_sw_flex_skin_patch_sites:\n"
+	".long .Lsw_flex_patch_width, .Lsw_flex_patch_pixels\n"
+	".text\n");
+
+static void sw_flex_patch_skin(const sw_image_t *image)
+{
+	static const uint16_t *patched_pixels;
+	static int patched_width;
+	if (patched_pixels == image->pixels && patched_width == image->width)
+		return;
+	*(volatile uint32_t *)sw_flex_skin_patch_sites[0] = (uint32_t)image->width;
+	*(volatile uint32_t *)sw_flex_skin_patch_sites[1] = (uint32_t)(uintptr_t)image->pixels;
+	patched_pixels = image->pixels;
+	patched_width = image->width;
+	__asm__ volatile("jmp 1f\n1:" ::: "memory");
+}
+
 static void sw_flex_lut_init(void)
 {
 	sw_flexlut_ready = true;
@@ -3328,9 +3351,30 @@ static void span_raster_flex_opaque(const flex_screen_vertex_t a, const flex_scr
 					const size_t idx = (size_t)x;
 					if (ikey >= zb_row[idx])
 					{
-						const int tx = su_in ? (iu >> 16) : ClampI(iu >> 16, 0, image->width - 1);
-						const int ty = st_in ? (it >> 16) : ClampI(it >> 16, 0, image->height - 1);
-						const uint16_t texel = image->pixels[ty * image->width + tx];
+						uint16_t texel;
+						if (su_in && st_in)
+						{
+							uint32_t sample_u = (uint32_t)iu;
+							uint32_t sample_v = (uint32_t)it;
+							__asm__ volatile(
+								".intel_syntax noprefix\n"
+								"sar ecx, 16\n"
+								".byte 0x69, 0xc9\n"
+								".Lsw_flex_patch_width: .long 0x12345678\n"
+								"sar eax, 16\n"
+								"add eax, ecx\n"
+								".byte 0x0f, 0xb7, 0x04, 0x45\n"
+								".Lsw_flex_patch_pixels: .long 0x12345678\n"
+								".att_syntax prefix\n"
+								: "+a"(sample_u), "+c"(sample_v) : : "memory");
+							texel = (uint16_t)sample_u;
+						}
+						else
+						{
+							const int tx = ClampI(iu >> 16, 0, image->width - 1);
+							const int ty = ClampI(it >> 16, 0, image->height - 1);
+							texel = image->pixels[ty * image->width + tx];
+						}
 						// texel 0x0000 is the colorkey: identical semantics to the
 						// salpha==0 branch (no paint, no depth write).
 						if (!has_key || texel != 0)
@@ -3742,6 +3786,8 @@ void SW_RasterFlexEntity(const entity_t *entity, const sw_model_t *model, const 
 			else if (flex->skins[node->skin] != NULL)
 				skin = flex->skins[node->skin];
 		}
+		if (skin != NULL && skin->pixels != NULL)
+			sw_flex_patch_skin(skin);
 		const qboolean use_color = node != NULL && (node->flags & FMNI_USE_COLOR);
 		const float node_color[4] = {
 			use_color ? node->color.r / 255.0f : 1.0f,
