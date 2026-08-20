@@ -3415,6 +3415,25 @@ void SW_RasterFlexEntity(const entity_t *entity, const sw_model_t *model, const 
 					++sw_stats.bench_flex_tris_bbox;
 					continue;
 				}
+				// E50-restore (ideas queue #1): default-ON winding cull after the
+				// 144-frame A/B measured 0 px delta with the gate swing (combat +
+				// player alias + monsters). Env off-switch: H2DOS_SW_WIND=0.
+				static cvar_t *sw_wind;
+				if (sw_wind == NULL)
+				{
+					const char *env = getenv("H2DOS_SW_WIND");
+					sw_wind = sw_ri.Cvar_Get("r_swwind", env != NULL ? env : "1", 0);
+				}
+				if (sw_wind != NULL && sw_wind->value != 0.0f && cache_ok)
+				{
+					const float area2 = (projected[1]->x - projected[0]->x) * (projected[2]->y - projected[0]->y) -
+						(projected[2]->x - projected[0]->x) * (projected[1]->y - projected[0]->y);
+					if (area2 <= 0.0f)
+					{
+						++sw_stats.bench_flex_tris_wind;
+						continue;
+					}
+				}
 				const qboolean opaque_tri = flex_opaque_ok && !use_color && cache_ok &&
 					skin != NULL && skin->pixels != NULL;
 			for (int corner = 0; corner < 3; ++corner)

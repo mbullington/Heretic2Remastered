@@ -58,6 +58,7 @@ typedef struct h2dos_soft_stats_s {
 	unsigned bench_part_px_tex;    // px visited in the textured-quad path (all)
 	unsigned bench_part_px_add;    // of the above, additive-class px
 	unsigned bench_part_lmcolor;   // particles taking the PFL_LM_COLOR light sample
+	unsigned bench_flex_wind[3][17]; // E50-restore census: [front,back,degen] x [node->flags 0..15, no-node class]
 	unsigned bench_world_lightbuild_px; // face-light miniature pixels rebuilt
 	unsigned long long bench_us_world_setup;  // draw_face work before span emission
 	unsigned long long bench_us_world_spans;  // span rasterization (draw_face_spans)

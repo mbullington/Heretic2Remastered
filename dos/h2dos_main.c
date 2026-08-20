@@ -866,6 +866,13 @@ static void log_bench_summary(void)
 	log_append("bench-part-calls=%u\nbench-part-px-point=%u\nbench-part-px-tex=%u\nbench-part-px-add=%u\nbench-part-lmcolor=%u\n",
 		stats->bench_part_calls, stats->bench_part_px_point, stats->bench_part_px_tex,
 		stats->bench_part_px_add, stats->bench_part_lmcolor);
+	{
+		const char *names[3] = { "front", "back", "degen" };
+		for (int c = 0; c < 3; ++c)
+			for (int f = 0; f < 17; ++f)
+				if (stats->bench_flex_wind[c][f] != 0)
+					log_append("bench-flex-wind-%s-f%d=%u\n", names[c], f, stats->bench_flex_wind[c][f]);
+	}
 }
 
 static void begin_audio_proof(const qboolean realdata)
