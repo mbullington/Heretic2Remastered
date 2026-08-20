@@ -108,6 +108,7 @@ typedef struct h2dos_soft_stats_s {
 	unsigned bench_world_zaccepted;             // world span px that won the z-test (true coverage)
 	unsigned bench_world_zreject;               // world span px REJECTED by the z test (E59 pool probe)
 	unsigned bench_sky_holes;                   // px with zb==0 at sky time (sky-visible holes)
+	unsigned bench_temporal_warps;              // frames rendered from a temporal world snapshot
 	unsigned bench_flex_tris_affine;            // flex triangles drawn by the opaque fast path
 } h2dos_soft_stats_t;
 

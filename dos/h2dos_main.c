@@ -883,6 +883,7 @@ static void log_bench_summary(void)
 		stats->bench_flex_area_hist[6], stats->bench_flex_unique_px);
 	log_append("bench-flex-nodes=%u\nbench-flex-nodes-culled=%u\n",
 		stats->bench_flex_nodes, stats->bench_flex_nodes_culled);
+	log_append("bench-temporal-warps=%u\n", stats->bench_temporal_warps);
 }
 
 static void begin_audio_proof(const qboolean realdata)
@@ -1120,7 +1121,9 @@ int main(const int argc, char** argv)
 			// and naive runs sweep identical angle sequences. Anything that differs
 			// per angle (coverage, objects) lands in the dumped frames.
 			cl.viewangles[0] = -10.0f;
-			cl.viewangles[1] = (float)(frame % 48) * (360.0f / 48.0f);
+			const char *step_env = getenv("H2DOS_SWEEP_DEGREES");
+			const float step = step_env != NULL ? (float)atof(step_env) : (360.0f / 48.0f);
+			cl.viewangles[1] = (float)frame * step;
 		}
 		if (realdata && bench_requested && bench_seeded &&
 			getenv("H2DOS_COMBAT") != NULL && svs.clients != NULL && svs.initialized)

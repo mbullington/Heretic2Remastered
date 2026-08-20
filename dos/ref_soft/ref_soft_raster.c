@@ -4584,6 +4584,16 @@ int SW_RenderFrame(const refdef_t *fd)
 			fd = &tour_fd;
 		}
 	}
+	// Quality-ruler hook: rotate only the renderer refdef so the camera origin
+	// stays fixed and the rotation-only temporal path is exercised.
+	refdef_t rotate_fd;
+	const char *rotate_step = getenv("H2DOS_SW_ROTATE_DEGREES");
+	if (rotate_step != NULL)
+	{
+		rotate_fd = *fd;
+		rotate_fd.viewangles[1] += (float)sw_stats.bench_frames * (float)atof(rotate_step);
+		fd = &rotate_fd;
+	}
 	sw_refdef = *fd;
 	setup_view(fd);
 	if (fd->rdflags & RDF_NOWORLDMODEL)
@@ -4624,7 +4634,8 @@ int SW_RenderFrame(const refdef_t *fd)
 		{
 			sw_temporal_warp_now = true;
 			--sw_temporal_warp_budget;
-	}
+			++sw_stats.bench_temporal_warps;
+		}
 	}
 	const uclock_t frame_start = uclock();
 	uclock_t mark = frame_start;

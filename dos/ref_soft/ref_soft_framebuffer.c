@@ -445,22 +445,12 @@ void SW_BlendRect(const int x, const int y, const int w, const int h, const uint
 	const unsigned sg = ((color >> 3) & 0xFCu) * src_weight;
 	const unsigned sb = ((color << 3) & 0xF8u) * src_weight;
 	unsigned mag = 0;
-#ifdef SW_HAVE_MMX
-	if (end_x - start_x >= 4)
-	{
-		sw_blend_rows_mmx(sw_color, (size_t)sw_width, x, y, start_y, end_y, start_x, end_x,
-			sr, sg, sb, dst_weight, &mag);
-	}
-	for (int row = start_y; row < end_y; ++row)
-	{
-		uint16_t *const dst = sw_color + (size_t)(y + row) * (size_t)sw_width + x;
-		for (int column = start_x + ((end_x - start_x) & ~3); column < end_x; ++column)
-#else
+	// The P55C MMX kernel is disabled: live combat proved it corrupts the
+	// fullscreen tint. Use the exact scalar path for every pixel.
 	for (int row = start_y; row < end_y; ++row)
 	{
 		uint16_t *const dst = sw_color + (size_t)(y + row) * (size_t)sw_width + x;
 		for (int column = start_x; column < end_x; ++column)
-#endif
 		{
 			const uint16_t d = dst[column];
 			const unsigned r = ((sr + ((d >> 8) & 0xF8u) * dst_weight) * 0x8081u) >> 23;
