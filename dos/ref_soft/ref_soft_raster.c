@@ -5306,6 +5306,17 @@ int SW_RenderFrame(const refdef_t *fd)
 			const vec3_t dv = { fd->vieworg[0] - sched_org[0], fd->vieworg[1] - sched_org[1],
 				fd->vieworg[2] - sched_org[2] };
 			const float moved_sq = dv[0] * dv[0] + dv[1] * dv[1] + dv[2] * dv[2];
+			++sw_stats.bench_temporal_sched_checks;
+			if (dangle > sw_stats.bench_temporal_max_dangle)
+				sw_stats.bench_temporal_max_dangle = dangle;
+			if (moved_sq > sw_stats.bench_temporal_max_moved_sq)
+				sw_stats.bench_temporal_max_moved_sq = moved_sq;
+			if (dangle > 3.0f)
+				++sw_stats.bench_temporal_angle_rejects;
+			if (moved_sq > 1e-6f)
+				++sw_stats.bench_temporal_move_rejects;
+			if (sw_temporal_warp_budget <= 1)
+				++sw_stats.bench_temporal_budget_rejects;
 			if (dangle > 3.0f || moved_sq > 1e-6f || sw_temporal_warp_budget <= 1)
 				force_real = true;
 		}
