@@ -33,19 +33,6 @@
    "comment": "per-vertex 4-channel color x intensity: FILD/FMUL/FADDP stack juggle. ideas.md #3 census loop. 56 instr, mem 17/iter. (2026-08-20c: E-A codegen swapped esi/edi+eax/edx roles; re-pinned @0x1f97f-loop, same n=51)"
   },
   {
-   "name": "flex_variant_b",
-   "symbol": "_SW_RasterFlexEntity",
-   "contains": "fstp DWORD PTR \\[ebx\\+0x4\\]$",
-   "nth": 0,
-   "trips_key": "bench-flex-tris",
-   "align": {
-    "ebp": 4,
-    "edi": 4,
-    "ebx": 4
-   },
-   "comment": "second flex gradient variant (@0210f3 in seg-6 build; likely the clipped or dyn-lit path \u2014 attribution approximate, watch it move with census #3) (2026-08-20: nth 0->1: pointer-API codegen created an earlier [ebx+0x4] fstp in a fat loop; nth:1 pins the clean 46-instr corner/CLUT-region loop) (2026-08-20b: nth 1->0 after wind-cull codegen shift: pattern now unique @0x22a83 in the corner/CLUT-region loop)"
-  },
-  {
    "name": "world_struct_clear",
    "symbol": "_SW_RasterWorld",
    "contains": "mov DWORD PTR \\[eax\\],0x0",

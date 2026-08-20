@@ -31,7 +31,5 @@
  },
  "total_cycles": 66373.0,
  "est_us_pmmx233": 285.0,
- "problems": [
-  "flex_variant_b: flex_variant_b: slice has inner control flow (v1 scope)"
- ]
+ "problems": []
 }
