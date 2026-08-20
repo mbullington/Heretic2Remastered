@@ -42,13 +42,13 @@ evidence path (DOSBox class already answered: x87 costs are invisible there):
   437clk/block = 1.44Mcyc/frame ~5.8us @233; the 2 FDIVs are a MINORITY -
   fistp-QWORD ikey casts + IDIV + 4 fldcw dances share it] => #13 alone is
   the WRONG shape; the real item is prologue conversion-tax (#21a steps in).
-- #21(a) known-mode cast elimination (double-bias / bare fistp) for the
-  draw_face prologue [#96 PRICES the pool: ~5.8us/frame @233; variant slices
-  go through pm_mca_pathclass.py before any C edit].
-- #22 565 shade-row LUT [PRICED #96 per pathclass: 129->101 clk/px =
-  -2.17Mcyc/frame ~-9.3us @233, AGI 24->60 but IMUL serialization was worse.
-  CONFIRMED PMMX-class winner; DOSBox wash-or-worse expected (run #5 class),
-  so decision = build-for-PMMX (needs real-iron or accept pm-mca verdict).]
+- #21(a) known-mode cast elimination [VARIANT-PRICED #97: bareFISTP -92clk/blk
+  (~-1.3us/f), +ikeyDWORD +0 (model-neutral), +recipLUT -142 (~-2us/f @233).
+  ALL variants = DRIFT-class (RN vs chop for sign-general sites; ikey QWORD is
+  defensive near INT_MAX) + draw_face-fragile => arbitration/deep-freeze.
+- ~~#22 565 shade-row LUT~~ DONE (run #97): pm-mca predicted -9.3us@233;
+  MEASURED -3,375us world on DOSBox TOO (-3.5%; hot rows + no init-check beat
+  the run #5 cold-LUT class on BOTH rulers). Bit-exact, gates 0-diff.
 - #19(a) light-cell const runs (8,738 crossings/frame census): kills ~6
   ops/painted-px in the world lane; confined to the FRAGILE function anyway
   => same manifest/lane gate.
