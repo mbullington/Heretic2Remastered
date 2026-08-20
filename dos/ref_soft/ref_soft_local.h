@@ -139,6 +139,10 @@ typedef struct sw_flex_mesh_s {
 	int num_glcmds;
 	int start_tri;
 	int num_tris;
+	// E-B2: unique vertex indices used by the mesh's triangles, built once at
+	// load; lets the entity walker reject a whole limb by its screen bbox.
+	int *vert_indices;
+	int vert_count;
 } sw_flex_mesh_t;
 
 // Load-expanded per-triangle records: fan/strip glcmd blocks flattened to flat

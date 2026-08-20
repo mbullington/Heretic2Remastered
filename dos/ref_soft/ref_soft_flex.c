@@ -538,6 +538,34 @@ static qboolean expand_flex_triangles(sw_flex_t *flex)
 			position += count * 3;
 		}
 		mesh->num_tris = out - mesh->start_tri;
+		// E-B2: unique vertex indices of the mesh (for entity-level bbox culling)
+		mesh->vert_indices = NULL;
+		mesh->vert_count = 0;
+		if (mesh->num_tris > 0 && flex->render_num_xyz > 0)
+		{
+			char *seen = calloc((size_t)flex->render_num_xyz, 1);
+			if (seen != NULL)
+			{
+				for (int t = mesh->start_tri; t < mesh->start_tri + mesh->num_tris; ++t)
+					for (int corner = 0; corner < 3; ++corner)
+						if (rtri[t].vi[corner] >= 0 && rtri[t].vi[corner] < flex->render_num_xyz)
+							seen[rtri[t].vi[corner]] = 1;
+				int count = 0;
+				for (int v = 0; v < flex->render_num_xyz; ++v)
+					count += seen[v];
+				int *vi = malloc((size_t)count * sizeof(*vi));
+				if (vi != NULL)
+				{
+					int k = 0;
+					for (int v = 0; v < flex->render_num_xyz; ++v)
+						if (seen[v])
+							vi[k++] = v;
+					mesh->vert_indices = vi;
+					mesh->vert_count = count;
+				}
+				free(seen);
+			}
+		}
 	}
 	flex->rtri = rtri;
 	return true;
@@ -552,6 +580,9 @@ void SW_FreeFlex(sw_flex_t *flex)
 	free(flex->rtri);
 	free(flex->references);
 	free(flex->skeleton_placements);
+	if (flex->meshes != NULL)
+		for (int m = 0; m < flex->header.num_mesh_nodes; ++m)
+			free(flex->meshes[m].vert_indices);
 	free(flex->meshes);
 	free(flex->glcmds);
 	free(flex->frame_vertices);

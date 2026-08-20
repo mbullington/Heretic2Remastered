@@ -877,6 +877,8 @@ static void log_bench_summary(void)
 		stats->bench_blend_frames, stats->bench_blend_alpha0, stats->bench_post_blend_writes);
 	log_append("bench-flex-white=%u\nbench-flex-color=%u\n",
 		stats->bench_flex_white[1], stats->bench_flex_white[0]);
+	log_append("bench-flex-nodes=%u\nbench-flex-nodes-culled=%u\n",
+		stats->bench_flex_nodes, stats->bench_flex_nodes_culled);
 }
 
 static void begin_audio_proof(const qboolean realdata)

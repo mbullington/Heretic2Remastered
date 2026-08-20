@@ -3420,6 +3420,61 @@ void SW_RasterFlexEntity(const entity_t *entity, const sw_model_t *model, const 
 			use_color ? node->color.a / 255.0f : entity_alpha
 		};
 		const sw_flex_mesh_t *mesh = &flex->meshes[mesh_index];
+		// E-B2/ideas: mesh-node screen-bbox pre-cull. A projective map with all
+		// corner w positive maps the vertex hull inside its corners' image hull,
+		// so a fully-offscreen node bbox proves its tris are already doomed by
+		// the per-tri bbox test => skipping is bit-exact. If any bbox corner is
+		// behind the near plane, projection is unsafe: no cull.
+		if (mesh->vert_count > 0)
+		{
+			float mn[3] = { FLT_MAX, FLT_MAX, FLT_MAX };
+			float mx[3] = { -FLT_MAX, -FLT_MAX, -FLT_MAX };
+			for (int vi = 0; vi < mesh->vert_count; ++vi)
+			{
+				const float *pv = lerped[mesh->vert_indices[vi]];
+				for (int axis = 0; axis < 3; ++axis)
+				{
+					if (pv[axis] < mn[axis]) mn[axis] = pv[axis];
+					if (pv[axis] > mx[axis]) mx[axis] = pv[axis];
+				}
+			}
+			float sminx = 0.0f, smaxx = 0.0f, sminy = 0.0f, smaxy = 0.0f;
+			qboolean unsafe = false;
+			for (int corner = 0; corner < 8 && !unsafe; ++corner)
+			{
+				const float px = (corner & 1) ? mx[0] : mn[0];
+				const float py = (corner & 2) ? mx[1] : mn[1];
+				const float pz = (corner & 4) ? mx[2] : mn[2];
+				const float vx = ent_view_m[0][0] * px + ent_view_m[0][1] * py + ent_view_m[0][2] * pz + ent_view_t[0];
+				const float vy = ent_view_m[1][0] * px + ent_view_m[1][1] * py + ent_view_m[1][2] * pz + ent_view_t[1];
+				const float vz2 = ent_view_m[2][0] * px + ent_view_m[2][1] * py + ent_view_m[2][2] * pz + ent_view_t[2];
+				if (!(vz2 >= SW_NEAR_CLIP))
+				{
+					unsafe = true;
+					break;
+				}
+				const float cw = 1.0f / vz2;
+				const float sx = sw_refdef.x + sw_refdef.width * 0.5f + vx * projection_x * cw;
+				const float sy = sw_refdef.y + sw_refdef.height * 0.5f - vy * projection_y * cw;
+				if (corner == 0)
+				{
+					sminx = smaxx = sx;
+					sminy = smaxy = sy;
+				}
+				else
+				{
+					sminx = min(sminx, sx); smaxx = max(smaxx, sx);
+					sminy = min(sminy, sy); smaxy = max(smaxy, sy);
+				}
+			}
+			++sw_stats.bench_flex_nodes;
+			if (!unsafe &&
+				(smaxx < 0.0f || sminx >= (float)sw_width || smaxy < 0.0f || sminy >= (float)sw_height))
+			{
+				++sw_stats.bench_flex_nodes_culled;
+				continue;
+			}
+		}
 		const int tri_end = mesh->start_tri + mesh->num_tris;
 		for (int ti = mesh->start_tri; ti < tri_end; ++ti)
 		{
