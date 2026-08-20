@@ -265,6 +265,28 @@ static void band_pack_light(const uint32_t *dense, const int lw, const int lh, u
 	memcpy(band + (lh + 1) * bw, band + lh * bw, sizeof(uint32_t) * (size_t)bw);
 }
 
+// E22/ideas#22: shade-row LUTs for the pow2 FTB lane. span_modulate3's per
+// channel min(31,(c5*l)>>8) / min(63,(c6*l)>>8) over the full (channel,light)
+// domain is 96KB of tables, but the working set per cell = 3 rows of 32/64
+// bytes: hot. Built once, row pointers refreshed at light-class moves.
+// min(q,(c*l)>>8) per entry == span_modulate3's exact form (E19c-verified
+// nested-floor identity), bit-identical by construction.
+static byte sw_mul5shade[1024][32];
+static byte sw_mul6shade[1024][64];
+static qboolean sw_shade_ready;
+static void sw_shade_init(void)
+{
+	sw_shade_ready = true;
+	for (int l = 0; l < 1024; ++l)
+		for (int c = 0; c < 64; ++c)
+		{
+			const unsigned v = ((unsigned)c * (unsigned)l) >> 8;
+			if (c < 32)
+				sw_mul5shade[l][c] = (byte)min(v, 31u);
+			sw_mul6shade[l][c] = (byte)min(v, 63u);
+		}
+}
+
 // span_modulate with the light channels pre-unpacked (avoids re-extracting
 // them per pixel; the caller keeps them in registers per light cell).
 static inline uint16_t span_modulate3(const uint16_t texel, const unsigned lr, const unsigned lg,
@@ -730,6 +752,10 @@ static void draw_face_spans(const screen_vertex_t *verts, const int n, const sw_
 				int light_prev_idx = -1;
 				unsigned light_prev = 0;
 				unsigned light_r = 256u, light_g = 256u, light_b = 256u;
+				if (!sw_shade_ready)
+					sw_shade_init();
+				const byte *mul5r = sw_mul5shade[light_r], *mul5b = sw_mul5shade[light_b];
+				const byte *mul6g = sw_mul6shade[light_g];
 				int i = 0;
 				while (i < block)
 				{
@@ -769,8 +795,12 @@ static void draw_face_spans(const screen_vertex_t *verts, const int n, const sw_
 								light_r = (light_prev >> 20) & 1023u;
 								light_g = (light_prev >> 10) & 1023u;
 								light_b = light_prev & 1023u;
+								mul5r = sw_mul5shade[light_r];
+								mul6g = sw_mul6shade[light_g];
+								mul5b = sw_mul5shade[light_b];
 							}
-								const uint16_t wpx = span_modulate3(texel, light_r, light_g, light_b);
+								const uint16_t wpx = (uint16_t)((mul5r[(texel >> 11) & 31u] << 11) |
+									(mul6g[(texel >> 5) & 63u] << 5) | mul5b[texel & 31u]);
 								sw_stats.bench_mag_world += (wpx == 0xF81Fu);
 								sw_tag_face_paint_last = face_index;
 								++sw_tag_face_paint_count;

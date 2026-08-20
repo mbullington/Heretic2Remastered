@@ -5,8 +5,9 @@ learnings live in autoresearch.jsonl and git history (runs #1-#95).
 
 STATE 2026-08-20 (SEG-7 combat workload; pmca_est_us=527, frame 184.2ms):
 - Session #86-#95: frame 264.1 -> 184.2ms (-30.3%). Pools now: world 95.4 /
-  entities 43.5 / blend 40.5 / particles 3.5 / lights 0.15 / present 0.31 /
-  sky 0.17 (us).
+  entities 43.5 / blend 40.5 [SYNTHETIC-INFLATED: fxload damage-blend pulse
+  per frame; gameplay priority = world > entities] / particles 3.5 / lights
+  0.15 / present 0.31 / sky 0.17 (us).
 - HARNESS FACT (runs #91-92): draw_face_spans is PERTURBATION-FRAGILE on this
   host (ARM DOSBox dynarec): value-neutral C additions (counters, bool decls,
   call sites) deterministically move gate pixels (129px class) + inflate
@@ -19,7 +20,19 @@ STATE 2026-08-20 (SEG-7 combat workload; pmca_est_us=527, frame 184.2ms):
   (paint 129 clk/px AGI-dominated, prologue 408clk/block fp-stall dominated).
 
 ## Runnable keep-class queue
-- EMPTY as of 2026-08-20. Remaining work = the three gate classes below.
+- BlendRect per-call channel maps (rmap[32]/gmap[64]/bmap[32], queued
+  2026-08-20): src color/alpha are constant per call => map dst 5/6/5 bits
+  straight to out bits; 128 entries (~256B L1-resident) replace the current
+  6 IMUL/px form (src-weight hoist + exact 0x8081 div @ ref_soft_framebuffer.c:341)
+  with 3 loads. Bit-exact by construction (build maps FROM current semantics;
+  sweep-verify all 65536 dst inputs for the call's params against the replaced
+  path). Evidence: blend loop NOT in pmca manifest; inner loop is branchless
+  (mag += setcc-class) so add a manifest entry + T0-price FIRST — run #5
+  falsified big-LUT memory-for-ALU on this ruler class (128KB light LUT,
+  +8.8ms); 256B resident is a different regime, but price it, don't trust
+  DOSBox to show IMUL removal. Pool = blend 40.5ms (synthetic-inflated,
+  see STATE).
+(Everything else = the gate classes below.)
 
 ## Gated: needs ruler/harness engineering (PMMX-class pools both rulers miss)
 Unlock: pm-mca v2 (inner-branch support) OR hand-factored clean-slice loop
@@ -48,6 +61,12 @@ VERIFIED 2026-08-20 in code: SEG-7 orbit yaws 7.5deg/frame (h2dos_main.c:1105)
 ZERO in the combat bench; translation is likewise forced-real. ANY temporal
 mechanism (warp polish, phase-2) prices at 0 until a calm-camera second scene
 exists OR the user arbitrates building blind.
+- CALM-RULER UNLOCK (queued 2026-08-20, user-approved): promote T3 (OLD static
+  tutorial2 scene, scripts/run-dos-benchmark.py) from robustness check to
+  gate-relevant calm telemetry for the temporal class; combat stays the scalar
+  primary, T3 reports the calm vector. ONE scene only — a walk/look/idle suite
+  quadruples the ~90s x 3 verify. Unblocks #16, translation-warp,
+  styled-snapshot.
 - #16 temporal polish bundle: radius-2 dilation (holes ~18/frame), snapshot
   zb-16, warp block 8-vs-16, flex-only refresh when dynamic faces dominate.
 - Static-camera identity fast path (was -25..40ms on the old static bench).

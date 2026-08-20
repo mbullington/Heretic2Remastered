@@ -135,3 +135,61 @@ score("VAR paint_lmove_LUT", var_lines_m, LMOVE)
 BLOCKS = 475409 / 144
 score("block_prologue", cut("1cb0c", "1cdfb"), BLOCKS)
 score("block_advance", cut("1d10d", "1d15d"), BLOCKS)
+
+# ---------------- #21(a) prologue conversion-tax VARIANTS --------------------
+# window zones (from the 0x1cb0c..0x1cdfb slice of the NEW build):
+#   1cb47..1cb63   w fild/store + endpoint evals
+#   1cb63..1cb7c   fld1 + fdiv (iz0) + max-test + fdivr (iz1)
+#   1cb82..1cb98   fnstcw save + CW build (mov/or/mov)
+#   1cbe7/1cbf3    fldcw chop / fldcw restore  (cast: iu)
+#   1cc09/1cc0f/1cc15  dance (cast: it)         1cc3e/44/4a (cast: iu_step)
+#   1cc6c/72/78    dance (cast: it_step)
+#   1cd0e..1cd20   fmul + dance + fistp QWORD (ikey)
+#   1cd37..1cd4f   fmul + dance + fistp QWORD (ikey_end)
+#   1cd62          idiv (ikey_step)
+def drop_between(lines, *ranges):
+    return [l for l in lines
+            if not any(int(a, 16) <= int(l.strip().split(":")[0], 16) <= int(b, 16)
+                       for a, b in ranges)]
+
+# V1 bare conversions: remove BOTH fldcw-dance classes (CW-build block +
+# per-cast chop/restore pairs). Semantics NOTE: bare fistp = ambient RN mode,
+# chop != trunc for NEGATIVE values and at .5 edges => DRIFT CLASS, not
+# keep-class, for iu/it/steps (they can go negative pre-clamp); ikey is
+# nonneg => the QWORD sites only differ at exact .5 (ultra-thin drift).
+base = cut("1cb0c", "1cdfb")
+v1 = drop_between(base, ("1cb82", "1cb98"))  # fnstcw + CW build
+for chop, fistp, restore in (("1cbe7", None, "1cbf3"), ("1cc09", None, "1cc15"),
+                              ("1cc3e", None, "1cc4a"), ("1cc6c", None, "1cc78"),
+                              ("1cd14", None, "1cd20"), ("1cd3d", None, "1cd4f")):
+    v1 = drop_between(v1, (chop, chop), (restore, restore))
+score("VAR prologue_bareFISTP", v1, BLOCKS)
+
+# V2 = V1 + the ikey QWORD casts folded to DWORD (value domain PROVABLY
+# <2^31 by construction ('31-bit keys'); fistp qword 6clk -> dword 3clk-ish)
+# synthesized: swap the two QWORD fistp lines for DWORD ones (same len class).
+v2 = [l.replace("fistp  QWORD PTR", "fistp  DWORD PTR") for l in v1]
+assert not any("QWORD" in l for l in v2)
+score("VAR prologue_V1+ikeyDWORD", v2, BLOCKS)
+
+# V3 = V2 + #13-style FDIV -> seed LUT + NR on both reciprocals (iz0, iz1):
+# each fdiv* -> [mov index+and] + [movzx load, 4] + [fmul seed, 2] + [fmul sub, 2]
+# hand-synthesized at plausible sizes; the surrounding fxch/test lines stay.
+synth = lambda items: [f"   {a:06x}:\t{'90 ' * n}\t{t}" for a, (t, n) in
+                       zip(range(0xA00000, 0xA00000 + 0x80, 8), items)]
+v3 = drop_between(v2, ("1cb63", "1cb63"), ("1cb65", "1cb65"), ("1cb7c", "1cb7c"))
+v3 += synth([("movzx  eax,BYTE PTR [esi+0x1234]", 4), ("fmul   DWORD PTR [esp]", 3),
+             ("fmul   st,st", 2), ("movzx  eax,BYTE PTR [esi+0x1235]", 4),
+             ("fmul   DWORD PTR [esp]", 3), ("fmul   st,st", 2)])
+score("VAR prologue_V3+recipLUT", v3, BLOCKS)
+
+# ---------------- texel-row variant (census-hot: 29% crossing) ---------------
+# replaces 1cf0d..1cf45's sar/and/imul*width with a retained row pointer +
+# crossing recompute priced at the MEASURED 29%-per-px crossing rate: model
+# as NOP form (no imul) + recompute block every ~3.4th px => amortized.
+recomp = synth([("mov    edi,DWORD PTR [esp]", 3), ("imul   edi,DWORD PTR [esp]", 6),
+                ("lea    ebx,[edi+eax*4]", 3)])
+texrow = (cut("1ceed", "1cf0b") + [l for l in cut("1cf0d", "1cf45")
+                                    if "imul" not in l and "sar" not in l and "and" not in l] +
+          cut("1cf49", "1cf49") + cut("1cf54", "1cf7a") + cut("1cfb7", "1d085") + cut("1cea4", "1cee7"))
+score("VAR paint_texrow-imul-defer", texrow + recomp, PAINT - LMOVE)
