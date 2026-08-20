@@ -1,6 +1,61 @@
 # Autoresearch: DOS combat renderer
 
-## Active Segment 17: stable-key generated/patched kernels
+## Active Segment 18: 2x entity architecture without mesh LOD
+
+Source baseline is commit `47004d9e`: retained world material patching, inline
+skin sampling, and default 5x5 microtriangle masks. The frozen combat frame is
+114.988 ms, with entities 28.232 ms, flex 19.783 ms, and brush entities 5.092
+ms.
+
+### Objective and Frozen Workload
+
+Reduce the complete entity surface to `entities_us <= 14,116` (2x versus the
+Segment-18 source) without real mesh LOD. Attack the measured setup-dominated
+architecture in this order: (1) a complete default affine opaque-flex polyset
+path, (2) an exact z-tested brush span assembly sibling, (3) early visible
+triangle command streams, and (4) remaining sprite/entity classes if needed.
+The workload remains the frozen Segment-16/17 tutorial2 combat sweep: planted
+gorgon + rat_giant, `angermonsters`, stationary player, deterministic effects,
+and a fresh 7.5-degree camera orbit every measured frame.
+
+### Metric Contract
+
+- **Primary**: `entities_us` (microseconds/frame, lower is better).
+- **Secondary decision metrics**: `frame_us`, `ent_flex_us`, `flex_tris_us`,
+  `ent_brush_us`, `ent_sprite_us`, flex triangle/span/block/pixel counters, all
+  other existing pools, and P55C static telemetry.
+- **Hard functional guards**: combat `status=PASS`; P55C/Pentium-MMX-compatible
+  instructions only; no gameplay, workload, resolution, temporal, benchmark,
+  model-count, or cadence shortcuts; clipped/translucent/debug/unusual exact
+  fallbacks remain.
+- **Unaffected-output guard**: EFFECTS remains under its historical 0.06% of
+  pixels over 2 LSB; RENDER and non-flex UI/world captures remain exact unless
+  their differences are solely caused by accepted flex-model pixels.
+- **Flex quality guards**: FLEXOLD/FLEXMID/FLEXNEW/FLEXSKEL/COMBAT each remain
+  at or below 2.0% whole-frame pixels over 2 LSB and at or above 32 dB RGB
+  PSNR versus exact Segment-16 captures. Inspect accepted paths for silhouette
+  holes, depth leaks, texture boiling, and objectionable lighting banding.
+- Accepted quality paths are default-on. Exact fallbacks may remain for near
+  clipping, translucency, unusual materials, and diagnosis.
+- Real mesh LOD is explicitly out of scope for this segment.
+
+The ruler separates realistic cases: the same frozen workload reports 28.232
+ms entities with normal winding culling, while disabling that production cull
+previously raised entities by about 14.3 ms. The current 18.990 ms flex
+triangle pool processes only about 5,765 attempted pixels/frame through 1,937
+spans and 1,473 blocks, proving setup rather than fill is the target. Harness,
+workload, captures, and quality limits freeze after the new baseline; the
+additional emitted metrics expose already-existing counters only.
+
+### Stop Conditions
+
+Stop at `entities_us <= 14,116`, after the four listed architectural mechanisms
+are measured, after three consecutive discarded distinct big-swing mechanisms,
+on user interruption, or at a tooling/measurement dead end. Do not spend the
+segment on more tiny material patch sites, wider nearest-corner masks,
+recursive subdivision, or real mesh LOD.
+
+## Segment 17: stable-key generated/patched kernels
 
 Source baseline is commit `4b677d7b`: default cached 5x5 flex masks plus the
 retained world and BlendRect wins. The frozen combat frame is 115.971 ms, with
