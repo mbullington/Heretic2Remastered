@@ -19,6 +19,10 @@ static sw_model_t sw_models[SW_MAX_MODELS];
 static int sw_num_models;
 static sw_bsp_t *sw_world_bsp;
 
+static const char *const sw_player_frame_names[] = {
+#include "ref_soft_player_frames.inc"
+};
+
 static qboolean lump_valid(const dheader_t *header, const int file_length, const int lump_index,
 	const size_t element_size, const qboolean allow_empty)
 {
@@ -621,6 +625,54 @@ static sw_model_t *find_model(const char *name)
 	return NULL;
 }
 
+static qboolean flex_frame_name_equal(const sw_flex_frame_t *frame, const char *name)
+{
+	char frame_name[sizeof(frame->name) + 1];
+	memcpy(frame_name, frame->name, sizeof(frame->name));
+	frame_name[sizeof(frame->name)] = '\0';
+	return Q_stricmp(frame_name, name) == 0;
+}
+
+static qboolean build_player_frame_remap(const sw_flex_t *flex, unsigned short **remap_out,
+	int *remap_count_out, int *matched_out)
+{
+	const int remap_count = (int)(sizeof(sw_player_frame_names) / sizeof(sw_player_frame_names[0]));
+	unsigned short *remap = malloc((size_t)remap_count * sizeof(*remap));
+	if (remap == NULL)
+		return false;
+
+	int fallback = 0;
+	for (int physical = 0; physical < flex->header.num_frames; ++physical)
+		if (flex_frame_name_equal(&flex->frames[physical], "breath1"))
+		{
+			fallback = physical;
+			break;
+		}
+
+	int matched = 0;
+	for (int logical = 0; logical < remap_count; ++logical)
+	{
+		remap[logical] = (unsigned short)fallback;
+		for (int physical = 0; physical < flex->header.num_frames; ++physical)
+			if (flex_frame_name_equal(&flex->frames[physical], sw_player_frame_names[logical]))
+			{
+				remap[logical] = (unsigned short)physical;
+				++matched;
+				break;
+			}
+	}
+
+	if (matched * 10 < remap_count * 9)
+	{
+		free(remap);
+		return false;
+	}
+	*remap_out = remap;
+	*remap_count_out = remap_count;
+	*matched_out = matched;
+	return true;
+}
+
 static qboolean book_source_valid(const book_t *source, const int length, size_t *required_out)
 {
 	if (source == NULL || length < (int)sizeof(bookheader_t))
@@ -765,6 +817,7 @@ void SW_ModelShutdown(void)
 {
 	for (int i = 0; i < sw_num_models; ++i)
 	{
+		free(sw_models[i].frame_remap);
 		free(sw_models[i].sprite_frames);
 		free(sw_models[i].book);
 		SW_FreeFlex(sw_models[i].flex);
@@ -848,10 +901,12 @@ struct model_s *SW_RegisterModel(const char *name)
 			{ "players/male/tris.fm", "models/player/elf/tris.fm" },
 		};
 		const char *load_name = name;
+		qboolean retail_player_alias = false;
 		for (size_t i = 0; i < sizeof(k_model_aliases) / sizeof(k_model_aliases[0]); ++i)
 			if (Q_stricmp(name, k_model_aliases[i].requested) == 0)
 			{
 				load_name = k_model_aliases[i].alias;
+				retail_player_alias = true;
 				break;
 			}
 		sw_flex_t *flex = SW_LoadFlexFile(load_name, true);
@@ -866,6 +921,21 @@ struct model_s *SW_RegisterModel(const char *name)
 		model->kind = SW_MODEL_FLEX;
 		model->flex = flex;
 		model->num_frames = flex->header.num_frames;
+		if (retail_player_alias)
+		{
+			int matched;
+			if (!build_player_frame_remap(flex, &model->frame_remap, &model->frame_remap_count, &matched))
+			{
+				sw_ri.Con_Printf(PRINT_ALL, "ref_soft: retail player model frame names are incompatible\n");
+				SW_FreeFlex(flex);
+				memset(model, 0, sizeof(*model));
+				--sw_num_models;
+				return NULL;
+			}
+			model->num_frames = model->frame_remap_count;
+			sw_ri.Con_Printf(PRINT_ALL, "ref_soft: mapped %d/%d retail player frames by name\n",
+				matched, model->frame_remap_count);
+		}
 		++sw_stats.flex_models;
 		return model;
 	}

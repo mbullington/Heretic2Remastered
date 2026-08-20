@@ -3859,6 +3859,20 @@ static qboolean book_dbg_on(void)
 	return book_dbg_pat != NULL;
 }
 
+static qboolean flex_model_frame_valid(const sw_model_t *model, const int frame)
+{
+	if (model->frame_remap != NULL)
+		return frame >= 0 && frame < model->frame_remap_count;
+	return frame >= 0 && frame < model->flex->header.num_frames;
+}
+
+static int flex_model_frame_index(const sw_model_t *model, const int frame)
+{
+	if (!flex_model_frame_valid(model, frame))
+		return model->frame_remap != NULL ? model->frame_remap[0] : 0;
+	return model->frame_remap != NULL ? model->frame_remap[frame] : frame;
+}
+
 void SW_RasterFlexEntity(const entity_t *entity, const sw_model_t *model, const qboolean shadow_pass)
 {
 	static vec3_t lerped[SW_MAX_FLEX_VERTS];
@@ -3881,10 +3895,8 @@ void SW_RasterFlexEntity(const entity_t *entity, const sw_model_t *model, const 
 		!isfinite(entity->angles[0]) || !isfinite(entity->angles[1]) || !isfinite(entity->angles[2]))
 		return;
 	const sw_flex_t *flex = model->flex;
-	int frame_index = entity->frame;
-	int old_frame_index = entity->oldframe;
-	if (frame_index < 0 || frame_index >= flex->header.num_frames) frame_index = 0;
-	if (old_frame_index < 0 || old_frame_index >= flex->header.num_frames) old_frame_index = 0;
+	const int frame_index = flex_model_frame_index(model, entity->frame);
+	const int old_frame_index = flex_model_frame_index(model, entity->oldframe);
 	const sw_flex_frame_t *frame = &flex->frames[frame_index];
 	const sw_flex_frame_t *old_frame = &flex->frames[old_frame_index];
 	const float back_lerp = min(1.0f, max(0.0f, entity->backlerp));
@@ -3937,16 +3949,16 @@ void SW_RasterFlexEntity(const entity_t *entity, const sw_model_t *model, const 
 	flex_proj_cache_reset();
 	const uclock_t swaprefs_start = uclock();
 	qboolean use_swap = flex->num_clusters > 0 && entity->swapFrame != NO_SWAP_FRAME &&
-		entity->swapFrame >= 0 && entity->swapFrame < flex->header.num_frames;
+		flex_model_frame_valid(model, entity->swapFrame);
+	const int swap_frame_index = flex_model_frame_index(model, entity->swapFrame);
+	const int old_swap_frame_index = flex_model_frame_index(model, entity->oldSwapFrame);
 	Placement_t swap_joints[SW_MAX_FLEX_JOINTS];
 	matrix3_t swap_rotations[SW_MAX_FLEX_JOINTS];
 	int swap_joint_indices[SW_MAX_FLEX_JOINTS] = { 0 };
 	if (use_swap)
 	{
-		int old_swap = entity->oldSwapFrame;
-		if (old_swap < 0 || old_swap >= flex->header.num_frames) old_swap = 0;
-		const sw_flex_frame_t *swap_frame = &flex->frames[entity->swapFrame];
-		const sw_flex_frame_t *old_swap_frame = &flex->frames[old_swap];
+		const sw_flex_frame_t *swap_frame = &flex->frames[swap_frame_index];
+		const sw_flex_frame_t *old_swap_frame = &flex->frames[old_swap_frame_index];
 		float swap_move[3];
 		float swap_front[3];
 		float swap_back[3];
@@ -3964,8 +3976,8 @@ void SW_RasterFlexEntity(const entity_t *entity, const sw_model_t *model, const 
 					sw_byte2float[old_swap_frame->vertices[index].v[axis]] * swap_back[axis] + swap_move[axis];
 		}
 		for (int joint = 0; joint < flex->num_clusters; ++joint)
-			interpolate_flex_placement(&flex->skeleton_placements[entity->swapFrame * flex->num_clusters + joint],
-				&flex->skeleton_placements[old_swap * flex->num_clusters + joint], swap_move, swap_front, swap_back, &swap_joints[joint]);
+			interpolate_flex_placement(&flex->skeleton_placements[swap_frame_index * flex->num_clusters + joint],
+				&flex->skeleton_placements[old_swap_frame_index * flex->num_clusters + joint], swap_move, swap_front, swap_back, &swap_joints[joint]);
 		if (make_flex_rotations(entity, flex->num_clusters, swap_joints, swap_rotations, swap_joint_indices))
 		{
 			rotate_flex_clusters(flex, swap_joints, swap_rotations, lerped);
@@ -3997,10 +4009,8 @@ void SW_RasterFlexEntity(const entity_t *entity, const sw_model_t *model, const 
 			const qboolean swap_reference = use_swap && joint_id >= 0;
 			if (swap_reference)
 			{
-				int old_swap = entity->oldSwapFrame;
-				if (old_swap < 0 || old_swap >= flex->header.num_frames) old_swap = 0;
-				const sw_flex_frame_t *swap_frame = &flex->frames[entity->swapFrame];
-				const sw_flex_frame_t *old_swap_frame = &flex->frames[old_swap];
+				const sw_flex_frame_t *swap_frame = &flex->frames[swap_frame_index];
+				const sw_flex_frame_t *old_swap_frame = &flex->frames[old_swap_frame_index];
 				float swap_move[3], swap_front[3], swap_back[3];
 				for (int axis = 0; axis < 3; ++axis)
 				{
@@ -4008,8 +4018,8 @@ void SW_RasterFlexEntity(const entity_t *entity, const sw_model_t *model, const 
 					swap_front[axis] = front_lerp * swap_frame->scale[axis] * scale;
 					swap_back[axis] = back_lerp * old_swap_frame->scale[axis] * scale;
 				}
-				interpolate_flex_placement(&flex->references[entity->swapFrame * flex->num_references + reference],
-					&flex->references[old_swap * flex->num_references + reference], swap_move, swap_front, swap_back, current);
+				interpolate_flex_placement(&flex->references[swap_frame_index * flex->num_references + reference],
+					&flex->references[old_swap_frame_index * flex->num_references + reference], swap_move, swap_front, swap_back, current);
 			}
 			else
 				interpolate_flex_placement(&flex->references[frame_index * flex->num_references + reference],

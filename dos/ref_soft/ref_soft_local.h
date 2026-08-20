@@ -193,6 +193,8 @@ typedef struct model_s {
 	int num_faces;
 	vec3_t mins, maxs;
 	int num_frames;
+	unsigned short *frame_remap;
+	int frame_remap_count;
 	sw_sprite_frame_t *sprite_frames;
 	book_t *book;
 	sw_image_t *book_images[MAX_FRAMES];

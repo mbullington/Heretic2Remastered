@@ -1,6 +1,52 @@
 # Autoresearch: DOS combat renderer
 
-## Active Segment 18: 2x entity architecture without mesh LOD
+## Active Segment 19: retail player frame-order correctness
+
+Commit `a53e866e` made the retail Corvus visible and replaced the incompatible
+185-frame watcher model with the 1,433-frame `models/player/elf/tris.fm` asset.
+Interactive testing then proved that frame count alone was insufficient: game
+code emits the 1,423 logical indices in `m_player.h`, while the retail FM stores
+the same normal animations in another order. Logical frame 1 is `180turn1`,
+but retail physical frame 1 is `4swim1`; `180turn1` is physical frame 908.
+
+### Objective and frozen workload
+
+Build and validate a retail-asset adapter that maps logical player frame names
+to physical FM frame indices. Apply it consistently to current, old, swap,
+skeleton-placement, and reference-placement indexing. The workload remains the
+corrected-Corvus combat sweep, but its player pixels intentionally change to
+the semantically correct animation. This starts a new non-comparable segment.
+
+### Metric contract
+
+- **Primary correctness metric**: all automated capture gates pass with Corvus
+  using name-mapped retail frames; performance telemetry remains observational
+  until the corrected capture becomes the new baseline.
+- **Hard constraints**: no frozen-pose workaround, animation-state exception,
+  game protocol change, workload shortcut, temporal shortcut, or PAK mutation;
+  unsupported retail animations must fall back visibly and deterministically
+  instead of indexing an unrelated pose.
+- **Secondary guardrails**: P55C-compatible build, no missing player model,
+  current/old/swap/skeleton/reference indices all share one mapping, generated
+  frame-name data matches `m_player.h`, and entity/frame timings do not show an
+  unexplained regression.
+- **Interactive acceptance**: after automated gates, test idle, running,
+  turning, weapon use, damage, and death in DOSBox Staging. Do not call player
+  animation correct until this manual sequence passes.
+
+The ruler separates the bug directly: only 1 of the first 1,423 logical indices
+already names the same physical frame, while 1,351 names can be matched exactly
+elsewhere in the retail model. The old direct indexing therefore cannot be
+semantically correct even though a single screenshot is non-T-posed.
+
+### Stop conditions
+
+Stop after a clean automated baseline plus interactive animation acceptance,
+on a reproducible model-format incompatibility, or on user interruption. Do
+not resume representation optimization until Corvus animation correctness is
+established.
+
+## Segment 18: 2x entity architecture without mesh LOD
 
 Source baseline is commit `47004d9e`: retained world material patching, inline
 skin sampling, and default 5x5 microtriangle masks. The frozen combat frame is
