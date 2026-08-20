@@ -9,7 +9,7 @@ DOSBOX=${DOSBOX:-dosbox-staging}
 # DOSBox Staging suggests 100000 for a Pentium MMX 166. Scaling by
 # 233/166 gives about 140000 as a starting point for a Pentium MMX 233.
 CYCLES=${H2DOS_CYCLES:-140000}
-MAP=${H2DOS_MAP-tutorial2}
+MAP=${H2DOS_MAP-ssdocks}
 TEMPORAL=${H2DOS_SW_TEMPORAL:-0}
 FULLSCREEN=${H2DOS_FULLSCREEN:-0}
 
@@ -24,7 +24,7 @@ Environment variables:
   DOSBOX                 DOSBox Staging executable (default: dosbox-staging)
   H2DOS_ORIGINAL_DATA    Directory containing base/Htic2-{0,1}.pak
   H2DOS_CYCLES           Fixed emulated CPU speed (default: 140000)
-  H2DOS_MAP              Initial map (default: tutorial2; empty opens the menu)
+  H2DOS_MAP              Initial map (default: ssdocks; empty opens the menu)
   H2DOS_SW_TEMPORAL      Temporal renderer, 0 or 1 (default: 0)
   H2DOS_FULLSCREEN       Start fullscreen, 0 or 1 (default: 0)
 
@@ -98,6 +98,7 @@ done
 
 mkdir -p "$PLAY_DIR/H2REAL/base"
 cp "$BUILD_DIR/SILVER.EXE" "$BUILD_DIR/CWSDPMI.EXE" "$PLAY_DIR/"
+cp "$ROOT/dos/h2dos_default.cfg" "$PLAY_DIR/H2REAL/base/default.cfg"
 for pak in Htic2-0.pak Htic2-1.pak; do
 	source_pak="$DATA_DIR/base/$pak"
 	staged_pak="$PLAY_DIR/H2REAL/base/$pak"
@@ -109,9 +110,9 @@ for pak in Htic2-0.pak Htic2-1.pak; do
 done
 
 if [ -n "$MAP" ]; then
-	MAP_COMMAND=" +map $MAP"
+	START_COMMAND=" +map $MAP"
 else
-	MAP_COMMAND=
+	START_COMMAND=" +menu_main"
 fi
 
 {
@@ -119,7 +120,7 @@ fi
 	printf 'set H2DOS_SW_WIDTH=320\r\n'
 	printf 'set H2DOS_SW_HEIGHT=240\r\n'
 	printf 'set H2DOS_SW_TEMPORAL=%s\r\n' "$TEMPORAL"
-	printf 'silver.exe -dosplay -basedir H2REAL +set s_khz 22%s\r\n' "$MAP_COMMAND"
+	printf 'silver.exe -dosplay -basedir H2REAL +set s_khz 22 +set r_swtemporal %s%s\r\n' "$TEMPORAL" "$START_COMMAND"
 } > "$PLAY_DIR/PLAY.BAT"
 
 set -- \
@@ -146,6 +147,7 @@ if [ -n "$MAP" ]; then
 else
 	printf ' at the main menu'
 fi
-printf '.\n'
+printf '; temporal rendering %s.\n' "$(if [ "$TEMPORAL" = 1 ]; then printf enabled; else printf disabled; fi)"
+printf 'The opening SSDocks camera locks controls; press Escape once to skip it.\n'
 printf 'Press Ctrl-F11/Ctrl-F12 to adjust cycles, or Alt-Enter for fullscreen.\n'
 exec "$DOSBOX" "$@"

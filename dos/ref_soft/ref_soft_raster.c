@@ -4319,8 +4319,14 @@ void SW_RasterEntities(const refdef_t *fd)
 				case SPRITE_DYNAMIC:
 				{
 					const uclock_t tmark = uclock();
+					const unsigned pixels_before = sw_stats.bench_pixels_flex;
+					const unsigned spans_before = sw_stats.bench_flex_spans;
+					const unsigned blocks_before = sw_stats.bench_flex_blocks;
 					draw_dynamic_sprite(entity, model);
 					sw_stats.bench_us_ent_dynamic += (unsigned long long)(uclock() - tmark);
+					sw_stats.bench_pixels_dynamic += sw_stats.bench_pixels_flex - pixels_before;
+					sw_stats.bench_spans_dynamic += sw_stats.bench_flex_spans - spans_before;
+					sw_stats.bench_blocks_dynamic += sw_stats.bench_flex_blocks - blocks_before;
 					++sw_stats.bench_model_dynamic;
 					break;
 				}
