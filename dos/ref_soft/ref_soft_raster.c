@@ -448,7 +448,8 @@ typedef char sw_world_paint_ctx_size_check[sizeof(sw_world_paint_ctx_t) == 104 ?
 typedef char sw_world_paint_ctx_iu_check[offsetof(sw_world_paint_ctx_t, iu) == 56 ? 1 : -1];
 typedef char sw_world_paint_ctx_key_check[offsetof(sw_world_paint_ctx_t, ikey) == 88 ? 1 : -1];
 
-extern void sw_world_paint_run_pmmx(sw_world_paint_ctx_t *ctx);
+static sw_world_paint_ctx_t sw_world_paint_ctx;
+extern void sw_world_paint_run_pmmx(void);
 
 __asm__(
 	".intel_syntax noprefix\n"
@@ -459,94 +460,93 @@ __asm__(
 	"push ebx\n"
 	"push esi\n"
 	"push edi\n"
-	"mov ebp, DWORD PTR [esp+20]\n"
-	"mov edi, DWORD PTR [ebp+0]\n"
-	"mov esi, DWORD PTR [ebp+4]\n"
+	"mov edi, DWORD PTR [_sw_world_paint_ctx+0]\n"
+	"mov esi, DWORD PTR [_sw_world_paint_ctx+4]\n"
+	"mov ebp, DWORD PTR [_sw_world_paint_ctx+88]\n"
 	".globl _sw_world_kernel_px_prefix\n"
 	"_sw_world_kernel_px_prefix:\n"
-	"mov eax, DWORD PTR [ebp+60]\n"
+	"mov eax, DWORD PTR [_sw_world_paint_ctx+60]\n"
 	"sar eax, 16\n"
-	"and eax, DWORD PTR [ebp+44]\n"
-	"imul eax, DWORD PTR [ebp+36]\n"
-	"mov ecx, DWORD PTR [ebp+56]\n"
+	"and eax, DWORD PTR [_sw_world_paint_ctx+44]\n"
+	"imul eax, DWORD PTR [_sw_world_paint_ctx+36]\n"
+	"mov ecx, DWORD PTR [_sw_world_paint_ctx+56]\n"
 	"sar ecx, 16\n"
-	"and ecx, DWORD PTR [ebp+40]\n"
+	"and ecx, DWORD PTR [_sw_world_paint_ctx+40]\n"
 	"add eax, ecx\n"
-	"mov edx, DWORD PTR [ebp+8]\n"
+	"mov edx, DWORD PTR [_sw_world_paint_ctx+8]\n"
 	"movzx ebx, WORD PTR [edx+eax*2]\n"
-	"mov eax, DWORD PTR [ebp+68]\n"
+	"mov eax, DWORD PTR [_sw_world_paint_ctx+68]\n"
 	"shr eax, 20\n"
-	"imul eax, DWORD PTR [ebp+48]\n"
-	"mov ecx, DWORD PTR [ebp+64]\n"
+	"imul eax, DWORD PTR [_sw_world_paint_ctx+48]\n"
+	"mov ecx, DWORD PTR [_sw_world_paint_ctx+64]\n"
 	"shr ecx, 20\n"
 	"add eax, ecx\n"
-	"cmp eax, DWORD PTR [ebp+96]\n"
+	"cmp eax, DWORD PTR [_sw_world_paint_ctx+96]\n"
 	"jne _sw_world_kernel_light_reload\n"
 	"jmp _sw_world_kernel_shade_store\n"
 	".globl _sw_world_kernel_light_reload\n"
 	"_sw_world_kernel_light_reload:\n"
-	"mov DWORD PTR [ebp+96], eax\n"
-	"mov edx, DWORD PTR [ebp+12]\n"
+	"mov DWORD PTR [_sw_world_paint_ctx+96], eax\n"
+	"mov edx, DWORD PTR [_sw_world_paint_ctx+12]\n"
 	"mov edx, DWORD PTR [edx+eax*4]\n"
 	"mov eax, edx\n"
 	"shr eax, 20\n"
 	"and eax, 1023\n"
 	"shl eax, 5\n"
-	"add eax, DWORD PTR [ebp+16]\n"
-	"mov DWORD PTR [ebp+24], eax\n"
+	"add eax, DWORD PTR [_sw_world_paint_ctx+16]\n"
+	"mov DWORD PTR [_sw_world_paint_ctx+24], eax\n"
 	"mov eax, edx\n"
 	"shr eax, 10\n"
 	"and eax, 1023\n"
 	"shl eax, 6\n"
-	"add eax, DWORD PTR [ebp+20]\n"
-	"mov DWORD PTR [ebp+28], eax\n"
+	"add eax, DWORD PTR [_sw_world_paint_ctx+20]\n"
+	"mov DWORD PTR [_sw_world_paint_ctx+28], eax\n"
 	"and edx, 1023\n"
 	"shl edx, 5\n"
-	"add edx, DWORD PTR [ebp+16]\n"
-	"mov DWORD PTR [ebp+32], edx\n"
+	"add edx, DWORD PTR [_sw_world_paint_ctx+16]\n"
+	"mov DWORD PTR [_sw_world_paint_ctx+32], edx\n"
 	".globl _sw_world_kernel_shade_store\n"
 	"_sw_world_kernel_shade_store:\n"
 	"mov eax, ebx\n"
 	"shr eax, 5\n"
 	"and eax, 63\n"
-	"mov edx, DWORD PTR [ebp+28]\n"
+	"mov edx, DWORD PTR [_sw_world_paint_ctx+28]\n"
 	"movzx ecx, BYTE PTR [edx+eax]\n"
 	"shl ecx, 5\n"
 	"mov eax, ebx\n"
 	"shr eax, 11\n"
-	"mov edx, DWORD PTR [ebp+24]\n"
+	"mov edx, DWORD PTR [_sw_world_paint_ctx+24]\n"
 	"movzx eax, BYTE PTR [edx+eax]\n"
 	"shl eax, 11\n"
 	"or ecx, eax\n"
 	"and ebx, 31\n"
-	"mov edx, DWORD PTR [ebp+32]\n"
+	"mov edx, DWORD PTR [_sw_world_paint_ctx+32]\n"
 	"movzx eax, BYTE PTR [edx+ebx]\n"
 	"or eax, ecx\n"
 	"xor edx, edx\n"
 	"cmp ax, 0xf81f\n"
 	"sete dl\n"
-	"add DWORD PTR [ebp+100], edx\n"
+	"add DWORD PTR [_sw_world_paint_ctx+100], edx\n"
 	"mov WORD PTR [edi], ax\n"
-	"mov edx, DWORD PTR [ebp+88]\n"
-	"mov DWORD PTR [esi], edx\n"
+	"mov DWORD PTR [esi], ebp\n"
 	".globl _sw_world_kernel_advance\n"
 	"_sw_world_kernel_advance:\n"
-	"mov eax, DWORD PTR [ebp+72]\n"
-	"add DWORD PTR [ebp+56], eax\n"
-	"mov eax, DWORD PTR [ebp+76]\n"
-	"add DWORD PTR [ebp+60], eax\n"
-	"mov eax, DWORD PTR [ebp+80]\n"
-	"add DWORD PTR [ebp+64], eax\n"
-	"mov eax, DWORD PTR [ebp+84]\n"
-	"add DWORD PTR [ebp+68], eax\n"
-	"mov eax, DWORD PTR [ebp+92]\n"
-	"add DWORD PTR [ebp+88], eax\n"
+	"mov eax, DWORD PTR [_sw_world_paint_ctx+72]\n"
+	"add DWORD PTR [_sw_world_paint_ctx+56], eax\n"
+	"mov eax, DWORD PTR [_sw_world_paint_ctx+76]\n"
+	"add DWORD PTR [_sw_world_paint_ctx+60], eax\n"
+	"mov eax, DWORD PTR [_sw_world_paint_ctx+80]\n"
+	"add DWORD PTR [_sw_world_paint_ctx+64], eax\n"
+	"mov eax, DWORD PTR [_sw_world_paint_ctx+84]\n"
+	"add DWORD PTR [_sw_world_paint_ctx+68], eax\n"
+	"add ebp, DWORD PTR [_sw_world_paint_ctx+92]\n"
 	"add edi, 2\n"
 	"add esi, 4\n"
-	"dec DWORD PTR [ebp+52]\n"
+	"dec DWORD PTR [_sw_world_paint_ctx+52]\n"
 	"jnz _sw_world_kernel_px_prefix\n"
 	".globl _sw_world_kernel_end\n"
 	"_sw_world_kernel_end:\n"
+	"mov DWORD PTR [_sw_world_paint_ctx+88], ebp\n"
 	"pop edi\n"
 	"pop esi\n"
 	"pop ebx\n"
@@ -916,18 +916,21 @@ static void draw_face_spans(const screen_vertex_t *verts, const int n, const sw_
 					if (covered == 0 && !stripe_checker && !alpha_test &&
 						(sw_dbg_tag_y != y || sw_dbg_tag_x < x || sw_dbg_tag_x >= x + run))
 					{
-						sw_world_paint_ctx_t ctx = {
+						sw_world_paint_ctx = (sw_world_paint_ctx_t){
 							fb_row + x, zb_row + x, image->pixels, light_cache,
 							&sw_mul5shade[0][0], &sw_mul6shade[0][0], mul5r, mul6g, mul5b,
 							image->width, mask_w, mask_h, light_stride, run,
 							iu, it, ils, ilt, iu_step, it_step, ils_step, ilt_step,
 							ikey, ikey_step, light_prev_idx, 0
 						};
-						sw_world_paint_run_pmmx(&ctx);
-						iu = ctx.iu; it = ctx.it; ils = ctx.ils; ilt = ctx.ilt; ikey = ctx.ikey;
-						light_prev_idx = ctx.light_prev_idx;
-						mul5r = ctx.mul5r; mul6g = ctx.mul6g; mul5b = ctx.mul5b;
-						sw_stats.bench_mag_world += ctx.mag;
+						sw_world_paint_run_pmmx();
+						iu = sw_world_paint_ctx.iu; it = sw_world_paint_ctx.it;
+						ils = sw_world_paint_ctx.ils; ilt = sw_world_paint_ctx.ilt;
+						ikey = sw_world_paint_ctx.ikey;
+						light_prev_idx = sw_world_paint_ctx.light_prev_idx;
+						mul5r = sw_world_paint_ctx.mul5r; mul6g = sw_world_paint_ctx.mul6g;
+						mul5b = sw_world_paint_ctx.mul5b;
+						sw_stats.bench_mag_world += sw_world_paint_ctx.mag;
 						sw_tag_face_paint_last = face_index;
 						sw_tag_face_paint_count += run;
 						depth_writes += (unsigned)run;
