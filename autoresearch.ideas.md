@@ -13,10 +13,10 @@ STATE 2026-08-20 (SEG-7 combat workload; pmca_est_us=527, frame 184.2ms):
   world_us up to +24%. Known-safe edit classes there: (a) E17-class
   float-chain-identical rewrites, (b) pure-integer changes (E19c passed).
   Everything else = per-build gate lottery.
-- pm-mca v1 can only slice CLEAN backward-jcc loops; the world span/block
-  loops are ineligible (per-px/run/light-move branches). Flex loops are
-  covered (manifest has 3; anchor repair recipe: verify loop by size+clean
-  backward jcc, pin via nth).
+- pm-mca v1.5 (run #96): inner-jcc=nottaken flag + scripts/pm_mca_pathclass.py
+  price dominant-path WINDOWS cut from the objdump per class, weighted by
+  measured trips: the world ftb-pow2 lane now HAS a per-class PMMX price map
+  (paint 129 clk/px AGI-dominated, prologue 408clk/block fp-stall dominated).
 
 ## Runnable keep-class queue
 - EMPTY as of 2026-08-20. Remaining work = the three gate classes below.
@@ -25,13 +25,17 @@ STATE 2026-08-20 (SEG-7 combat workload; pmca_est_us=527, frame 184.2ms):
 Unlock: pm-mca v2 (inner-branch support) OR hand-factored clean-slice loop
 constructs for the world span/block prologue. Otherwise these have NO
 evidence path (DOSBox class already answered: x87 costs are invisible there):
-- #13 world span-prologue FDIV -> seed LUT + 1 Newton (or software-pipelined
-  true FDIV variant; ~0.5Mcyc class). #18's C-form failed on liveness (+521us).
+- #13 world span-prologue reciprocal work [POOL PRICED #96: prologue+advance =
+  437clk/block = 1.44Mcyc/frame ~5.8us @233; the 2 FDIVs are a MINORITY -
+  fistp-QWORD ikey casts + IDIV + 4 fldcw dances share it] => #13 alone is
+  the WRONG shape; the real item is prologue conversion-tax (#21a steps in).
 - #21(a) known-mode cast elimination (double-bias / bare fistp) for the
-  draw_face prologue: census says 26 fnstcw + 90 fistp + 112 fldcw in
-  _draw_face; run #16's flex-prologue probe says DOSBox-invisible.
-- #22 565 shade-row LUT (3 IMUL/px -> hot-row loads; run #5 memory~ALU says
-  DOSBox wash-or-worse => PMMX-only evidence class).
+  draw_face prologue [#96 PRICES the pool: ~5.8us/frame @233; variant slices
+  go through pm_mca_pathclass.py before any C edit].
+- #22 565 shade-row LUT [PRICED #96 per pathclass: 129->101 clk/px =
+  -2.17Mcyc/frame ~-9.3us @233, AGI 24->60 but IMUL serialization was worse.
+  CONFIRMED PMMX-class winner; DOSBox wash-or-worse expected (run #5 class),
+  so decision = build-for-PMMX (needs real-iron or accept pm-mca verdict).]
 - #19(a) light-cell const runs (8,738 crossings/frame census): kills ~6
   ops/painted-px in the world lane; confined to the FRAGILE function anyway
   => same manifest/lane gate.
