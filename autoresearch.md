@@ -1,65 +1,73 @@
-# Autoresearch: improve DOS temporal reprojection quality
+# Autoresearch: exact-output PMMX world-renderer performance
+
+## Segment 13: fixed-ABI world paint kernel
+
+This is a new, non-comparable segment based on validated source commit
+`8e2d8e3d`. The preceding temporal-quality campaign is closed at 1.515381%
+bad pixels with exact per-pixel rotational mapping retained.
 
 ## Objective and Workload
-Reduce visible shimmer, geometry wobble, stale-edge smears, and holes from
-`r_swtemporal` while retaining its reuse cadence. The ruler runs the real
-`tutorial2` scene twice at 320x240 RGB565 with a deterministic 1-degree yaw per
-rendered frame and a fixed camera origin: temporal OFF is the full-render
-reference; temporal ON is the candidate. Both runs use the same executable,
-clock, PAKs, frame sequence, and 32 paired PPM captures.
+Minimize Pentium-MMX-233 cost of the DOS RGB565 software renderer while
+preserving exact output. The frozen workload is the deterministic tutorial2
+combat scene: planted gorgon + rat_giant, `angermonsters`, a stationary player,
+7.5-degree camera orbit, and fixed renderer-boundary effects. Temporal reuse is
+present in the product but inactive in this workload because 7.5 degrees
+exceeds its 3-degree scheduler gate, so every measured combat frame is fresh.
 
-Ruler sensitivity was established before baseline: full-render vs itself is
-0% error; the true clean-tree temporal baseline produces 8.286621% pixels
-whose largest RGB channel error exceeds 8/255, with a 25.915365% worst frame
-and 13 warped frames. This strongly separates exact output from the reported
-artifact class. An earlier setup probe that read 1.52% accidentally included
-an uncommitted repair prototype and is not part of this segment.
+The dominant pool at the source baseline is the opaque front-to-back,
+power-of-two world span lane. Its measured class frequencies are frozen from
+the deterministic 144-frame combat evidence. `scripts/pm_mca_pathclass.py`
+prices exact instruction windows with the P55C scheduler and those frequencies.
 
 ## Metric Contract
-- **Primary**: `temporal_bad_pct` (%, lower is better) — fraction across all
-  paired frames whose largest RGB-channel error against the matched full render
-  is greater than 8/255 (roughly more than two RGB565 quantization steps).
-- **Secondary guardrails**:
-  - exactly 13 temporal warps per 32 captured frames; cadence reductions cannot
-    buy quality;
-  - candidate average frame cost must be no more than 125% of its matched
-    full-render reference;
-  - `temporal_max_frame_bad_pct` must not exceed the 26% baseline ceiling;
-  - renderer proof/status/pixel gates in `autoresearch.checks.sh` must pass.
-- **Secondary tie-breakers**: `temporal_changed_pct`, `temporal_mae`,
-  `temporal_p95`, candidate/reference frame and world times.
+- **Primary**: `pmca_world_cycles` (cycles/frame, lower is better) — weighted
+  P55C cycles for the dominant opaque FTB power-of-two world paint lane.
+- **Hard correctness guardrails**: combat `status=PASS`; RENDER.PPM and
+  EFFECTS.PPM satisfy the existing <=0.06% pixels-over-2-LSB gates.
+- **Performance guardrails**: combat `frame_us` and `world_us` must not regress
+  outside their established deterministic/noise class. PMMX savings may be
+  kept when the static ruler improves and DOSBox is neutral or better.
+- **Secondary telemetry**: `pmca_est_us`, manifest loop CPIs, `frame_us`,
+  `world_us`, `entities_us`, `blend_us`, particles/lights/present/clear, and
+  world/flex pixel counters.
+
+Before baseline, ruler sensitivity must separate the real compiler paint path
+from at least one contrasting realistic instruction schedule. After baseline,
+class frequencies, instruction extraction, workload, and metrics are frozen.
 
 ## How to Run
-`./autoresearch.sh` builds `SILVER.EXE`, captures the paired workload, and emits
-`METRIC name=value` lines. Captures are retained under
-`.dos-build/temporal-quality/{reference,candidate}` for direct inspection.
+`./autoresearch.sh` incrementally builds SILVER.EXE, runs pm-mca plus the
+world path-class ruler, then executes the deterministic combat workload and
+prints `METRIC` lines. `autoresearch.checks.sh` regenerates and gates renderer
+proof images after every passing run.
 
 ## Files in Scope
-- `dos/ref_soft/ref_soft_raster.c` — temporal scheduler, snapshot, warp,
-  rejection/repair, and quality-ruler rotation hook
-- `dos/ref_soft/ref_soft_public.h`, `dos/h2dos_main.c` — temporal cadence
-  telemetry and deterministic diagnostic camera controls only
-- `scripts/run-dos-temporal-quality.py` — paired capture and image metric
-- `autoresearch.sh`, `autoresearch.checks.sh` — build/ruler and correctness
-  checks
-- `autoresearch.md`, `autoresearch.ideas.md` — experiment contract/backlog
+- `dos/ref_soft/ref_soft_raster.c` — dominant world paint path and fixed-ABI
+  inline assembly kernel
+- `dos/ref_soft/ref_soft_local.h`, `ref_soft_public.h` — renderer-local ABI and
+  telemetry only when required
+- `scripts/pm_mca.py`, `scripts/pm_mca_data.py`,
+  `scripts/pm_mca_pathclass.py`, `scripts/pm_mca_manifest.json` — P55C ruler
+- `autoresearch.sh`, `autoresearch.checks.sh` — frozen harness and hard gates
+- `autoresearch.md`, `autoresearch.ideas.md` — segment contract and untried ideas
 
 ## Off Limits
-- Gameplay, BSP/model loading, networking, sound, PAKs, vendor/toolchain data
-- Reducing temporal cadence, angle step, capture count, comparison threshold,
-  or image region after baseline
-- Degrading or changing the temporal-OFF reference renderer to resemble reuse
-- Hiding errors with a post-process blur or changing output resolution/format
+- Gameplay, BSP/model loading semantics, networking, sound, PAKs, vendors, and
+  toolchains
+- Pixel-gate loosening, workload/camera changes, counter-frequency changes, or
+  benchmark-specific output shortcuts
+- Changing the fallback/fan world paths or relying on Pentium-II-only ISA
+- Temporal cadence changes as a way to improve this fresh-frame workload
 
 ## Hard Constraints
-- Same executable and deterministic scene/frame sequence for reference and
-  candidate captures
-- Exactly 13 warped frames and unchanged 1-degree workload
-- Candidate frame cost <=125% of matched full-render cost
-- Existing renderer status and pixel-equivalence gates pass
-- C99 DJGPP build with `-Wall -Werror`; no UB or race shortcuts
+- C99/DJGPP build with `-Wall -Werror`
+- P55C/Pentium-MMX-compatible instructions only
+- No UB, races, self-modifying-code dependency, or benchmark detection
+- Keep a C reference/fallback path for A/B and unusual/debug cases
+- Exact RGB565/depth/coverage semantics on the gated workloads
 
 ## Stop Conditions
-Stop when `temporal_bad_pct <= 0.5%` and worst-frame bad pixels <=3%, after 8
-measured iterations, after 3 consecutive discards with no distinct mechanism
-left, on user interruption, or at a tooling dead end.
+Stop at `pmca_world_cycles <= 50%` of the segment baseline, when combined
+combat frame time reaches <=70 ms, after 3 consecutive discarded kernel
+mechanisms with no distinct scheduling strategy left, on user interruption,
+or at a tooling/measurement dead end.
