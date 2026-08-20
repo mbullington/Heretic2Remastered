@@ -124,6 +124,9 @@ typedef struct h2dos_soft_stats_s {
 	unsigned bench_temporal_budget_rejects;
 	float bench_temporal_max_dangle;
 	float bench_temporal_max_moved_sq;
+	unsigned bench_blend_lut_hits;
+	unsigned bench_blend_lut_misses;
+	unsigned bench_blend_lut_builds;
 	unsigned bench_flex_tris_affine;            // flex triangles drawn by the opaque exact path
 	unsigned bench_flex_tris_mask;              // flex triangles drawn by cached coverage masks
 } h2dos_soft_stats_t;

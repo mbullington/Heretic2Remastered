@@ -16,6 +16,14 @@ qboolean sw_blend_pending;
 static bool sw_color_owns;
 static byte *sw_present_lut;
 static uint16_t sw_blend_rgmap[2048];
+#define SW_BLEND_LUT_SLOTS 16
+typedef struct sw_blend_lut_slot_s {
+	uint32_t key;
+	unsigned stamp;
+	uint16_t *values;
+} sw_blend_lut_slot_t;
+static sw_blend_lut_slot_t sw_blend_lut[SW_BLEND_LUT_SLOTS];
+static unsigned sw_blend_lut_stamp;
 uint32_t *sw_depth;
 int sw_width;
 int sw_height;
@@ -168,6 +176,14 @@ qboolean SW_FrameBufferInit(void *window)
 
 void SW_FrameBufferShutdown(void)
 {
+	for (int i = 0; i < SW_BLEND_LUT_SLOTS; ++i)
+	{
+		free(sw_blend_lut[i].values);
+		sw_blend_lut[i].values = NULL;
+		sw_blend_lut[i].key = 0;
+		sw_blend_lut[i].stamp = 0;
+	}
+	sw_blend_lut_stamp = 0;
 	free(sw_present_lut);
 	sw_present_lut = NULL;
 	free(sw_depth);
@@ -399,6 +415,38 @@ static void sw_blend_rows_mmx(uint16_t *const fb, const size_t pitch, const int 
 }
 #endif
 
+static const uint16_t *sw_blend_lut_get(const uint32_t key, const uint16_t bmap[32])
+{
+	const unsigned stamp = ++sw_blend_lut_stamp;
+	int victim = 0;
+	for (int i = 0; i < SW_BLEND_LUT_SLOTS; ++i)
+	{
+		if (sw_blend_lut[i].values != NULL && sw_blend_lut[i].key == key)
+		{
+			sw_blend_lut[i].stamp = stamp;
+			++sw_stats.bench_blend_lut_hits;
+			return sw_blend_lut[i].values;
+		}
+		if (sw_blend_lut[i].values == NULL ||
+			(sw_blend_lut[victim].values != NULL && sw_blend_lut[i].stamp < sw_blend_lut[victim].stamp))
+			victim = i;
+	}
+	++sw_stats.bench_blend_lut_misses;
+	if (sw_blend_lut[victim].values == NULL)
+	{
+		sw_blend_lut[victim].values = malloc(65536u * sizeof(*sw_blend_lut[victim].values));
+		if (sw_blend_lut[victim].values == NULL)
+			return NULL;
+	}
+	for (unsigned destination = 0; destination < 65536u; ++destination)
+		sw_blend_lut[victim].values[destination] = (uint16_t)(
+			sw_blend_rgmap[destination >> 5] | bmap[destination & 31u]);
+	sw_blend_lut[victim].key = key;
+	sw_blend_lut[victim].stamp = stamp;
+	++sw_stats.bench_blend_lut_builds;
+	return sw_blend_lut[victim].values;
+}
+
 void SW_BlendRect(const int x, const int y, const int w, const int h, const uint16_t color, const byte alpha)
 {
 	if (w <= 0 || h <= 0)
@@ -463,8 +511,23 @@ void SW_BlendRect(const int x, const int y, const int w, const int h, const uint
 	if (use_rgmap)
 		for (unsigned d = 0; d < 2048; ++d)
 			sw_blend_rgmap[d] = (uint16_t)(rmap[d >> 6] | gmap[d & 63u]);
+	const uint16_t *const transfer = use_rgmap ?
+		sw_blend_lut_get(((uint32_t)color << 8) | alpha, bmap) : NULL;
 	unsigned mag = 0;
-	if (use_rgmap)
+	if (transfer != NULL)
+	{
+		for (int row = start_y; row < end_y; ++row)
+		{
+			uint16_t *const dst = sw_color + (size_t)(y + row) * (size_t)sw_width + x;
+			for (int column = start_x; column < end_x; ++column)
+			{
+				const uint16_t out = transfer[dst[column]];
+				dst[column] = out;
+				mag += (out == 0xF81Fu);
+			}
+		}
+	}
+	else if (use_rgmap)
 	{
 		for (int row = start_y; row < end_y; ++row)
 		{
