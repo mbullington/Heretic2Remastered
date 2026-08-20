@@ -21,7 +21,10 @@ prices exact instruction windows with the P55C scheduler and those frequencies.
 
 ## Metric Contract
 - **Primary**: `pmca_world_cycles` (cycles/frame, lower is better) — weighted
-  P55C cycles for the dominant opaque FTB power-of-two world paint lane.
+  P55C cycles for the dominant opaque FTB power-of-two world paint lane. The
+  candidate replaces only the uncovered paint-loop fragments; covered runs and
+  block setup retain identical frozen C prices. Call/dispatch cost is outside
+  the static slice and must be paid honestly in the DOSBox guardrail.
 - **Hard correctness guardrails**: combat `status=PASS`; RENDER.PPM and
   EFFECTS.PPM satisfy the existing <=0.06% pixels-over-2-LSB gates.
 - **Performance guardrails**: combat `frame_us` and `world_us` must not regress

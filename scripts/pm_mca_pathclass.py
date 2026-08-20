@@ -77,7 +77,7 @@ BLOCKS = 475409 / 144
 # Objdump assigns bytes through the next global label to each fragment.
 fragments = {
     name: f"_sw_world_kernel_{name}"
-    for name in ("px_prefix", "light_reload", "shade_store", "advance", "zreject", "skiprun")
+    for name in ("px_prefix", "light_reload", "shade_store", "advance")
 }
 using_kernel = all(symbol in funcs for symbol in fragments.values())
 
@@ -85,8 +85,6 @@ if using_kernel:
     part = {name: raw_symbol(symbol) for name, symbol in fragments.items()}
     paint_nomove = part["px_prefix"] + part["shade_store"] + part["advance"]
     paint_lmove = part["px_prefix"] + part["light_reload"] + part["shade_store"] + part["advance"]
-    zreject = part["zreject"] + part["advance"]
-    skiprun = part["skiprun"]
     print("PMCA-WORLD source=assembly-kernel")
 else:
     # Exact compiler bytes for 8e2d8e3. The non-linear order mirrors GCC's
@@ -97,11 +95,12 @@ else:
     advance = cut("1d1ee", "1d22b")
     paint_nomove = paint_prefix + shade_store + advance
     paint_lmove = paint_prefix + light_reload + shade_store + advance
-    zreject = cut("1d237", "1d24c") + cut("1d1e8", "1d22b")
-    skiprun = cut("1d121", "1d178") + cut("1d3c8", "1d42d")
     print("PMCA-WORLD source=frozen-8e2d8e3-compiler")
 
-# Prologue/advance remain in C for the first assembly-kernel experiment.
+# Covered/mixed runs and block setup remain in the frozen C path for the first
+# kernel experiment, so both baseline and candidate price those same bytes.
+zreject = cut("1d237", "1d24c") + cut("1d1e8", "1d22b")
+skiprun = cut("1d121", "1d178") + cut("1d3c8", "1d42d")
 block_prologue = cut("1ce41", "1d09f")
 block_advance = cut("1d44b", "1d498")
 
