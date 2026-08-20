@@ -851,6 +851,11 @@ static void log_bench_summary(void)
 		stats->bench_flex_tris_bbox, stats->bench_flex_tris_behind,
 		stats->bench_us_ent_brush / frames, stats->bench_brush_faces, stats->bench_brush_culled,
 		stats->bench_flex_spans, stats->bench_flex_blocks);
+	log_append("bench-avg-us-ent-dynamic=%llu\nbench-avg-us-ent-variable=%llu\n"
+		"bench-avg-us-ent-line=%llu\nbench-model-dynamic=%u\nbench-model-variable=%u\nbench-model-line=%u\n",
+		stats->bench_us_ent_dynamic / frames, stats->bench_us_ent_variable / frames,
+		stats->bench_us_ent_line / frames, stats->bench_model_dynamic,
+		stats->bench_model_variable, stats->bench_model_line);
 	log_append("bench-sky-cache-hits=%u\nbench-sky-cache-misses=%u\n",
 		stats->sky_cache_hits, stats->sky_cache_misses);
 	log_append("bench-world-zaccepted=%u\nbench-world-zreject=%u\nbench-sky-pixels=%u\nbench-sky-holes=%u\n"

@@ -81,7 +81,13 @@ typedef struct h2dos_soft_stats_s {
 	unsigned bench_flex_tris_behind;           // dispatch culled: all corners w<=0
 	unsigned long long bench_us_ent_flex;   // entity pass: flex models
 	unsigned long long bench_us_ent_sprite; // entity pass: sprites
+	unsigned long long bench_us_ent_dynamic;
+	unsigned long long bench_us_ent_variable;
+	unsigned long long bench_us_ent_line;
 	unsigned long long bench_us_ent_brush;  // entity pass: inline/bsp model faces
+	unsigned bench_model_dynamic;
+	unsigned bench_model_variable;
+	unsigned bench_model_line;
 	unsigned bench_brush_faces;             // brush/inline faces walked
 	unsigned bench_brush_culled;            // brush entities frustum-culled whole
 	unsigned bench_flex_spans;              // flex span-scanline iterations

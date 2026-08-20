@@ -4317,14 +4317,29 @@ void SW_RasterEntities(const refdef_t *fd)
 				switch (entity->spriteType)
 				{
 				case SPRITE_DYNAMIC:
+				{
+					const uclock_t tmark = uclock();
 					draw_dynamic_sprite(entity, model);
+					sw_stats.bench_us_ent_dynamic += (unsigned long long)(uclock() - tmark);
+					++sw_stats.bench_model_dynamic;
 					break;
+				}
 				case SPRITE_VARIABLE:
+				{
+					const uclock_t tmark = uclock();
 					draw_variable_sprite(entity, model);
+					sw_stats.bench_us_ent_variable += (unsigned long long)(uclock() - tmark);
+					++sw_stats.bench_model_variable;
 					break;
+				}
 				case SPRITE_LINE:
+				{
+					const uclock_t tmark = uclock();
 					draw_line_sprite(entity, model);
+					sw_stats.bench_us_ent_line += (unsigned long long)(uclock() - tmark);
+					++sw_stats.bench_model_line;
 					break;
+				}
 				default:
 					if (model != NULL)
 					{
