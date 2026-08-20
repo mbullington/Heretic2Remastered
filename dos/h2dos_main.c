@@ -853,8 +853,10 @@ static void log_bench_summary(void)
 		stats->bench_flex_spans, stats->bench_flex_blocks);
 	log_append("bench-sky-cache-hits=%u\nbench-sky-cache-misses=%u\n",
 		stats->sky_cache_hits, stats->sky_cache_misses);
-	log_append("bench-world-zaccepted=%u\nbench-world-zreject=%u\nbench-sky-pixels=%u\nbench-sky-holes=%u\nbench-flex-tris-affine=%u\n",
-		stats->bench_world_zaccepted, stats->bench_world_zreject, stats->sky_pixels, stats->bench_sky_holes, stats->bench_flex_tris_affine);
+	log_append("bench-world-zaccepted=%u\nbench-world-zreject=%u\nbench-sky-pixels=%u\nbench-sky-holes=%u\n"
+		"bench-flex-tris-affine=%u\nbench-flex-tris-mask=%u\n",
+		stats->bench_world_zaccepted, stats->bench_world_zreject, stats->sky_pixels,
+		stats->bench_sky_holes, stats->bench_flex_tris_affine, stats->bench_flex_tris_mask);
 	log_append("bench-zcollide-eq=%llu\nbench-zcollide-near=%llu\nbench-flex-tris-wind=%u\n",
 		(unsigned long long)stats->bench_zcollide_eq, (unsigned long long)stats->bench_zcollide_near,
 		stats->bench_flex_tris_wind);

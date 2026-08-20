@@ -3000,6 +3000,139 @@ static void sw_flex_lut_init(void)
 	}
 }
 
+#define SW_FLEX_MASK_CACHE_SIZE 256
+
+typedef struct flex_mask_shape_s {
+	unsigned key_plus_one;
+	uint32_t coverage;
+	byte source[25];
+	byte width, height;
+} flex_mask_shape_t;
+
+typedef struct flex_mask_vertex_s {
+	int x, y;
+	uint32_t depth;
+	uint16_t color;
+	qboolean paints;
+} flex_mask_vertex_t;
+
+static flex_mask_shape_t sw_flex_mask_cache[SW_FLEX_MASK_CACHE_SIZE];
+static float sw_flex_vcolor[SW_MAX_FLEX_VERTS][3];
+
+static int flex_mask_orient(const flex_mask_vertex_t *a, const flex_mask_vertex_t *b,
+	const int x, const int y)
+{
+	return (b->x - a->x) * (y - a->y) - (b->y - a->y) * (x - a->x);
+}
+
+static const flex_mask_shape_t *flex_mask_shape(const flex_mask_vertex_t vertices[3],
+	const int origin_x, const int origin_y, const int width, const int height)
+{
+	int local_x[3], local_y[3];
+	unsigned key = 0;
+	for (int corner = 0; corner < 3; ++corner)
+	{
+		local_x[corner] = vertices[corner].x - origin_x;
+		local_y[corner] = vertices[corner].y - origin_y;
+		const unsigned point = (unsigned)(local_y[corner] * 6 + local_x[corner]);
+		key = key * 36u + point;
+	}
+	flex_mask_shape_t *shape = &sw_flex_mask_cache[key & (SW_FLEX_MASK_CACHE_SIZE - 1)];
+	if (shape->key_plus_one == key + 1u)
+		return shape;
+	shape->key_plus_one = key + 1u;
+	shape->coverage = 0;
+	shape->width = (byte)width;
+	shape->height = (byte)height;
+	flex_mask_vertex_t local[3] = { vertices[0], vertices[1], vertices[2] };
+	for (int corner = 0; corner < 3; ++corner)
+	{
+		local[corner].x = local_x[corner];
+		local[corner].y = local_y[corner];
+	}
+	for (int y = 0; y < height; ++y)
+		for (int x = 0; x < width; ++x)
+		{
+			const int e0 = flex_mask_orient(&local[1], &local[2], x, y);
+			const int e1 = flex_mask_orient(&local[2], &local[0], x, y);
+			const int e2 = flex_mask_orient(&local[0], &local[1], x, y);
+			if (e0 >= 0 && e1 >= 0 && e2 >= 0)
+			{
+				const int bit = y * 5 + x;
+				shape->coverage |= 1u << bit;
+				shape->source[bit] = (byte)(e0 >= e1 && e0 >= e2 ? 0 : (e1 >= e2 ? 1 : 2));
+			}
+		}
+	return shape;
+}
+
+static qboolean flex_mask_opaque(const flex_proj_cache_t *projected[3],
+	const sw_flex_rtri_t *triangle, const int vertex_indices[3],
+	const sw_image_t *image)
+{
+	if (!sw_flexlut_ready)
+		sw_flex_lut_init();
+	flex_mask_vertex_t vertices[3];
+	int minimum_x = INT_MAX, minimum_y = INT_MAX;
+	int maximum_x = INT_MIN, maximum_y = INT_MIN;
+	for (int corner = 0; corner < 3; ++corner)
+	{
+		const float x = projected[corner]->x;
+		const float y = projected[corner]->y;
+		vertices[corner].x = (int)(x + (x >= 0.0f ? 0.5f : -0.5f));
+		vertices[corner].y = (int)(y + (y >= 0.0f ? 0.5f : -0.5f));
+		minimum_x = min(minimum_x, vertices[corner].x);
+		minimum_y = min(minimum_y, vertices[corner].y);
+		maximum_x = max(maximum_x, vertices[corner].x);
+		maximum_y = max(maximum_y, vertices[corner].y);
+	}
+	const int width = maximum_x - minimum_x;
+	const int height = maximum_y - minimum_y;
+	if (width < 1 || height < 1 || width > 5 || height > 5 ||
+		flex_mask_orient(&vertices[0], &vertices[1], vertices[2].x, vertices[2].y) <= 0)
+		return false;
+	for (int corner = 0; corner < 3; ++corner)
+	{
+		const int vertex = vertex_indices[corner];
+		const int tx = ClampI((int)(triangle->st[corner][0] * image->width), 0, image->width - 1);
+		const int ty = ClampI((int)(triangle->st[corner][1] * image->height), 0, image->height - 1);
+		const uint16_t texel = image->pixels[ty * image->width + tx];
+		vertices[corner].paints = image->no_zero_texel || texel != 0;
+		const int cr = min(512, max(0, (int)(sw_flex_vcolor[vertex][0] * 256.0f)));
+		const int cg = min(512, max(0, (int)(sw_flex_vcolor[vertex][1] * 256.0f)));
+		const int cb = min(512, max(0, (int)(sw_flex_vcolor[vertex][2] * 256.0f)));
+		vertices[corner].color = (uint16_t)((sw_flex5lut[cr][(texel >> 11) & 31] << 11) |
+			(sw_flex6lut[cg][(texel >> 5) & 63] << 5) | sw_flex5lut[cb][texel & 31]);
+		vertices[corner].depth = (uint32_t)(projected[corner]->inverse_z * SW_DEPTH_SCALE);
+	}
+	const flex_mask_shape_t *shape = flex_mask_shape(vertices, minimum_x, minimum_y, width, height);
+	for (int y = 0; y < shape->height; ++y)
+		for (int x = 0; x < shape->width; ++x)
+		{
+			const int bit = y * 5 + x;
+			if ((shape->coverage & (1u << bit)) == 0)
+				continue;
+			const flex_mask_vertex_t *source = &vertices[shape->source[bit]];
+			const int screen_x = minimum_x + x;
+			const int screen_y = minimum_y + y;
+			if (!source->paints || screen_x < 0 || screen_x >= sw_width ||
+				screen_y < 0 || screen_y >= sw_height)
+				continue;
+			const size_t index = (size_t)screen_y * sw_width + screen_x;
+			++sw_stats.bench_pixels_flex;
+			if (source->depth >= sw_depth[index])
+			{
+				sw_color[index] = source->color;
+				sw_depth[index] = source->depth;
+				++sw_stats.depth_writes;
+			}
+		}
+	++sw_stats.triangles;
+	++sw_stats.flex_triangles;
+	++sw_stats.bench_flex_tris_mask;
+	return true;
+}
+
 static void span_raster_flex_opaque(const flex_screen_vertex_t a, const flex_screen_vertex_t b,
 	const flex_screen_vertex_t c, const sw_image_t *image)
 {
@@ -3542,7 +3675,6 @@ void SW_RasterFlexEntity(const entity_t *entity, const sw_model_t *model, const 
 	// E55c: premultiply per-vertex gouraud color (base_light * intensity) once
 	// per entity; the value per incident triangle corner is the same
 	// two-operand product the colors[][] loop would compute, bit-identical.
-	static float sw_flex_vcolor[SW_MAX_FLEX_VERTS][3];
 	const qboolean flex_opaque_ok = opaque_depth && !additive && !shadow_pass;
 	if (flex_opaque_ok && flex->render_num_xyz <= SW_MAX_FLEX_VERTS)
 	{
@@ -3710,7 +3842,11 @@ void SW_RasterFlexEntity(const entity_t *entity, const sw_model_t *model, const 
 				}
 				sw_bench_tri_category = 1;
 				++sw_stats.bench_flex_tris;
-				if (cache_ok && skin != NULL && skin->pixels != NULL)
+				const qboolean used_mask = opaque_tri &&
+					flex_mask_opaque(projected, rt, vertex_indices, skin);
+				if (used_mask)
+					++sw_stats.bench_flex_tris_fast;
+				else if (cache_ok && skin != NULL && skin->pixels != NULL)
 				{
 					flex_screen_vertex_t corners[3];
 					for (int corner = 0; corner < 3; ++corner)
