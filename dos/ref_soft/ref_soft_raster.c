@@ -450,6 +450,7 @@ typedef char sw_world_paint_ctx_key_check[offsetof(sw_world_paint_ctx_t, ikey) =
 
 static sw_world_paint_ctx_t sw_world_paint_ctx;
 extern void sw_world_paint_run_pmmx(void);
+extern uint32_t *sw_world_patch_sites[4];
 
 __asm__(
 	".intel_syntax noprefix\n"
@@ -467,14 +468,17 @@ __asm__(
 	"_sw_world_kernel_px_prefix:\n"
 	"mov eax, DWORD PTR [_sw_world_paint_ctx+60]\n"
 	"sar eax, 16\n"
-	"and eax, DWORD PTR [_sw_world_paint_ctx+44]\n"
-	"imul eax, DWORD PTR [_sw_world_paint_ctx+36]\n"
+	".byte 0x25\n"
+	".Lsw_patch_mask_h: .long 0x12345678\n"
+	".byte 0x69, 0xc0\n"
+	".Lsw_patch_width: .long 0x12345678\n"
 	"mov ecx, DWORD PTR [_sw_world_paint_ctx+56]\n"
 	"sar ecx, 16\n"
-	"and ecx, DWORD PTR [_sw_world_paint_ctx+40]\n"
+	".byte 0x81, 0xe1\n"
+	".Lsw_patch_mask_w: .long 0x12345678\n"
 	"add eax, ecx\n"
-	"mov edx, DWORD PTR [_sw_world_paint_ctx+8]\n"
-	"movzx ebx, WORD PTR [edx+eax*2]\n"
+	".byte 0x0f, 0xb7, 0x1c, 0x45\n"
+	".Lsw_patch_pixels: .long 0x12345678\n"
 	"mov eax, DWORD PTR [_sw_world_paint_ctx+68]\n"
 	"shr eax, 20\n"
 	"imul eax, DWORD PTR [_sw_world_paint_ctx+48]\n"
@@ -552,7 +556,32 @@ __asm__(
 	"pop ebx\n"
 	"pop ebp\n"
 	"ret\n"
+	".data\n"
+	".align 4\n"
+	".globl _sw_world_patch_sites\n"
+	"_sw_world_patch_sites:\n"
+	".long .Lsw_patch_mask_h, .Lsw_patch_width, .Lsw_patch_mask_w, .Lsw_patch_pixels\n"
+	".text\n"
 	".att_syntax prefix\n");
+
+static void sw_world_patch_material(const uint16_t *pixels, const int width,
+	const int mask_w, const int mask_h)
+{
+	static const uint16_t *patched_pixels;
+	static int patched_width, patched_mask_w, patched_mask_h;
+	if (patched_pixels == pixels && patched_width == width &&
+		patched_mask_w == mask_w && patched_mask_h == mask_h)
+		return;
+	*(volatile uint32_t *)sw_world_patch_sites[0] = (uint32_t)mask_h;
+	*(volatile uint32_t *)sw_world_patch_sites[1] = (uint32_t)width;
+	*(volatile uint32_t *)sw_world_patch_sites[2] = (uint32_t)mask_w;
+	*(volatile uint32_t *)sw_world_patch_sites[3] = (uint32_t)(uintptr_t)pixels;
+	patched_pixels = pixels;
+	patched_width = width;
+	patched_mask_w = mask_w;
+	patched_mask_h = mask_h;
+	__asm__ volatile("jmp 1f\n1:" ::: "memory");
+}
 
 static void draw_face_spans(const screen_vertex_t *verts, const int n, const sw_image_t *image,
 	const sw_bsp_t *bsp, const dface_t *face, const float texture_min_s, const float texture_min_t,
@@ -739,6 +768,8 @@ static void draw_face_spans(const screen_vertex_t *verts, const int n, const sw_
 	const qboolean theight_pow2 = (image->height & (image->height - 1)) == 0;
 	const int mask_w = image->width - 1;
 	const int mask_h = image->height - 1;
+	if (sw_world_ftb_mask_active && twist_pow2 && theight_pow2)
+		sw_world_patch_material(image->pixels, image->width, mask_w, mask_h);
 
 	// Scan conversion of the convex polygon (verts are ordered around the perimeter).
 	int top = 0;
