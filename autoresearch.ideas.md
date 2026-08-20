@@ -35,7 +35,7 @@ STATE 2026-08-20 (SEG-7 combat workload; pmca_est_us=527, frame 184.2ms):
   class); gradient chains 74/68 cpi PMMX remain the biggest measured units.
 
 ## Runnable keep-class queue
-- B1 MMX 4-wide exact blend (2026-08-20; biggest single lever in tree):
+- ~~B1 MMX 4-wide exact blend~~ DONE (run #99): blend 40.5->9.2ms (-77%). P55C fix: PMULHW+sign-correction (PMULHUW is PII+).
   every step bit-exact: (d>>8)&0xF8 -> PSRLW+PAND; n = s*aw + d*dw is a
   convex combination <= 63,240 => fits PMULLW low16, no 16-bit overflow;
   (n*0x8081)>>23 == PSRLW(PMULHUW(n,0x8081),7) by shift composition.
@@ -48,7 +48,8 @@ STATE 2026-08-20 (SEG-7 combat workload; pmca_est_us=527, frame 184.2ms):
   renderer. Ruler: out-of-manifest, DOSBox-scored like keeps #86/#87/#88.
   Ref: Mesa mmx_blend.S (PMULLW/PMULHUW 4-wide blend era-proven on PMMX;
   theirs approximates /255, ours is exact).
-- B2 present-fused blend (pass elimination): fold fullscreen fd->blend
+- ~~B2 present-fused blend~~ PARKED by census F (run #100): pulse every frame + 44.5K post-blend UI px/frame => flush-per-frame = zero gain in combat. ORIGINAL TEXT (archive):
+  B2 present-fused blend (pass elimination): fold fullscreen fd->blend
   into E1's direct-FB present copy (read once, blend, write LFB): the
   standalone RMW pass and its 153KB/frame traffic vanish; cost = ALU in
   the copy loop. SEMANTICS GUARD: UI (SW_DrawChar/Pic/Fill, crosshair)
@@ -57,7 +58,8 @@ STATE 2026-08-20 (SEG-7 combat workload; pmca_est_us=527, frame 184.2ms):
   PutPixel). Census F first. Stack B1's MMX kernel in the copy loop =>
   blend ~= +1-2ms over present alone. Sibling-mode bonus: INDEX8 320x200
   bakes tint into the 64KB present LUT rebuild (blend = free there).
-- E50-RESTORE flex winding cull, census-first (queued 2026-08-20;
+- ~~E50-RESTORE flex winding cull~~ DONE (run #98): entities -33% (-15ms), 0px A/B. ORIGINAL TEXT (archive):
+  E50-RESTORE flex winding cull, census-first (queued 2026-08-20;
   banked entities -9% precedent, per LEDGER CORRECTION):
   (1) per-mesh-node winding census (front/back/degenerate x node flags);
       sprites + any census-proven two-sided nodes are carved OUT of the cull;
@@ -79,29 +81,33 @@ STATE 2026-08-20 (SEG-7 combat workload; pmca_est_us=527, frame 184.2ms):
   +8.8ms); 256B resident is a different regime, but price it, don't trust
   DOSBox to show IMUL removal. Pool = blend 40.5ms (synthetic-inflated,
   see STATE).
-- E-B white-light chain collapse per tri (E17-class bitwise predicate):
+- ~~E-B white-light chain collapse~~ DEAD by census E (run #101): 0/56,353 white tris (colored dlights everywhere). ORIGINAL TEXT (archive):
+  E-B white-light chain collapse per tri (E17-class bitwise predicate):
   corner r==g==b bitwise => 3 Gouraud chains -> 1 intensity chain: -2
   gradient chains/tri, -4 endpoint FMUL + -4 int-conversions + -2 deltas
   per block, -2 adds/px + shade-row sharing with E-A. Census E first
   (colored dlights may break whiteness on the planted monsters). Est
   -3..6ms.
-- E-A exact universal flex shade LUT (#97 pattern carried to flex):
+- ~~E-A exact universal flex shade LUT~~ DONE (run #103): entities -464us. ORIGINAL TEXT (archive):
+  E-A exact universal flex shade LUT (#97 pattern carried to flex):
   mr=(tr*cr+128)>>8 with ~65KB tables (513 cr-rows x 32/64/32 channel
   cols); cr = the lerped Gouraud value itself => NO light key (kills
   #80's rebuild storm) and NO quantization (kills #80's fidelity fail;
   exact by construction, #97-class sweep-verify). Per-px: 3 IMUL + ~9 ops
   -> 3 loads; per-tri cr range tiny => hot rows L1-resident. Est -3..5ms.
-- E-D clamp/colorkey elimination: per-SPAN s/t in-range proof (u = uz/wz
+- ~~E-D clamp/colorkey elimination~~ DONE (run #105 combined with E-B2). ORIGINAL TEXT (archive):
+  E-D clamp/colorkey elimination: per-SPAN s/t in-range proof (u = uz/wz
   monotonic on a span => block-endpoint checks replace 2 clamps/px) +
   per-skin has_zero_texel flag (drops the texel!=0 test when the skin
   has none). Bit-exact (branch-only). Est -1..2ms.
-- E-B2 mesh-node screen-bbox pre-cull: 922/2,078 walked tris die on the
+- ~~E-B2 mesh-node screen-bbox pre-cull~~ DONE (run #105): 609/2,850 nodes culled (21%). ORIGINAL TEXT (archive):
+  E-B2 mesh-node screen-bbox pre-cull: 922/2,078 walked tris die on the
   in-rasterizer bbox test AFTER corner projection; project per-node bounds
   once per entity => skip walk + proj fills of doomed limbs. Bit-exact
   (skips outputless work). Est -1..2ms.
-- E-E proj-fill remainder: verify project_flex shares ONE 1/w per vertex
-  (else 2 FDIV -> 1: -39clk x 794/f) + SoA batch of the 2,217 lerps/f.
-  Est ~1ms.
+- ~~E-E proj-fill remainder~~ ANALYZED DEAD (2026-08-20): project_flex and
+  flex_proj_fill already share ONE 1/w per vertex (verified in code); SoA
+  batch rewrite est ~0.09us = noise vs gradient loop's 65K clk/f total.
 - E-F MMX flex px engine [STRETCH, do last]: 4-wide shade+store over
   z-pass runs (scalar gather + vector shade via the B1 identities; z
   divergence needs run masks; flex loop is NOT the fragile function).
@@ -117,12 +123,11 @@ STATE 2026-08-20 (SEG-7 combat workload; pmca_est_us=527, frame 184.2ms):
     face, collected at EMIT SITES ONLY (counters inside draw_face_spans =
     fragility class) => ranks deferred material-order shading AND provides
     the faces/frame patch-amortization evidence for the asm era.
-  E per-tri whiteness share: fraction of painted flex tris with corner
-    r==g==b bitwise in combat (colored dlights may kill it) => gates E-B.
-  F post-blend color writes/frame (UI/crosshair after fd->blend) + fxload
-    pulse alpha==0 frame share => gates B2's fusion shape (and B4 minor).
-  G combat-mode flex spans/blocks per frame (h2dos_main metrics print, in
-    scope; T3 prints them, combat doesn't) => sizes E-C/E-F block tax.
+  E DONE (#101): 0/56,353 white => E-B dead.  F DONE (#100): flush-per-frame
+    => B2 parked.  G ALREADY FREE: combat evidence HAS bench-flex-spans
+    (2,388/f) + bench-flex-blocks (1,754/f) - sizes E-C/E-F block tax.
+  B DONE (#106): 48% sub-8px tris.  C DONE (#106): overdraw 1.37x =>
+    flex visibility-buffer LOW priority.  D still open (fragility-aware).
 (Everything else = the gate classes below.)
 
 ## Gated: needs ruler/harness engineering (PMMX-class pools both rulers miss)
