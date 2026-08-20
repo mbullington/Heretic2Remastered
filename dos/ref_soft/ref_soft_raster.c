@@ -2806,9 +2806,38 @@ advance:
 // same two-operand product, bit-identical). Caller guarantees: entity
 // opaque_depth && !additive, no per-node USE_COLOR, every corner in front of
 // the near plane, skin non-NULL.
+// E-A/ideas: exact universal flex shade LUT. Built from the exact scalar
+// chain mr=(c*cr+128)>>8 clamped, so bit-identical per (texel,cr); the key
+// is the lerped gouraud value itself (no light key to churn, no quant to
+// drift) - sweep-verified offline over texel x (cr,cg,cb).
+static byte sw_flex5lut[513][32];
+static byte sw_flex6lut[513][64];
+static qboolean sw_flexlut_ready;
+static void sw_flex_lut_init(void)
+{
+	sw_flexlut_ready = true;
+	for (int cr = 0; cr <= 512; ++cr)
+	{
+		for (int c = 0; c < 32; ++c)
+		{
+			unsigned v = (((unsigned)(c << 3)) * (unsigned)cr + 128u) >> 8;
+			if (v > 255u) v = 255u;
+			sw_flex5lut[cr][c] = (byte)((v & 0xF8u) >> 3);
+		}
+		for (int c = 0; c < 64; ++c)
+		{
+			unsigned v = (((unsigned)(c << 2)) * (unsigned)cr + 128u) >> 8;
+			if (v > 255u) v = 255u;
+			sw_flex6lut[cr][c] = (byte)((v & 0xFCu) >> 2);
+		}
+	}
+}
+
 static void span_raster_flex_opaque(const flex_screen_vertex_t a, const flex_screen_vertex_t b,
 	const flex_screen_vertex_t c, const sw_image_t *image)
 {
+	if (!sw_flexlut_ready)
+		sw_flex_lut_init();
 	const qboolean clut = sw_clut_frame && image->src8 != NULL;
 	const float x10 = b.x - a.x, y10 = b.y - a.y;
 	const float x20 = c.x - a.x, y20 = c.y - a.y;
@@ -2968,10 +2997,8 @@ static void span_raster_flex_opaque(const flex_screen_vertex_t a, const flex_scr
 							const int cr = min(512, max(0, ir >> 9)); // fixed [0..512]: 256 == 1.0
 							const int cg = min(512, max(0, ig >> 9));
 							const int cb = min(512, max(0, ib >> 9));
-							const unsigned mr = ((((texel >> 8) & 0xF8u) * (unsigned)cr + 128u) >> 8);
-							const unsigned mg = ((((texel >> 3) & 0xFCu) * (unsigned)cg + 128u) >> 8);
-							const unsigned mb = ((((texel << 3) & 0xF8u) * (unsigned)cb + 128u) >> 8);
-							const uint16_t fpx = SW_RGB565(min(255u, mr), min(255u, mg), min(255u, mb));
+							const uint16_t fpx = (uint16_t)((sw_flex5lut[cr][(texel >> 11) & 31] << 11) |
+								(sw_flex6lut[cg][(texel >> 5) & 63] << 5) | sw_flex5lut[cb][texel & 31]);
 							sw_stats.bench_mag_flex += (fpx == 0xF81Fu);
 							fb_row[idx] = fpx;
 							zb_row[idx] = ikey;

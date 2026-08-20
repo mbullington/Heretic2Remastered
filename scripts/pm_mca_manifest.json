@@ -23,16 +23,14 @@
   {
    "name": "flex_vertex_gradient",
    "symbol": "_SW_RasterFlexEntity",
-   "contains": "fstp DWORD PTR \\[esi-0x[0-9a-f]+\\]$",
+   "contains": "fstp DWORD PTR \\[edi-0x[0-9a-f]+\\]$",
    "nth": 0,
    "trips_key": "bench-flex-vertex-lerps",
    "align": {
     "ebp": 4,
-    "edi": 4,
-    "ebx": 4,
-    "ecx": 4
+    "edi": 4
    },
-   "comment": "per-vertex 4-channel color x intensity: FILD/FMUL/FADDP stack juggle. ideas.md #3 census loop. 56 instr, mem 17/iter."
+   "comment": "per-vertex 4-channel color x intensity: FILD/FMUL/FADDP stack juggle. ideas.md #3 census loop. 56 instr, mem 17/iter. (2026-08-20c: E-A codegen swapped esi/edi+eax/edx roles; re-pinned @0x1f97f-loop, same n=51)"
   },
   {
    "name": "flex_variant_b",

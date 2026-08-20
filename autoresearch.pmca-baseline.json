@@ -3,26 +3,12 @@
  "db": "04f3b426e6ff-pm-mca-0.2.0",
  "frames": 160,
  "loops": {
-  "flex_vertex_gradient": {
-   "cpi": 74,
-   "trips": 886.65,
-   "est_cycles": 65612.1,
-   "n_instr": 49,
-   "slice_id": "54bc0089c5510872",
-   "stalls": {
-    "fp-operand": 19.0,
-    "store-early": 4.0
-   },
-   "bank_unknown": 0.0,
-   "mem_ops": 10.0,
-   "bytes_rw": 16.0
-  },
   "flex_variant_b": {
    "cpi": 68,
    "trips": 457.8375,
    "est_cycles": 31132.9,
    "n_instr": 46,
-   "slice_id": "5a5c5c23fd061583",
+   "slice_id": "cd2e21b97ef155e7",
    "stalls": {
     "agi-in-pair": 1.0,
     "fp-operand": 17.0,
@@ -44,7 +30,9 @@
    "bytes_rw": 4.0
   }
  },
- "total_cycles": 97505.0,
- "est_us_pmmx233": 418.0,
- "problems": []
+ "total_cycles": 31893.0,
+ "est_us_pmmx233": 137.0,
+ "problems": [
+  "flex_vertex_gradient: 'flex_vertex_gradient: anchor matched 0x in _SW_RasterFlexEntity (need nth=0)'"
+ ]
 }
