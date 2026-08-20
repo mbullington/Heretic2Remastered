@@ -1,6 +1,6 @@
 # Autoresearch: DOS combat renderer
 
-## Active Segment 21: interactive 320x240 architecture
+## Active Segment 22: explicit interactive 320x240 performance mode
 
 Commit `62dbd5fa` is the truthful full-quality source: the world/material and
 entity optimizations are retained, Corvus uses the retail 1,433-frame model,
@@ -39,12 +39,17 @@ reprojecting a full-resolution world expensively.
   explicit opt-in for diagnosis.
 - **Interactive-mode guard**: entities, particles, depth occlusion, HUD, menus,
   and weapon remain full-resolution. World approximation must reach at least
-  22 dB whole-frame RGB PSNR and no more than 35% of pixels over 2 LSB on the
+  32 dB whole-frame RGB PSNR and no more than 45% of pixels over 2 LSB on the
   frozen captures, with direct inspection rejecting holes, depth leaks,
   unstable edges, objectionable texture crawl, or one-frame flashing.
 - **Mode policy**: an accepted low-work mode may be explicit rather than the
   full-quality default, but it must be usable in ordinary play and exposed by a
   stable cvar/environment switch.
+
+The explicit performance-mode combat gate is selected only when the ordinary
+`H2DOS_SW_WORLD_HALF=1` setting is present; unaffected synthetic captures keep
+their historical exact/2% gates. This material gate wiring starts a new segment
+and requires a fresh full-quality baseline before any mode can be retained.
 
 The ruler separates realistic cases: normal corrected combat is 112.569 ms,
 while the established winding-cull A/B moves the same entity workload by about
