@@ -316,9 +316,13 @@ sw_image_t *SW_FindImage(const char *name, const sw_image_kind_t kind)
 		const char *requested;
 		const char *alias;
 	} k_skin_aliases[] = {
-		{ "players/male/Corvus.m8",		"models/player/c_watcher/!skin.m8" },
-		{ "players/male/CorvusDmg.m8",	"models/player/c_watcher/!skindmg.m8" },
-		{ "players/male/reflect.m8",		"pics/misc/reflect.m32" },
+		{ "players/male/Corvus.m8",		"models/player/elf/!skin.m8" },
+		{ "players/male/CorvusDmg.m8",	"models/player/elf/!skindmg.m8" },
+		{ "players/male/CorvusP1.m8",		"models/player/elf/!skinp1.m8" },
+		{ "players/male/CorvusP1Dmg.m8",	"models/player/elf/!skinp1dmg.m8" },
+		{ "players/male/CorvusP2.m8",		"models/player/elf/!skinp2.m8" },
+		{ "players/male/CorvusP2Dmg.m8",	"models/player/elf/!skinp2dmg.m8" },
+		{ "players/male/reflect.m8",		"models/player/elf/!skinreflect.m8" },
 	};
 	if (image == NULL)
 	{

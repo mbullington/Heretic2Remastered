@@ -602,7 +602,10 @@ static sw_bsp_t *load_bsp(const char *name)
 static sw_model_t *new_model(const char *name)
 {
 	if (sw_num_models == SW_MAX_MODELS)
+	{
+		sw_ri.Con_Printf(PRINT_ALL, "ref_soft: model registry full while registering '%s'\n", name);
 		return NULL;
+	}
 	sw_model_t *model = &sw_models[sw_num_models++];
 	memset(model, 0, sizeof(*model));
 	strcpy_s(model->name, sizeof(model->name), name);
@@ -842,7 +845,7 @@ struct model_s *SW_RegisterModel(const char *name)
 			const char *requested;
 			const char *alias;
 		} k_model_aliases[] = {
-			{ "players/male/tris.fm", "models/player/c_watcher/tris.fm" },
+			{ "players/male/tris.fm", "models/player/elf/tris.fm" },
 		};
 		const char *load_name = name;
 		for (size_t i = 0; i < sizeof(k_model_aliases) / sizeof(k_model_aliases[0]); ++i)

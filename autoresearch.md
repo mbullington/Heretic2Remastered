@@ -49,11 +49,13 @@ additional emitted metrics expose already-existing counters only.
 
 ### Stop Conditions
 
-Stop at `entities_us <= 14,116`, after the four listed architectural mechanisms
-are measured, after three consecutive discarded distinct big-swing mechanisms,
-on user interruption, or at a tooling/measurement dead end. Do not spend the
-segment on more tiny material patch sites, wider nearest-corner masks,
-recursive subdivision, or real mesh LOD.
+Stop at `entities_us <= 14,116`, after the listed exact/affine mechanisms and
+two genuinely lower-work representations are measured, after three consecutive
+discarded distinct representation-level mechanisms, on user interruption, or
+at a tooling/measurement dead end. Following the user's explicit pivot, stop
+building local sprite/span variants: the remaining flex path must process an
+order of magnitude fewer raster primitives. Real mesh LOD remains out of scope;
+surfel and 2.5D impostor representations are in scope.
 
 ## Segment 17: stable-key generated/patched kernels
 

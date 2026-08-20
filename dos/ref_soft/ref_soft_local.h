@@ -15,7 +15,7 @@
 #include <stdint.h>
 
 #define SW_MAX_IMAGES 512
-#define SW_MAX_MODELS 256
+#define SW_MAX_MODELS 512
 #define SW_MAX_FACE_VERTS 64
 #define SW_NEAR_CLIP 1.0f
 // 31-bit linear fixed-point inverse-z domain: all depth comparisons and the
