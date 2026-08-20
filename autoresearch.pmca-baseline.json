@@ -7,8 +7,8 @@
    "cpi": 74,
    "trips": 886.65,
    "est_cycles": 65612.1,
-   "n_instr": 51,
-   "slice_id": "ed5a75c5d6b563f3",
+   "n_instr": 49,
+   "slice_id": "54bc0089c5510872",
    "stalls": {
     "fp-operand": 19.0,
     "store-early": 4.0
@@ -19,10 +19,10 @@
   },
   "flex_variant_b": {
    "cpi": 68,
-   "trips": 831.09375,
-   "est_cycles": 56514.4,
+   "trips": 457.8375,
+   "est_cycles": 31132.9,
    "n_instr": 46,
-   "slice_id": "cd2e21b97ef155e7",
+   "slice_id": "5a5c5c23fd061583",
    "stalls": {
     "agi-in-pair": 1.0,
     "fp-operand": 17.0,
@@ -44,7 +44,7 @@
    "bytes_rw": 4.0
   }
  },
- "total_cycles": 122887.0,
- "est_us_pmmx233": 527.0,
+ "total_cycles": 97505.0,
+ "est_us_pmmx233": 418.0,
  "problems": []
 }
