@@ -2237,6 +2237,17 @@ typedef struct flex_raster_vertex_s {
 	float alpha;
 } flex_raster_vertex_t;
 
+typedef struct flex_opaque_vertex_s {
+	float x;
+	float y;
+	float inverse_z;
+	float s;
+	float t;
+	float red;
+	float green;
+	float blue;
+} flex_opaque_vertex_t;
+
 typedef struct flex_screen_vertex_s {
 	float x;
 	float y;
@@ -3011,7 +3022,7 @@ static byte sw_flex5lut[513][32];
 static byte sw_flex6lut[513][64];
 static qboolean sw_flexlut_ready;
 
-extern uint32_t *sw_flex_skin_patch_sites[2];
+extern uint32_t *sw_flex_skin_patch_sites[4];
 
 __asm__(
 	".data\n"
@@ -3019,6 +3030,7 @@ __asm__(
 	".globl _sw_flex_skin_patch_sites\n"
 	"_sw_flex_skin_patch_sites:\n"
 	".long .Lsw_flex_patch_width, .Lsw_flex_patch_pixels\n"
+	".long .Lsw_flex_affine_patch_width, .Lsw_flex_affine_patch_pixels\n"
 	".text\n");
 
 static void sw_flex_patch_skin(const sw_image_t *image)
@@ -3029,6 +3041,8 @@ static void sw_flex_patch_skin(const sw_image_t *image)
 		return;
 	*(volatile uint32_t *)sw_flex_skin_patch_sites[0] = (uint32_t)image->width;
 	*(volatile uint32_t *)sw_flex_skin_patch_sites[1] = (uint32_t)(uintptr_t)image->pixels;
+	*(volatile uint32_t *)sw_flex_skin_patch_sites[2] = (uint32_t)image->width;
+	*(volatile uint32_t *)sw_flex_skin_patch_sites[3] = (uint32_t)(uintptr_t)image->pixels;
 	patched_pixels = image->pixels;
 	patched_width = image->width;
 	__asm__ volatile("jmp 1f\n1:" ::: "memory");
@@ -3185,6 +3199,164 @@ static qboolean flex_mask_opaque(const flex_proj_cache_t *projected[3],
 	++sw_stats.flex_triangles;
 	++sw_stats.bench_flex_tris_mask;
 	return true;
+}
+
+static qboolean sw_flex_affine_enabled(void)
+{
+	static int enabled = -1;
+	if (enabled < 0)
+	{
+		const char *spec = getenv("H2DOS_SW_FLEX_AFFINE");
+		enabled = spec == NULL || atoi(spec) != 0;
+	}
+	return enabled != 0;
+}
+
+static void span_raster_flex_opaque_affine(const flex_opaque_vertex_t a,
+	const flex_opaque_vertex_t b, const flex_opaque_vertex_t c, const sw_image_t *image)
+{
+	if (!sw_flexlut_ready)
+		sw_flex_lut_init();
+	const float x10 = b.x - a.x, y10 = b.y - a.y;
+	const float x20 = c.x - a.x, y20 = c.y - a.y;
+	const float denom = x10 * y20 - x20 * y10;
+	if (!isfinite(denom) || fabsf(denom) < 0.0001f)
+		return;
+	const float inv = 1.0f / denom;
+	float gs_x, gs_y, gt_x, gt_y, gw_x, gw_y;
+	float gr_x, gr_y, gg_x, gg_y, gb_x, gb_y;
+#define SWA_GRAD(attr, ox, oy) do { \
+		const float p10 = b.attr - a.attr; \
+		const float p20 = c.attr - a.attr; \
+		ox = (p10 * y20 - p20 * y10) * inv; \
+		oy = (p20 * x10 - p10 * x20) * inv; \
+	} while (0)
+	SWA_GRAD(s, gs_x, gs_y);
+	SWA_GRAD(t, gt_x, gt_y);
+	SWA_GRAD(inverse_z, gw_x, gw_y);
+	SWA_GRAD(red, gr_x, gr_y);
+	SWA_GRAD(green, gg_x, gg_y);
+	SWA_GRAD(blue, gb_x, gb_y);
+#undef SWA_GRAD
+
+	const flex_opaque_vertex_t *verts[3] = { &a, &b, &c };
+	int top = 0, bottom = 0;
+	for (int i = 1; i < 3; ++i)
+	{
+		if (verts[i]->y < verts[top]->y) top = i;
+		if (verts[i]->y > verts[bottom]->y) bottom = i;
+	}
+	const int scan_first = ClampI((int)ceilf(verts[top]->y - 0.5f), 0, sw_height - 1);
+	const int scan_last = ClampI((int)ceilf(verts[bottom]->y - 0.5f) - 1, 0, sw_height - 1);
+	int left_prev = top, left_cur = top, right_prev = top, right_cur = top;
+	float left_x = 0.0f, right_x = 0.0f, left_slope = 0.0f, right_slope = 0.0f;
+	const int du = (int)(gs_x * 65536.0f);
+	const int dt = (int)(gt_x * 65536.0f);
+	const int dr = (int)(gr_x * 131072.0f);
+	const int dg = (int)(gg_x * 131072.0f);
+	const int db = (int)(gb_x * 131072.0f);
+	const int ikey_step = (int)(gw_x * SW_DEPTH_SCALE);
+	const qboolean has_key = !image->no_zero_texel;
+	for (int y = scan_first; y <= scan_last; ++y)
+	{
+		++sw_stats.bench_flex_spans;
+		const float y_center = y + 0.5f - a.y;
+		const int old_left_prev = left_prev, old_right_prev = right_prev;
+		while (left_cur != bottom && verts[left_cur]->y <= (y + 0.5f))
+		{
+			left_prev = left_cur;
+			left_cur = (left_cur + 1) % 3;
+		}
+		while (right_cur != bottom && verts[right_cur]->y <= (y + 0.5f))
+		{
+			right_prev = right_cur;
+			right_cur = (right_cur + 2) % 3;
+		}
+		const flex_opaque_vertex_t *lp0 = verts[left_prev], *lp1 = verts[left_cur];
+		const flex_opaque_vertex_t *rp0 = verts[right_prev], *rp1 = verts[right_cur];
+		if (left_prev != old_left_prev || y == scan_first)
+		{
+			left_slope = lp1->y > lp0->y ? (lp1->x - lp0->x) / (lp1->y - lp0->y) : 0.0f;
+			left_x = lp0->x + (lp1->y > lp0->y ? ((y + 0.5f) - lp0->y) * left_slope : 0.0f);
+		}
+		else
+			left_x += left_slope;
+		if (right_prev != old_right_prev || y == scan_first)
+		{
+			right_slope = rp1->y > rp0->y ? (rp1->x - rp0->x) / (rp1->y - rp0->y) : 0.0f;
+			right_x = rp0->x + (rp1->y > rp0->y ? ((y + 0.5f) - rp0->y) * right_slope : 0.0f);
+		}
+		else
+			right_x += right_slope;
+		const int xa = ClampI((int)ceilf(min(left_x, right_x) - 0.5f), 0, sw_width - 1);
+		const int xb = ClampI((int)ceilf(max(left_x, right_x) - 0.5f) - 1, 0, sw_width - 1);
+		if (xa > xb)
+			continue;
+		++sw_stats.bench_flex_blocks;
+		const float x_center = xa + 0.5f - a.x;
+		int iu = (int)((a.s + gs_x * x_center + gs_y * y_center) * 65536.0f);
+		int it = (int)((a.t + gt_x * x_center + gt_y * y_center) * 65536.0f);
+		int ir = (int)((a.red + gr_x * x_center + gr_y * y_center) * 131072.0f);
+		int ig = (int)((a.green + gg_x * x_center + gg_y * y_center) * 131072.0f);
+		int ib = (int)((a.blue + gb_x * x_center + gb_y * y_center) * 131072.0f);
+		uint32_t ikey = (uint32_t)((a.inverse_z + gw_x * x_center + gw_y * y_center) * SW_DEPTH_SCALE);
+		uint16_t *const fb_row = sw_color + (size_t)y * sw_width;
+		uint32_t *const zb_row = sw_depth + (size_t)y * sw_width;
+		const int count = xb - xa + 1;
+		const int iu_last = iu + (count - 1) * du;
+		const int it_last = it + (count - 1) * dt;
+		const qboolean st_in = min(iu, iu_last) >= 0 &&
+			max(iu, iu_last) <= ((image->width - 1) << 16) &&
+			min(it, it_last) >= 0 && max(it, it_last) <= ((image->height - 1) << 16);
+		for (int x = xa; x <= xb; ++x)
+		{
+			++sw_stats.bench_pixels_flex;
+			const size_t idx = (size_t)x;
+			if (ikey >= zb_row[idx])
+			{
+				uint16_t texel;
+				if (st_in)
+				{
+					uint32_t sample_u = (uint32_t)iu;
+					uint32_t sample_v = (uint32_t)it;
+					__asm__ volatile(
+						".intel_syntax noprefix\n"
+						"sar ecx, 16\n"
+						".byte 0x69, 0xc9\n"
+						".Lsw_flex_affine_patch_width: .long 0x12345678\n"
+						"sar eax, 16\n"
+						"add eax, ecx\n"
+						".byte 0x0f, 0xb7, 0x04, 0x45\n"
+						".Lsw_flex_affine_patch_pixels: .long 0x12345678\n"
+						".att_syntax prefix\n"
+						: "+a"(sample_u), "+c"(sample_v) : : "memory");
+					texel = (uint16_t)sample_u;
+				}
+				else
+				{
+					const int tx = ClampI(iu >> 16, 0, image->width - 1);
+					const int ty = ClampI(it >> 16, 0, image->height - 1);
+					texel = image->pixels[ty * image->width + tx];
+				}
+				if (!has_key || texel != 0)
+				{
+					const int cr = min(512, max(0, ir >> 9));
+					const int cg = min(512, max(0, ig >> 9));
+					const int cb = min(512, max(0, ib >> 9));
+					const uint16_t fpx = (uint16_t)((sw_flex5lut[cr][(texel >> 11) & 31] << 11) |
+						(sw_flex6lut[cg][(texel >> 5) & 63] << 5) | sw_flex5lut[cb][texel & 31]);
+					sw_stats.bench_mag_flex += fpx == 0xF81Fu;
+					fb_row[idx] = fpx;
+					zb_row[idx] = ikey;
+					++sw_stats.depth_writes;
+				}
+			}
+			iu += du; it += dt; ir += dr; ig += dg; ib += db; ikey += (uint32_t)ikey_step;
+		}
+	}
+	++sw_stats.triangles;
+	++sw_stats.flex_triangles;
+	++sw_stats.bench_flex_tris_affine;
 }
 
 static void span_raster_flex_opaque(const flex_screen_vertex_t a, const flex_screen_vertex_t b,
@@ -3925,40 +4097,57 @@ void SW_RasterFlexEntity(const entity_t *entity, const sw_model_t *model, const 
 					++sw_stats.bench_flex_tris_fast;
 				else if (cache_ok && skin != NULL && skin->pixels != NULL)
 				{
-					flex_screen_vertex_t corners[3];
-					for (int corner = 0; corner < 3; ++corner)
+					if (opaque_tri && !sw_clut_frame && sw_flex_affine_enabled())
 					{
-						const float w = projected[corner]->inverse_z;
-						corners[corner].x = projected[corner]->x;
-						corners[corner].y = projected[corner]->y;
-						corners[corner].inverse_z = w;
-						corners[corner].s_over_z = uv[corner][0] * (float)skin->width * w;
-						corners[corner].t_over_z = uv[corner][1] * (float)skin->height * w;
-						if (opaque_tri)
+						flex_opaque_vertex_t corners[3];
+						for (int corner = 0; corner < 3; ++corner)
 						{
-							// bit-identical: vcolor value == colors value (same product)
-							corners[corner].red_over_z = sw_flex_vcolor[vertex_indices[corner]][0] * w;
-							corners[corner].green_over_z = sw_flex_vcolor[vertex_indices[corner]][1] * w;
-							corners[corner].blue_over_z = sw_flex_vcolor[vertex_indices[corner]][2] * w;
-							corners[corner].alpha_over_z = 1.0f; // unused by the opaque path
-						// E4 (ideas #4): the CLUT gouraud scalar is filled ONLY when the
-						// CLUT branch is live; off-state flex corner cost stays zero.
-						if (sw_clut_frame)
-							corners[corner].intensity_over_z = ((entity->flags & RF_FULLBRIGHT) != 0 ? 1.0f : intensities[vertex_indices[corner]]) * w;
+							corners[corner].x = projected[corner]->x;
+							corners[corner].y = projected[corner]->y;
+							corners[corner].inverse_z = projected[corner]->inverse_z;
+							corners[corner].s = uv[corner][0] * (float)skin->width;
+							corners[corner].t = uv[corner][1] * (float)skin->height;
+							corners[corner].red = sw_flex_vcolor[vertex_indices[corner]][0];
+							corners[corner].green = sw_flex_vcolor[vertex_indices[corner]][1];
+							corners[corner].blue = sw_flex_vcolor[vertex_indices[corner]][2];
 						}
-						else
-						{
-							corners[corner].red_over_z = colors[corner][0] * w;
-							corners[corner].green_over_z = colors[corner][1] * w;
-							corners[corner].blue_over_z = colors[corner][2] * w;
-							corners[corner].alpha_over_z = colors[corner][3] * w;
-						}
+						span_raster_flex_opaque_affine(corners[0], corners[1], corners[2], skin);
 					}
-					if (opaque_tri)
-						span_raster_flex_opaque(corners[0], corners[1], corners[2], skin);
 					else
-						dispatch_flex_screen_triangle(corners[0], corners[1], corners[2], skin,
-							opaque_depth, additive);
+					{
+						flex_screen_vertex_t corners[3];
+						for (int corner = 0; corner < 3; ++corner)
+						{
+							const float w = projected[corner]->inverse_z;
+							corners[corner].x = projected[corner]->x;
+							corners[corner].y = projected[corner]->y;
+							corners[corner].inverse_z = w;
+							corners[corner].s_over_z = uv[corner][0] * (float)skin->width * w;
+							corners[corner].t_over_z = uv[corner][1] * (float)skin->height * w;
+							if (opaque_tri)
+							{
+								corners[corner].red_over_z = sw_flex_vcolor[vertex_indices[corner]][0] * w;
+								corners[corner].green_over_z = sw_flex_vcolor[vertex_indices[corner]][1] * w;
+								corners[corner].blue_over_z = sw_flex_vcolor[vertex_indices[corner]][2] * w;
+								corners[corner].alpha_over_z = 1.0f;
+								if (sw_clut_frame)
+									corners[corner].intensity_over_z = ((entity->flags & RF_FULLBRIGHT) != 0 ?
+										1.0f : intensities[vertex_indices[corner]]) * w;
+							}
+							else
+							{
+								corners[corner].red_over_z = colors[corner][0] * w;
+								corners[corner].green_over_z = colors[corner][1] * w;
+								corners[corner].blue_over_z = colors[corner][2] * w;
+								corners[corner].alpha_over_z = colors[corner][3] * w;
+							}
+						}
+						if (opaque_tri)
+							span_raster_flex_opaque(corners[0], corners[1], corners[2], skin);
+						else
+							dispatch_flex_screen_triangle(corners[0], corners[1], corners[2], skin,
+								opaque_depth, additive);
+					}
 					++sw_stats.bench_flex_tris_fast;
 				}
 				else

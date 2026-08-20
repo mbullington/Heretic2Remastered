@@ -7,30 +7,15 @@
    "cpi": 74,
    "trips": 886.65,
    "est_cycles": 65612.1,
-   "n_instr": 50,
-   "slice_id": "c18c2e1225fd0171",
+   "n_instr": 51,
+   "slice_id": "a4b40012625cb080",
    "stalls": {
     "fp-operand": 19.0,
     "store-early": 4.0
    },
    "bank_unknown": 0.0,
-   "mem_ops": 11.0,
-   "bytes_rw": 20.0
-  },
-  "flex_variant_b": {
-   "cpi": 68,
-   "trips": 458.7375,
-   "est_cycles": 31194.2,
-   "n_instr": 46,
-   "slice_id": "cd2e21b97ef155e7",
-   "stalls": {
-    "agi-in-pair": 1.0,
-    "fp-operand": 17.0,
-    "store-early": 3.0
-   },
-   "bank_unknown": 1.0,
-   "mem_ops": 11.0,
-   "bytes_rw": 26.0
+   "mem_ops": 10.0,
+   "bytes_rw": 16.0
   },
   "world_struct_clear": {
    "cpi": 2,
@@ -44,7 +29,9 @@
    "bytes_rw": 4.0
   }
  },
- "total_cycles": 97567.0,
- "est_us_pmmx233": 419.0,
- "problems": []
+ "total_cycles": 66373.0,
+ "est_us_pmmx233": 285.0,
+ "problems": [
+  "flex_variant_b: flex_variant_b: slice has inner control flow (v1 scope)"
+ ]
 }
