@@ -46,10 +46,11 @@ reprojecting a full-resolution world expensively.
   full-quality default, but it must be usable in ordinary play and exposed by a
   stable cvar/environment switch.
 
-The explicit performance-mode combat gate is selected only when the ordinary
-`H2DOS_SW_WORLD_HALF=1` setting is present; unaffected synthetic captures keep
-their historical exact/2% gates. This material gate wiring starts a new segment
-and requires a fresh full-quality baseline before any mode can be retained.
+The combat runner records `world-half=1` in its evidence only when the ordinary
+`H2DOS_SW_WORLD_HALF=1` setting is present; backpressure selects the performance
+combat gate from that persisted evidence. Unaffected synthetic captures keep
+their historical exact/2% gates. This corrected metadata wiring starts a new
+segment and requires a fresh full-quality baseline before any mode can be retained.
 
 The ruler separates realistic cases: normal corrected combat is 112.569 ms,
 while the established winding-cull A/B moves the same entity workload by about

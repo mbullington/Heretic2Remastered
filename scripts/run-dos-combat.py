@@ -107,6 +107,7 @@ def main() -> int:
         # span coverage sweeps a deterministic sequence.
         extra_blocks = ""
         extra_env = os.environ.get("H2DOS_BENCH_EXTRA_SET", "").strip()
+        world_half_mode = "H2DOS_SW_WORLD_HALF=1" in extra_env.split()
         if extra_env:
             for item in extra_env.split():
                 if "=" in item and all(c.isalnum() or c in "_=.,-" for c in item):
@@ -164,7 +165,7 @@ def main() -> int:
         evidence = ARTIFACT_DIR / "COMBAT-EVIDENCE.TXT"
         evidence.write_text(
             f"combat-map={COMBAT_MAP}\nframes={FRAME_LIMIT}\ncycles={CYCLES}\nsweep=1\n"
-            + "\n".join(bench_lines) + "\n", encoding="ascii")
+            f"world-half={int(world_half_mode)}\n" + "\n".join(bench_lines) + "\n", encoding="ascii")
         if (stage_path / "CLIENT.PPM").is_file():
             shutil.copyfile(stage_path / "CLIENT.PPM", ARTIFACT_DIR / "COMBAT-CLIENT.PPM")
         if (stage_path / "SWREAL.OUT").is_file():
