@@ -1,4 +1,54 @@
-# Autoresearch: 2x exact-output DOS combat renderer
+# Autoresearch: DOS combat renderer
+
+## Active Segment 16: default-quality entity architecture
+
+Source baseline is commit `9fcb0901`: exact flex rasterization plus the retained
+world and BlendRect wins. The user authorized deliberate flex-model pixel
+changes when they do not look bad, and requires an accepted fast path to be
+enabled by default rather than opt-in. World, effects, UI, gameplay, and model
+semantics remain unchanged.
+
+### Objective and Frozen Workload
+
+Reduce the frozen combat workload's complete entity pool from about 28.8 ms to
+14.4 ms (2x), with 9.6 ms as the 3x stretch target. The workload remains
+tutorial2 with planted gorgon + rat_giant, `angermonsters`, stationary player,
+7.5-degree camera orbit, and deterministic renderer-boundary effects.
+
+### Metric Contract
+
+- **Primary**: `entities_us` (microseconds/frame, lower is better).
+- **Secondary**: `frame_us`, `flex_prologue_us`, flex triangle/span/block/pixel
+  counters, world/blend/particles pools, and P55C static telemetry.
+- **Hard functional guards**: combat `status=PASS`; P55C/Pentium-MMX-compatible
+  instructions; no gameplay, workload, resolution, temporal, or benchmark
+  shortcuts; exact C fallback retained for clipped/translucent/unusual paths.
+- **Unaffected-output guard**: EFFECTS.PPM stays under the historical 0.06% of
+  pixels over 2 LSB.
+- **Flex quality guards**: RENDER, FLEXOLD, FLEXMID, FLEXNEW, FLEXSKEL, and the
+  frozen combat capture each stay at or below 2.0% whole-frame pixels over
+  2 LSB and at or above 32 dB RGB PSNR versus exact Segment-16 captures.
+  Accepted changes must also pass direct visual inspection for silhouette
+  holes, depth leaks, texture swimming/boiling, and objectionable lighting
+  banding. These numerical limits are rejection backstops, not substitutes for
+  visual inspection.
+- An accepted renderer is default-on. An environment/cvar escape hatch may
+  preserve the exact path for diagnosis, but is not the shipping default.
+
+The ruler separates realistic cases: the exact source reports about 28.8 ms
+entities / 20.4 ms flex, while the earlier RGB-affine flex experiment moved the
+entity metric by 12.1 ms and visibly changed 210 gate pixels. The six-image
+quality suite records that contrast while covering frame interpolation,
+skeletal deformation, general rendering, and the actual combat view. Harness,
+workload, captures, metrics, and quality limits freeze after the baseline.
+
+### Segment-16 Scope and Stop Conditions
+
+First census visible triangle max-edge and bounding-box classes, then compare
+two distinct tiny-triangle architectures: Quake-style recursive subdivision
+and precomputed microtriangle coverage masks. Stop after both are measured and
+visually compared, at `entities_us <= 14,400`, after both mechanisms fail the
+quality/performance contract, on user interruption, or at a tooling dead end.
 
 ## Segment 15: total-frame big swings
 
