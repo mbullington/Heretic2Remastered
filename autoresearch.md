@@ -9,9 +9,11 @@ reference; temporal ON is the candidate. Both runs use the same executable,
 clock, PAKs, frame sequence, and 32 paired PPM captures.
 
 Ruler sensitivity was established before baseline: full-render vs itself is
-0% error; the existing temporal path produces 1.516886% pixels/frame whose
-largest RGB channel error exceeds 8/255, with a 6.673178% worst frame and 13
-warped frames. This separates exact output from the reported artifact class.
+0% error; the true clean-tree temporal baseline produces 8.286621% pixels
+whose largest RGB channel error exceeds 8/255, with a 25.915365% worst frame
+and 13 warped frames. This strongly separates exact output from the reported
+artifact class. An earlier setup probe that read 1.52% accidentally included
+an uncommitted repair prototype and is not part of this segment.
 
 ## Metric Contract
 - **Primary**: `temporal_bad_pct` (%, lower is better) — fraction across all
@@ -22,7 +24,7 @@ warped frames. This separates exact output from the reported artifact class.
     buy quality;
   - candidate average frame cost must be no more than 125% of its matched
     full-render reference;
-  - `temporal_max_frame_bad_pct` must not exceed 7%;
+  - `temporal_max_frame_bad_pct` must not exceed the 26% baseline ceiling;
   - renderer proof/status/pixel gates in `autoresearch.checks.sh` must pass.
 - **Secondary tie-breakers**: `temporal_changed_pct`, `temporal_mae`,
   `temporal_p95`, candidate/reference frame and world times.

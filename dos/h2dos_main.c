@@ -883,7 +883,9 @@ static void log_bench_summary(void)
 		stats->bench_flex_area_hist[6], stats->bench_flex_unique_px);
 	log_append("bench-flex-nodes=%u\nbench-flex-nodes-culled=%u\n",
 		stats->bench_flex_nodes, stats->bench_flex_nodes_culled);
-	log_append("bench-temporal-warps=%u\n", stats->bench_temporal_warps);
+	log_append("bench-temporal-warps=%u\nbench-temporal-invalid-tiles=%u\nbench-temporal-repair-tiles=%u\n",
+		stats->bench_temporal_warps, stats->bench_temporal_invalid_tiles,
+		stats->bench_temporal_repair_tiles);
 }
 
 static void begin_audio_proof(const qboolean realdata)

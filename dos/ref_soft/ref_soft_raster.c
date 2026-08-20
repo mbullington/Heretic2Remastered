@@ -699,6 +699,25 @@ static void draw_face_spans(const screen_vertex_t *verts, const int n, const sw_
 				return;
 			}
 			const float w_end = w + gradient_w_x * block;
+			if (sw_scissor_active)
+			{
+				const int tile0 = x >> 3, tile1 = (x + block - 1) >> 3;
+				const uint64_t tiles = ((2ull << (tile1 - tile0)) - 1ull) << tile0;
+				if ((sw_scissor_row[y >> 3] & tiles) == 0)
+				{
+					uz += gradient_uz_x * block;
+					vz += gradient_vz_x * block;
+					if (!light_alias)
+					{
+						lsz += gradient_lsz_x * block;
+						ltz += gradient_ltz_x * block;
+					}
+					w = w_end;
+					x += block;
+					remaining -= block;
+					continue;
+				}
+			}
 			const float iz0 = 1.0f / w;
 			const float iz1 = 1.0f / max(w_end, 1e-20f);
 			const float u0 = uz * iz0;
@@ -847,7 +866,9 @@ static void draw_face_spans(const screen_vertex_t *verts, const int n, const sw_
 					const uint16_t lit = span_modulate(texel,
 						light_cache[(int)((unsigned)ilt >> 20) * light_stride + (int)((unsigned)ils >> 20)]);
 					const int sa = lit != 0 ? sa_base : 0;
-					if (sa != 0 && ikey >= zb_row[idx] && (!stripe_checker || ((x >> 1) & 1) == sw_scan_phase))
+					if (sa != 0 && ikey >= zb_row[idx] &&
+						(!sw_scissor_active || (sw_scissor_row[y >> 3] & (1ull << (x >> 3))) != 0) &&
+						(!stripe_checker || ((x >> 1) & 1) == sw_scan_phase))
 					{
 						const uint16_t dst = fb_row[idx];
 						const int dw = 255 - sa;
@@ -2813,6 +2834,15 @@ advance:
 static byte sw_flex5lut[513][32];
 static byte sw_flex6lut[513][64];
 static qboolean sw_flexlut_ready;
+static cvar_t *sw_cvar_affine_rgb;
+static qboolean sw_affine_rgb_frame = true;
+
+static void sw_update_affine_rgb(void)
+{
+	if (sw_cvar_affine_rgb == NULL)
+		sw_cvar_affine_rgb = sw_ri.Cvar_Get("r_swaffinergb", "1", 0);
+	sw_affine_rgb_frame = sw_cvar_affine_rgb == NULL || sw_cvar_affine_rgb->value != 0.0f;
+}
 
 // census C (ideas): unique painted-flex-px bitmap for overdraw ratio.
 // Cleared at each SW_RenderFrame; marked at flex paint; counted at frame end.
@@ -2864,6 +2894,7 @@ static void span_raster_flex_opaque(const flex_screen_vertex_t a, const flex_scr
 	if (!sw_flexlut_ready)
 		sw_flex_lut_init();
 	const qboolean clut = sw_clut_frame && image->src8 != NULL;
+	const qboolean affine_rgb = sw_affine_rgb_frame && !clut;
 	const float x10 = b.x - a.x, y10 = b.y - a.y;
 	const float x20 = c.x - a.x, y20 = c.y - a.y;
 	const float denom = x10 * y20 - x20 * y10;
@@ -2968,9 +2999,15 @@ static void span_raster_flex_opaque(const flex_screen_vertex_t a, const flex_scr
 			const float iz1 = 1.0f / max(w_end, 1e-20f);
 			const float u0 = uz * iz0, u1 = (uz + guz_x * block) * iz1;
 			const float v0b = vz * iz0, v1b = (vz + gvz_x * block) * iz1;
-			const float r0 = rz * iz0, r1 = (rz + (clut ? gi_x : gr_x) * block) * iz1;
-			const float g0 = gz * iz0, g1 = (gz + gg_x * block) * iz1;
-			const float b0c = bz * iz0, b1c = (bz + gb_x * block) * iz1;
+			const float rz_end = rz + (clut ? gi_x : gr_x) * block;
+			const float gz_end = gz + gg_x * block;
+			const float bz_end = bz + gb_x * block;
+			const float r0 = affine_rgb ? rz : rz * iz0;
+			const float r1 = affine_rgb ? rz_end : rz_end * iz1;
+			const float g0 = affine_rgb ? gz : gz * iz0;
+			const float g1 = affine_rgb ? gz_end : gz_end * iz1;
+			const float b0c = affine_rgb ? bz : bz * iz0;
+			const float b1c = affine_rgb ? bz_end : bz_end * iz1;
 			int iu = (int)(u0 * 65536.0f);
 			int it = (int)(v0b * 65536.0f);
 			int ir = (int)(r0 * 131072.0f);
@@ -3590,9 +3627,10 @@ void SW_RasterFlexEntity(const entity_t *entity, const sw_model_t *model, const 
 						if (opaque_tri)
 						{
 							// bit-identical: vcolor value == colors value (same product)
-							corners[corner].red_over_z = sw_flex_vcolor[vertex_indices[corner]][0] * w;
-							corners[corner].green_over_z = sw_flex_vcolor[vertex_indices[corner]][1] * w;
-							corners[corner].blue_over_z = sw_flex_vcolor[vertex_indices[corner]][2] * w;
+							const float color_scale = sw_affine_rgb_frame ? 1.0f : w;
+							corners[corner].red_over_z = sw_flex_vcolor[vertex_indices[corner]][0] * color_scale;
+							corners[corner].green_over_z = sw_flex_vcolor[vertex_indices[corner]][1] * color_scale;
+							corners[corner].blue_over_z = sw_flex_vcolor[vertex_indices[corner]][2] * color_scale;
 							corners[corner].alpha_over_z = 1.0f; // unused by the opaque path
 						// E4 (ideas #4): the CLUT gouraud scalar is filled ONLY when the
 						// CLUT branch is live; off-state flex corner cost stays zero.
@@ -4382,6 +4420,51 @@ static void sw_temporal_snapshot(const refdef_t *fd)
 // span conventions. This path is rotation-only: translation is rejected by
 // the scheduler because a backward map then becomes depth-dependent.
 #define SW_WARP_BLOCK 8
+
+static unsigned sw_tile_popcount(uint64_t bits)
+{
+	unsigned count = 0;
+	while (bits != 0) { bits &= bits - 1; ++count; }
+	return count;
+}
+
+static void sw_temporal_prepare_repair_tiles(void)
+{
+	const int rows = min(SW_SCISSOR_TILES_Y, (sw_height + 7) >> 3);
+	const int columns = min(64, (sw_width + 7) >> 3);
+	const uint64_t valid = columns == 64 ? UINT64_MAX : ((1ull << columns) - 1ull);
+	uint64_t horizontal[SW_SCISSOR_TILES_Y];
+	unsigned invalid = 0, repair = 0;
+	for (int row = 0; row < rows; ++row)
+	{
+		const uint64_t holes = sw_scissor_row[row] & valid;
+		invalid += sw_tile_popcount(holes);
+		horizontal[row] = (holes | (holes << 1) | (holes >> 1)) & valid;
+	}
+	for (int row = 0; row < rows; ++row)
+	{
+		uint64_t tiles = horizontal[row];
+		if (row > 0) tiles |= horizontal[row - 1];
+		if (row + 1 < rows) tiles |= horizontal[row + 1];
+		sw_scissor_row[row] = tiles;
+		repair += sw_tile_popcount(tiles);
+		for (int tile = 0; tile < columns; ++tile)
+		{
+			if ((tiles & (1ull << tile)) == 0) continue;
+			const int x0 = tile << 3, x1 = min(x0 + 8, sw_width);
+			const int y0 = row << 3, y1 = min(y0 + 8, sw_height);
+			for (int y = y0; y < y1; ++y)
+			{
+				memset(sw_color + (size_t)y * sw_width + x0, 0, (size_t)(x1 - x0) * sizeof(*sw_color));
+				memset(sw_depth + (size_t)y * sw_width + x0, 0, (size_t)(x1 - x0) * sizeof(*sw_depth));
+			}
+		}
+	}
+	sw_scissor_active = repair != 0;
+	sw_stats.bench_temporal_invalid_tiles += invalid;
+	sw_stats.bench_temporal_repair_tiles += repair;
+}
+
 static void sw_temporal_warp(const refdef_t *fd)
 {
 	memset(sw_depth, 0, (size_t)sw_width * (size_t)sw_height * sizeof(*sw_depth));
@@ -4432,22 +4515,13 @@ static void sw_temporal_warp(const refdef_t *fd)
 				dsx = esx; dsy = esy; dsz = esz;
 				continue;
 			}
-			const float iz0 = 1.0f / dsz;
-			const float iz1 = 1.0f / esz;
-			const float su0 = cx_s + dsx * iz0 * px_s;
-			const float sv0 = cy_s - dsy * iz0 * py_s;
-			const float su1 = cx_s + esx * iz1 * px_s;
-			const float sv1 = cy_s - esy * iz1 * py_s;
-			int iu = (int)(su0 * 65536.0f);
-			int iv = (int)(sv0 * 65536.0f);
-			const int du = (int)((su1 - su0) * 65536.0f * SW_INV_WIDTH(block));
-			const int dv = (int)((sv1 - sv0) * 65536.0f * SW_INV_WIDTH(block));
 			qboolean block_holes = false;
-			float qz = dsz;
-			for (int i = 0; i < block; ++i, ++x, iu += du, iv += dv, qz += stz)
+			float qsx = dsx, qsy = dsy, qz = dsz;
+			for (int i = 0; i < block; ++i, ++x, qsx += stx, qsy += sty, qz += stz)
 			{
-				const int sx = iu >> 16;
-				const int sy = iv >> 16;
+				const float inv_z = 1.0f / qz;
+				const int sx = (int)((cx_s + qsx * inv_z * px_s) * 65536.0f) >> 16;
+				const int sy = (int)((cy_s - qsy * inv_z * py_s) * 65536.0f) >> 16;
 				if (sx < sw_snap_x || sx >= sw_snap_x + sw_snap_width ||
 					sy < sw_snap_y || sy >= sw_snap_y + sw_snap_height)
 				{
@@ -4476,6 +4550,7 @@ static void sw_temporal_warp(const refdef_t *fd)
 			dsx = esx; dsy = esy; dsz = esz;
 		}
 	}
+	sw_temporal_prepare_repair_tiles();
 }
 
 // Deterministic combat-fx load for the T3 holdout (H2DOS_SW_FXLOAD=1): the
@@ -4549,6 +4624,7 @@ int SW_RenderFrame(const refdef_t *fd)
 		fd = &fx_fd;
 	}
 	sw_clut_frame = sw_clut_enabled();
+	sw_update_affine_rgb();
 	// Diagnostic camera tour (H2DOS_SW_TOUR=radius[,zoff]): move the refdef
 	// vieworg on a deterministic circle around the first-rendered position so
 	// parallax, near-plane crossings and PVS transitions actually exercise the
