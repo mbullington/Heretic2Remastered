@@ -1,6 +1,54 @@
 # Autoresearch: DOS combat renderer
 
-## Active Segment 16: default-quality entity architecture
+## Active Segment 17: stable-key generated/patched kernels
+
+Source baseline is commit `4b677d7b`: default cached 5x5 flex masks plus the
+retained world and BlendRect wins. The frozen combat frame is 115.971 ms, with
+world 70.245 ms and entities 28.471 ms.
+
+### Objective and Frozen Workload
+
+Implement and measure, in order, (1) a world paint kernel specialized for
+stable material constants, then (2) a whole-flex kernel specialized for stable
+skin constants. The workload remains the Segment-16 tutorial2 combat sweep:
+planted gorgon + rat_giant, `angermonsters`, stationary player, deterministic
+effects, and a fresh 7.5-degree camera orbit every measured frame.
+
+### Metric Contract
+
+- **Primary**: `frame_us` (microseconds/frame, lower is better).
+- **Secondary decision metrics**: `world_us` for the material kernel,
+  `entities_us` and flex telemetry for the skin kernel, plus all existing pool
+  and P55C static metrics.
+- **Hard functional guards**: combat `status=PASS`; P55C/Pentium-MMX-compatible
+  instructions only; no gameplay, workload, resolution, temporal, or benchmark
+  shortcuts; exact/debug and clipped/translucent/unusual fallbacks remain.
+- **Output guards**: preserve the Segment-16 EFFECTS exact budget and its
+  RENDER/FLEXOLD/FLEXMID/FLEXNEW/FLEXSKEL/COMBAT quality limits. World material
+  specialization must be pixel/depth exact. Flex specialization may retain the
+  already accepted default 5x5 mask behavior but may not widen its quality
+  budget.
+- **Code generation guard**: patch only stable material/skin addresses and
+  dimensions, never per-span interpolation, framebuffer positions, light-cell
+  rows, or workload-derived values. Generated or patched code must use a fixed
+  documented ABI and deterministic patch-site table.
+
+The ruler separates realistic cases: the retained world assembly previously
+moved world 92.0 -> 70.2 ms, while the flex path remains about 20 ms of the
+28.5 ms entity pool. The Segment-16 census proves amortization (2,630 world
+pixels/material key and 238 flex source triangles/skin key). The PMCA baseline
+is rebased to `4b677d7b` because the retained alternate flex path changed an old
+snippet that does not model its eliminated work. Harness, workload, captures,
+metrics, and gates freeze after the new baseline.
+
+### Stop Conditions
+
+Run the world material mechanism through full DOSBox and quality checks before
+starting flex. Then run the whole-flex per-skin mechanism. Stop after both are
+kept or rejected, after two implementation-level failures of one mechanism,
+on user interruption, or at a tooling/measurement dead end.
+
+## Segment 16: default-quality entity architecture
 
 Source baseline is commit `9fcb0901`: exact flex rasterization plus the retained
 world and BlendRect wins. The user authorized deliberate flex-model pixel
