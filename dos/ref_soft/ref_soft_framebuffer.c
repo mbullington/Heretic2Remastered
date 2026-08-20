@@ -16,7 +16,7 @@ qboolean sw_blend_pending;
 static bool sw_color_owns;
 static byte *sw_present_lut;
 static uint16_t sw_blend_rgmap[2048];
-#define SW_BLEND_LUT_SLOTS 16
+#define SW_BLEND_LUT_SLOTS 64
 typedef struct sw_blend_lut_slot_s {
 	uint32_t key;
 	unsigned stamp;
