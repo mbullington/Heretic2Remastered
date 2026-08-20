@@ -519,7 +519,21 @@ void SW_BlendRect(const int x, const int y, const int w, const int h, const uint
 		for (int row = start_y; row < end_y; ++row)
 		{
 			uint16_t *const dst = sw_color + (size_t)(y + row) * (size_t)sw_width + x;
-			for (int column = start_x; column < end_x; ++column)
+			int column = start_x;
+			for (; column + 4 <= end_x; column += 4)
+			{
+				const uint16_t out0 = transfer[dst[column]];
+				const uint16_t out1 = transfer[dst[column + 1]];
+				const uint16_t out2 = transfer[dst[column + 2]];
+				const uint16_t out3 = transfer[dst[column + 3]];
+				dst[column] = out0;
+				dst[column + 1] = out1;
+				dst[column + 2] = out2;
+				dst[column + 3] = out3;
+				mag += (out0 == 0xF81Fu) + (out1 == 0xF81Fu) +
+					(out2 == 0xF81Fu) + (out3 == 0xF81Fu);
+			}
+			for (; column < end_x; ++column)
 			{
 				const uint16_t out = transfer[dst[column]];
 				dst[column] = out;
