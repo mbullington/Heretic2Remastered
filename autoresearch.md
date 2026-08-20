@@ -1,64 +1,59 @@
 # Autoresearch: DOS combat renderer
 
-## Active Segment 25: full-resolution temporal architecture
+## Active Segment 26: exact RGB565 transfer architecture
 
-Commit `3a4bd08c` is the corrected-Corvus full-quality baseline: 112.569 ms per
-frozen combat frame, including 69.663 ms world, 25.651 ms entities, 12.494 ms
-blend, and 3.480 ms particles. The rejected half-resolution world and its
-mode-specific gate are removed before this segment's baseline.
+Commit `d83f7c5b` is the full-resolution source with temporal scheduler evidence.
+The frozen combat frame remains about 112.57 ms, including 69.66 ms world,
+25.65 ms entities, 12.494 ms blend, and 3.480 ms particles.
+
+Segment 25 exhausted temporal reuse for this workload. The translated camera
+orbit rejected the rotation-only mapper on all 143 eligible frames, reaching
+120.372 degrees aggregate angle delta and 21,401.7 units squared origin delta.
+A per-pixel translated depth splat regressed to 147.076 ms and failed EFFECTS at
+35.97%/16.68 dB; an 8-pixel connected segment splat still regressed to 132.547
+ms and failed at 31.20%/17.20 dB. Fresh rendering already touches only about
+85,313 world samples per frame, so full-resolution reprojection has no remaining
+work advantage on a P55C. Temporal stays diagnostic; do not weaken image quality
+or spatial resolution to force reuse.
 
 ### Objective and frozen workload
 
-Reach `frame_us <= 66,667` (15 fps), with a 50,000 us stretch target, while
-retaining a genuine 320x240 RGB565 world. Keep the corrected-Corvus tutorial2
-combat sweep, deterministic effects, 7.5-degree camera orbit, model count, and
-all gameplay fixed. Do not reduce spatial resolution, interleave pixels, use
-mesh LOD, skip simulation, or lower entity/effect/HUD cadence.
-
-The existing rotation-only temporal path establishes the root problem: on a
-clean 1-degree ruler, reuse measured 146.938 ms versus 131.249 ms for a real
-render. Although its comments describe endpoint interpolation, the kernel still
-executes a floating reciprocal for every destination pixel and then invokes a
-world repair traversal. A viable design must remove both costs rather than tune
-the surrounding scheduler.
+Continue toward `frame_us <= 66,667` (15 fps), with a 50,000 us stretch target,
+by eliminating exact full-frame post-processing work before returning to larger
+world/entity representations. Keep the corrected-Corvus tutorial2 combat sweep,
+deterministic effects, 7.5-degree translated camera orbit, model count, 320x240
+RGB565 output, and all gameplay fixed.
 
 ### Metric contract
 
 - **Primary**: frozen combat `frame_us`, lower is better.
-- **Target-pool metrics**: `world_us`, `sky_us`, `entities_us`, `blend_us`,
-  `particles_us`, clear/present cost, temporal warp count, world pixels, and
-  P55C static telemetry.
+- **First target**: reduce `blend_us` from 12,494 us to at most 4,000 us without
+  increasing another pool enough to erase the gain.
+- **Secondary metrics**: world, entities, particles, clear/present, exact blend
+  cache hits/misses/builds, and P55C static telemetry.
 - **Hard functional guards**: combat `status=PASS`; P55C-compatible code; no
-  gameplay, workload, camera, model-count, benchmark, spatial-resolution,
-  simulation, rendering-cadence, or entity-cadence shortcuts.
-- **Output guards**: retain the existing EFFECTS exact budget and the 2%/32 dB
-  RENDER, flex, and COMBAT gates. Full-resolution depth must continue to occlude
-  native entities and effects correctly.
-- **Motion guards**: inspect accepted temporal output for disocclusion holes,
-  edge doubling, stale animated/flowing surfaces, one-frame flashes, and texture
-  crawl. A still-frame PSNR pass is necessary but not sufficient.
-- **Mode policy**: temporal reuse may remain an explicit ordinary renderer mode
-  until motion inspection proves it safe as a default. The diagnostic exact
-  fallback must remain available.
+  gameplay, workload, camera, model-count, benchmark, resolution, simulation,
+  or rendering-cadence shortcuts.
+- **Output guards**: blend transfer must be bit-exact. Retain the historical
+  EFFECTS budget and every 2%/32 dB RENDER, flex, and COMBAT gate.
+- **Cache guard**: keys derive only from the ordinary RGB565 source color and
+  8-bit alpha. Allocation failure falls back to the existing exact channel-map
+  loop. Cache replacement is deterministic and bounded.
 
-The ruler separates realistic cases: the normal frozen combat frame is
-112.569 ms; the same renderer's clean temporal ruler is 15.689 ms slower on a
-reuse frame. The combat sweep's 7.5-degree steps currently force real rendering,
-so an accepted kernel must both handle that motion and report nonzero temporal
-warps. Harness, workload, metrics, and gates freeze after the new baseline.
+The ruler separates the target directly: the frozen deterministic full-screen
+damage overlay spends 12.494 ms per frame in `SW_BlendRect`, while zero-alpha
+and opaque paths bypass the blend arithmetic. Harness, workload, and gates
+freeze after the new baseline.
 
 ### Planned mechanisms and stop conditions
 
-First remove the rejected spatial-scaling code and establish a fresh baseline.
-Then compare three distinct full-resolution mechanisms: (1) block-endpoint
-projective mapping with fixed-point interior steps and no per-pixel reciprocal,
-(2) repair driven by explicit dynamic-surface ownership plus bounded edge-hole
-tiles instead of a broad second world traversal, and (3) source-forward depth
-splatting if backward repair remains dominant. Independently attack the stable
-12.494 ms blend transfer function only after temporal world reuse is genuinely
-faster. Stop at 66,667 us, after all three temporal architectures fail, after
-three consecutive mechanism-level rejects, on user interruption, or at a
-tooling dead end.
+Compare (1) a bounded cache of complete 65,536-entry transfer functions keyed by
+color+alpha, (2) a smaller byte-decomposed or page-local exact transfer if full
+LUT cache locality loses, and (3) a corrected assembly/MMX lane only if table
+architectures cannot reach 4 ms. Never revive the previously corrupt intrinsic
+MMX path without a startup oracle and end-to-end captures. Stop at 4,000 us
+blend, after all three mechanisms fail, after three consecutive mechanism-level
+rejects, on user interruption, or at a tooling dead end.
 
 ## Segment 20: retail player frame-order correctness
 
