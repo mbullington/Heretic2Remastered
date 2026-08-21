@@ -408,6 +408,68 @@ static qboolean sw_world_ftb_mask_active;
 static qboolean sw_brush_span_active;
 static qboolean project_point(const vec3_t point, int *x, int *y, float *depth);
 
+#define SW_WORLD_SHADE_SLOTS 4096
+typedef struct sw_world_shade_slot_s {
+	const sw_image_t *image;
+	uint32_t light;
+	uint16_t row[256];
+} sw_world_shade_slot_t;
+
+static sw_world_shade_slot_t sw_world_shade_cache[SW_WORLD_SHADE_SLOTS];
+static uint16_t sw_world_shade_scratch[256];
+static const sw_image_t *sw_world_shade_image;
+
+static void sw_world_build_shade_row(uint16_t row[256], const sw_image_t *image, const uint32_t light)
+{
+	if (!sw_shade_ready)
+		sw_shade_init();
+	const byte *const mul5r = sw_mul5shade[(light >> 20) & 1023u];
+	const byte *const mul6g = sw_mul6shade[(light >> 10) & 1023u];
+	const byte *const mul5b = sw_mul5shade[light & 1023u];
+	for (int i = 0; i < 256; ++i)
+	{
+		const uint16_t texel = image->pal565[i];
+		row[i] = (uint16_t)((mul5r[(texel >> 11) & 31u] << 11) |
+			(mul6g[(texel >> 5) & 63u] << 5) | mul5b[texel & 31u]);
+	}
+}
+
+const uint16_t *sw_world_shade_row(const uint32_t light)
+{
+	unsigned slot = (unsigned)(((uintptr_t)sw_world_shade_image >> 4) ^
+		((uintptr_t)sw_world_shade_image >> 13) ^ light ^ (light >> 16)) & (SW_WORLD_SHADE_SLOTS - 1);
+	for (unsigned probe = 0; probe < SW_WORLD_SHADE_SLOTS; ++probe)
+	{
+		sw_world_shade_slot_t *const entry = &sw_world_shade_cache[slot];
+		if (entry->image == sw_world_shade_image && entry->light == light)
+		{
+			++sw_stats.bench_world_shade_hits;
+			return entry->row;
+		}
+		if (entry->image == NULL)
+		{
+			entry->image = sw_world_shade_image;
+			entry->light = light;
+			sw_world_build_shade_row(entry->row, sw_world_shade_image, light);
+			++sw_stats.bench_world_shade_misses;
+			++sw_stats.bench_world_shade_builds;
+			return entry->row;
+		}
+		slot = (slot + 1) & (SW_WORLD_SHADE_SLOTS - 1);
+	}
+	++sw_stats.bench_world_shade_misses;
+	++sw_stats.bench_world_shade_builds;
+	++sw_stats.bench_world_shade_overflow;
+	sw_world_build_shade_row(sw_world_shade_scratch, sw_world_shade_image, light);
+	return sw_world_shade_scratch;
+}
+
+void SW_WorldShadeCacheReset(void)
+{
+	memset(sw_world_shade_cache, 0, sizeof(sw_world_shade_cache));
+	sw_world_shade_image = NULL;
+}
+
 static int sw_tag_face_paint_count;
 static int sw_tag_face_paint_last;
 
@@ -447,8 +509,9 @@ typedef char sw_world_paint_ctx_key_check[offsetof(sw_world_paint_ctx_t, ikey) =
 
 static sw_world_paint_ctx_t sw_world_paint_ctx;
 extern void sw_world_paint_run_pmmx(void);
+extern void sw_world_paint_m8_run_pmmx(void);
 extern void sw_world_paint_zrun_pmmx(void);
-extern uint32_t *sw_world_patch_sites[4];
+extern uint32_t *sw_world_patch_sites[8];
 
 __asm__(
 	".intel_syntax noprefix\n"
@@ -548,6 +611,73 @@ __asm__(
 	"jnz _sw_world_kernel_px_prefix\n"
 	".globl _sw_world_kernel_end\n"
 	"_sw_world_kernel_end:\n"
+	"mov DWORD PTR [_sw_world_paint_ctx+88], ebp\n"
+	"pop edi\n"
+	"pop esi\n"
+	"pop ebx\n"
+	"pop ebp\n"
+	"ret\n"
+	".align 16\n"
+	".globl _sw_world_paint_m8_run_pmmx\n"
+	"_sw_world_paint_m8_run_pmmx:\n"
+	"push ebp\n"
+	"push ebx\n"
+	"push esi\n"
+	"push edi\n"
+	"mov edi, DWORD PTR [_sw_world_paint_ctx+0]\n"
+	"mov esi, DWORD PTR [_sw_world_paint_ctx+4]\n"
+	"mov ebp, DWORD PTR [_sw_world_paint_ctx+88]\n"
+	"_sw_world_m8kernel_px_prefix:\n"
+	"mov eax, DWORD PTR [_sw_world_paint_ctx+60]\n"
+	"sar eax, 16\n"
+	".byte 0x25\n"
+	".Lsw_m8_patch_mask_h: .long 0x12345678\n"
+	".byte 0x69, 0xc0\n"
+	".Lsw_m8_patch_width: .long 0x12345678\n"
+	"mov ecx, DWORD PTR [_sw_world_paint_ctx+56]\n"
+	"sar ecx, 16\n"
+	".byte 0x81, 0xe1\n"
+	".Lsw_m8_patch_mask_w: .long 0x12345678\n"
+	"add eax, ecx\n"
+	".byte 0x0f, 0xb6, 0x1c, 0x05\n"
+	".Lsw_m8_patch_pixels: .long 0x12345678\n"
+	"mov eax, DWORD PTR [_sw_world_paint_ctx+68]\n"
+	"shr eax, 20\n"
+	"imul eax, DWORD PTR [_sw_world_paint_ctx+48]\n"
+	"mov ecx, DWORD PTR [_sw_world_paint_ctx+64]\n"
+	"shr ecx, 20\n"
+	"add eax, ecx\n"
+	"cmp eax, DWORD PTR [_sw_world_paint_ctx+96]\n"
+	"je _sw_world_m8kernel_shade_store\n"
+	"mov DWORD PTR [_sw_world_paint_ctx+96], eax\n"
+	"mov edx, DWORD PTR [_sw_world_paint_ctx+12]\n"
+	"mov edx, DWORD PTR [edx+eax*4]\n"
+	"push edx\n"
+	"call _sw_world_shade_row\n"
+	"add esp, 4\n"
+	"mov DWORD PTR [_sw_world_paint_ctx+24], eax\n"
+	"_sw_world_m8kernel_shade_store:\n"
+	"mov edx, DWORD PTR [_sw_world_paint_ctx+24]\n"
+	"movzx eax, WORD PTR [edx+ebx*2]\n"
+	"xor edx, edx\n"
+	"cmp ax, 0xf81f\n"
+	"sete dl\n"
+	"add DWORD PTR [_sw_world_paint_ctx+100], edx\n"
+	"mov WORD PTR [edi], ax\n"
+	"mov DWORD PTR [esi], ebp\n"
+	"mov eax, DWORD PTR [_sw_world_paint_ctx+72]\n"
+	"add DWORD PTR [_sw_world_paint_ctx+56], eax\n"
+	"mov eax, DWORD PTR [_sw_world_paint_ctx+76]\n"
+	"add DWORD PTR [_sw_world_paint_ctx+60], eax\n"
+	"mov eax, DWORD PTR [_sw_world_paint_ctx+80]\n"
+	"add DWORD PTR [_sw_world_paint_ctx+64], eax\n"
+	"mov eax, DWORD PTR [_sw_world_paint_ctx+84]\n"
+	"add DWORD PTR [_sw_world_paint_ctx+68], eax\n"
+	"add ebp, DWORD PTR [_sw_world_paint_ctx+92]\n"
+	"add edi, 2\n"
+	"add esi, 4\n"
+	"dec DWORD PTR [_sw_world_paint_ctx+52]\n"
+	"jnz _sw_world_m8kernel_px_prefix\n"
 	"mov DWORD PTR [_sw_world_paint_ctx+88], ebp\n"
 	"pop edi\n"
 	"pop esi\n"
@@ -655,22 +785,29 @@ __asm__(
 	".globl _sw_world_patch_sites\n"
 	"_sw_world_patch_sites:\n"
 	".long .Lsw_patch_mask_h, .Lsw_patch_width, .Lsw_patch_mask_w, .Lsw_patch_pixels\n"
+	".long .Lsw_m8_patch_mask_h, .Lsw_m8_patch_width, .Lsw_m8_patch_mask_w, .Lsw_m8_patch_pixels\n"
 	".text\n"
 	".att_syntax prefix\n");
 
-static void sw_world_patch_material(const uint16_t *pixels, const int width,
-	const int mask_w, const int mask_h)
+static void sw_world_patch_material(const uint16_t *pixels, const byte *src8,
+	const int width, const int mask_w, const int mask_h)
 {
 	static const uint16_t *patched_pixels;
+	static const byte *patched_src8;
 	static int patched_width, patched_mask_w, patched_mask_h;
-	if (patched_pixels == pixels && patched_width == width &&
+	if (patched_pixels == pixels && patched_src8 == src8 && patched_width == width &&
 		patched_mask_w == mask_w && patched_mask_h == mask_h)
 		return;
 	*(volatile uint32_t *)sw_world_patch_sites[0] = (uint32_t)mask_h;
 	*(volatile uint32_t *)sw_world_patch_sites[1] = (uint32_t)width;
 	*(volatile uint32_t *)sw_world_patch_sites[2] = (uint32_t)mask_w;
 	*(volatile uint32_t *)sw_world_patch_sites[3] = (uint32_t)(uintptr_t)pixels;
+	*(volatile uint32_t *)sw_world_patch_sites[4] = (uint32_t)mask_h;
+	*(volatile uint32_t *)sw_world_patch_sites[5] = (uint32_t)width;
+	*(volatile uint32_t *)sw_world_patch_sites[6] = (uint32_t)mask_w;
+	*(volatile uint32_t *)sw_world_patch_sites[7] = (uint32_t)(uintptr_t)src8;
 	patched_pixels = pixels;
+	patched_src8 = src8;
 	patched_width = width;
 	patched_mask_w = mask_w;
 	patched_mask_h = mask_h;
@@ -863,7 +1000,7 @@ static void draw_face_spans(const screen_vertex_t *verts, const int n, const sw_
 	const int mask_w = image->width - 1;
 	const int mask_h = image->height - 1;
 	if (sw_world_ftb_mask_active && twist_pow2 && theight_pow2)
-		sw_world_patch_material(image->pixels, image->width, mask_w, mask_h);
+		sw_world_patch_material(image->pixels, image->src8, image->width, mask_w, mask_h);
 
 	// Scan conversion of the convex polygon (verts are ordered around the perimeter).
 	int top = 0;
@@ -1014,6 +1151,8 @@ static void draw_face_spans(const screen_vertex_t *verts, const int n, const sw_
 				uint32_t *const cw = sw_covermask[y];
 				unsigned depth_writes = 0;
 				int light_prev_idx = -1;
+				int m8_light_prev_idx = -1;
+				const uint16_t *shade_row = NULL;
 				unsigned light_prev = 0;
 				unsigned light_r = 256u, light_g = 256u, light_b = 256u;
 				if (!sw_shade_ready)
@@ -1041,20 +1180,37 @@ static void draw_face_spans(const screen_vertex_t *verts, const int n, const sw_
 					if (covered == 0 && !stripe_checker && !alpha_test &&
 						(sw_dbg_tag_y != y || sw_dbg_tag_x < x || sw_dbg_tag_x >= x + run))
 					{
-						sw_world_paint_ctx = (sw_world_paint_ctx_t){
-							fb_row + x, zb_row + x, image->pixels, light_cache,
-							&sw_mul5shade[0][0], &sw_mul6shade[0][0], mul5r, mul6g, mul5b,
-							image->width, mask_w, mask_h, light_stride, run,
-							iu, it, ils, ilt, iu_step, it_step, ils_step, ilt_step,
-							ikey, ikey_step, light_prev_idx, 0
-						};
-						sw_world_paint_run_pmmx();
+						if (image->src8 != NULL)
+						{
+							sw_world_shade_image = image;
+							sw_world_paint_ctx = (sw_world_paint_ctx_t){
+								fb_row + x, zb_row + x, (const uint16_t *)image->src8, light_cache,
+								&sw_mul5shade[0][0], &sw_mul6shade[0][0], (const byte *)shade_row, mul6g, mul5b,
+								image->width, mask_w, mask_h, light_stride, run,
+								iu, it, ils, ilt, iu_step, it_step, ils_step, ilt_step,
+								ikey, ikey_step, m8_light_prev_idx, 0
+							};
+							sw_world_paint_m8_run_pmmx();
+							m8_light_prev_idx = sw_world_paint_ctx.light_prev_idx;
+							shade_row = (const uint16_t *)sw_world_paint_ctx.mul5r;
+						}
+						else
+						{
+							sw_world_paint_ctx = (sw_world_paint_ctx_t){
+								fb_row + x, zb_row + x, image->pixels, light_cache,
+								&sw_mul5shade[0][0], &sw_mul6shade[0][0], mul5r, mul6g, mul5b,
+								image->width, mask_w, mask_h, light_stride, run,
+								iu, it, ils, ilt, iu_step, it_step, ils_step, ilt_step,
+								ikey, ikey_step, light_prev_idx, 0
+							};
+							sw_world_paint_run_pmmx();
+							light_prev_idx = sw_world_paint_ctx.light_prev_idx;
+							mul5r = sw_world_paint_ctx.mul5r; mul6g = sw_world_paint_ctx.mul6g;
+							mul5b = sw_world_paint_ctx.mul5b;
+						}
 						iu = sw_world_paint_ctx.iu; it = sw_world_paint_ctx.it;
 						ils = sw_world_paint_ctx.ils; ilt = sw_world_paint_ctx.ilt;
 						ikey = sw_world_paint_ctx.ikey;
-						light_prev_idx = sw_world_paint_ctx.light_prev_idx;
-						mul5r = sw_world_paint_ctx.mul5r; mul6g = sw_world_paint_ctx.mul6g;
-						mul5b = sw_world_paint_ctx.mul5b;
 						sw_stats.bench_mag_world += sw_world_paint_ctx.mag;
 						sw_tag_face_paint_last = face_index;
 						sw_tag_face_paint_count += run;

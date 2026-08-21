@@ -144,17 +144,12 @@ static sw_image_t *load_m8(const char *name, const sw_image_kind_t kind)
 			has_zero |= image->pixels[i] == 0;
 		}
 		image->no_zero_texel = !has_zero;
-		// E4 (ideas #4): retain the index8 source + packed palette row for
-		// skin images so the intensity-shade CLUT can be built per entity.
-		if (kind == SW_IMAGE_SKIN)
-		{
-			image->src8 = malloc((size_t)width * (size_t)height);
-			if (image->src8 != NULL)
-				memcpy(image->src8, indices, (size_t)width * (size_t)height);
-			for (int i = 0; i < 256; ++i)
-				image->pal565[i] = (i == 255) ? 0 : sw_pack_texel(mip->palette[i].r,
-					mip->palette[i].g, mip->palette[i].b, 255);
-		}
+		image->src8 = malloc((size_t)width * (size_t)height);
+		if (image->src8 != NULL)
+			memcpy(image->src8, indices, (size_t)width * (size_t)height);
+		for (int i = 0; i < 256; ++i)
+			image->pal565[i] = ((kind == SW_IMAGE_SPRITE || kind == SW_IMAGE_SKIN) && i == 255)
+				? 0 : sw_pack_texel(mip->palette[i].r, mip->palette[i].g, mip->palette[i].b, 255);
 		++sw_stats.m8_images;
 		audit_image(image);
 	}
@@ -252,6 +247,7 @@ void SW_ImageInit(void)
 
 void SW_ImageShutdown(void)
 {
+	SW_WorldShadeCacheReset();
 	for (int i = 0; i < 2; ++i)
 	{
 		if (sw_fonts[i] != NULL)

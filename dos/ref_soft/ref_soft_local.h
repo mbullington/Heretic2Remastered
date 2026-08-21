@@ -45,9 +45,8 @@ typedef struct image_s {
 	int height;
 	int num_frames;
 	uint16_t *pixels;
-	// E4 (ideas #4): for m8 SKIN images, the original index8 texels and the
-	// image's packed-565 palette row - the intensity-shade CLUT's raw inputs.
-	byte *src8;           // NULL for non-m8 and non-skin images
+	// Original M8 index texels and their packed RGB565 palette.
+	byte *src8;           // NULL for M32 and generated images
 	uint16_t pal565[256];
 	qboolean has_alpha;
 	qboolean no_zero_texel;    // E-D: provably no 0x0000 texels => skip colorkey test
@@ -253,6 +252,7 @@ qboolean SW_SavePPM(const char *path);
 
 void SW_ImageInit(void);
 void SW_ImageShutdown(void);
+void SW_WorldShadeCacheReset(void);
 sw_image_t *SW_FindImage(const char *name, sw_image_kind_t kind);
 void SW_FreeUnusedImages(void);
 void SW_DrawImage(int x, int y, int w, int h, const sw_image_t *image, float alpha);
