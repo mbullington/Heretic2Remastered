@@ -1,14 +1,11 @@
-# Segment 28 untried hypotheses
+# Segment 29 untried hypotheses
 
-1. **MMX register-resident interpolation pairs** — hold `(iu,it)`, `(ils,ilt)`,
-   and their steps in MMX registers for an accepted run; extract with `movd`
-   and shifted temporaries, advance with `paddd`, and spill only at return.
-2. **MMX spill extraction** — if shifts/extracts dominate, store each packed
-   pair to an aligned run-local scratch for integer address-generation loads;
-   retain packed `paddd` updates and one final context spill.
-3. **Scalar two-pixel state batching** — amortize global interpolation state
-   updates over two pixels without MMX, accepting stack pressure only if the
-   measured `emms`/extraction cost closes both packed designs.
-4. **Next-segment fallback: flex strip/setup batching** — if all packed world
-   state designs fail, reuse projected strip vertices and batch tiny-triangle
-   setup exactly; do not revive real mesh LOD or disconnected surfels.
+1. **Mesh-batched projection table** — after exact mesh bbox acceptance, project
+   each unique mesh vertex once and let triangles index the entity-sequenced
+   cache directly instead of calling/checking the lookup three times each.
+2. **Original glcmd strip/fan walker** — decode each command vertex once, retain
+   strip predecessors or fan anchor, and emit triangles in the exact flattened
+   parity/order while reusing projected and UV-bearing command records.
+3. **Path-local command-corner cache** — if direct glcmd traversal loses, cache
+   affine/perspective corner products by command occurrence and path class while
+   retaining flattened triangle dispatch and all clipped fallbacks.

@@ -1,60 +1,59 @@
 # Autoresearch: DOS combat renderer
 
-## Active Segment 28: packed world interpolation state
+## Active Segment 29: exact flex setup and strip batching
 
-Commit `8341d8cd` is the retained full-resolution source: 101.958 ms frame,
-63.350 ms world, 24.645 ms entities, and 9.210 ms blend. Segment 27 removed the
-exhausted temporal architecture and retained an exact M8 material/light
-shade-row kernel. Compact world-depth ownership is closed: exact affine runs
-averaged only 9.45 pixels, naive ownership cost 20.52 ms, and deleting the hot
-depth store established an absolute saving ceiling of only 0.721 ms.
+Commit `98bcbc89` is the retained full-resolution source: 99.473 ms frame,
+60.864 ms world, 24.645 ms entities, 19.726 ms flex entities, and 17.863 ms
+inside the flex triangle loop. Segment 28 retained exact MMX-packed world
+interpolation with stack extraction and closed its scalar-local/deferred-EMMS
+alternatives.
 
 ### Objective and frozen workload
 
-Reduce `world_us` to at most 55,000 and `frame_us` to at most 94,000 while
-keeping the corrected-Corvus tutorial2 combat sweep, deterministic effects,
-7.5-degree translated camera orbit, model count, gameplay, 320x240 RGB565
-output, and rendering cadence fixed. The overall 15 fps target remains 66,667
-us.
+Reduce `flex_tris_us` to at most 12,000, `entities_us` to at most 18,000, and
+`frame_us` to at most 92,000 while keeping the corrected-Corvus tutorial2
+combat sweep, deterministic effects, translated camera orbit, model count,
+animations, gameplay, 320x240 RGB565 output, and rendering cadence fixed. The
+overall 15 fps target remains 66,667 us.
 
-Attack the remaining hot world pixel lane by moving its four fixed-point
-interpolants and four steps out of the global memory context. Pack texture
-`(iu,it)` and light `(ils,ilt)` pairs in P55C MMX registers for each accepted
-run, advance them with `paddd`, and spill only once at run completion.
+Attack setup duplication rather than pixels. The FM loader retains original
+strip/fan commands but expands them to independent triangles. Runtime projection
+is cached per vertex, yet every source triangle repeats three lookup/cache
+checks and rebuilds command UV/corner records.
 
 ### Metric contract
 
 - **Primary**: frozen combat `frame_us`, lower is better.
-- **Target pool**: `world_us`; secondary metrics are entities, blend, accepted
-  world pixels, shade-row hits/misses/builds/overflow, and P55C static telemetry.
+- **Target pools**: entities, flex entities, flex triangle loop, flex prologue,
+  source triangles, command groups/vertices, repeated command corners, unique
+  projected vertices, path-class counts, and P55C static telemetry.
 - **Hard functional guards**: combat `status=PASS`; Pentium-MMX-compatible code;
   no gameplay, workload, camera, model-count, benchmark, resolution, simulation,
-  model-detail, rendering-cadence, visibility, or depth-semantics shortcuts.
-- **Output guards**: the packed lane must be bit-exact, including signed
-  fixed-point wrap, texture/light cell transitions, RGB565 output, coverage,
-  and 31-bit inverse-depth keys. Retain the historical EFFECTS budget and every
-  2%/32 dB RENDER, flex, and COMBAT gate.
-- **Fallback guard**: the retained exact M8 and RGB565 kernels remain available
-  for unsupported materials and any packed-path validation failure.
+  mesh-detail, triangle, visibility, or rendering-cadence shortcuts.
+- **Output guards**: preserve triangle order, strip parity, fan winding,
+  per-command UV seams, clipping, bbox/winding decisions, depth ties, mask
+  selection, affine/perspective interpolation, RGB565 output, skeletal state,
+  node overrides, shadows, and translucency. Retain all existing image gates.
+- **Fallback guard**: flattened `sw_flex_rtri_t` traversal remains available for
+  unsupported or clipped command groups until a batched path proves exact.
 
-The ruler separates realistic hot-kernel cases: on this identical workload the
-Segment-27 byte/shade-row lane reduced world time 69.638 to 63.350 ms with every
-gate passing. The current lane accepts 11,246,343 pixels over 144 frames, about
-78,100/frame, and currently updates `iu`, `it`, `ils`, and `ilt` through global
-memory for every pixel. Harness, workload, metrics, and gates freeze after the
-new baseline.
+The ruler separates the pool directly: over 144 frames flex visits only 853,778
+pixels (about 5,929/frame), but its triangle loop costs 17.863 ms. It dispatches
+72,738 triangles, rejects another 29,570 by bbox and 60,310 by winding, and thus
+pays setup for roughly 1,129 source triangles/frame. Prologue costs only 1.584
+ms and swap/references 0.083 ms. Harness, workload, metrics, and gates freeze
+after the new baseline.
 
 ### Planned mechanisms and stop conditions
 
-Compare one mechanism per iteration: (1) register-resident MMX pairs extracted
-with `movd` and shifts, (2) MMX pairs extracted through an aligned stack spill
-if register extraction loses narrowly, and (3) scalar two-pixel state batching
-if `emms` or MMX extraction dominates. Keep only exact end-to-end gains outside
-noise. Stop at the segment targets, after all three designs fail, after two
-crashes with the same root cause, on user interruption, or at a tooling dead
-end. If packed state fails, pivot to exact flex strip/setup batching rather than
-reopening temporal, spatial scaling, depth runs, surface caches, or face-wide
-shade-pointer maps.
+First census original command groups, command vertices, corner reuse, and unique
+projected vertices for drawn meshes. Then compare one mechanism per iteration:
+(1) mesh-batched projection with direct cache indexing, (2) original-order
+rolling strip/fan records with shared command-corner construction, and (3)
+generation-tagged path-local corner records if command traversal loses. Keep
+only exact end-to-end gains outside noise. Stop at the targets, if census reuse
+is poor, after two failed command/corner implementations, after three
+representation-level rejects, on user interruption, or at a tooling dead end.
 
 ## Segment 20: retail player frame-order correctness
 
