@@ -1,59 +1,39 @@
 # Autoresearch: DOS combat renderer
 
-## Active Segment 29: exact flex setup and strip batching
+## Completed Segment 29: exact flex setup and strip batching
 
-Commit `98bcbc89` is the retained full-resolution source: 99.473 ms frame,
+Commit `31956c54` records the retained full-resolution baseline: 99.473 ms frame,
 60.864 ms world, 24.645 ms entities, 19.726 ms flex entities, and 17.863 ms
-inside the flex triangle loop. Segment 28 retained exact MMX-packed world
-interpolation with stack extraction and closed its scalar-local/deferred-EMMS
-alternatives.
+inside the flex triangle loop. Segment 29 found substantial logical strip/fan
+reuse, but no tested exact batching representation reduced end-to-end cost.
 
-### Objective and frozen workload
+### Results
 
-Reduce `flex_tris_us` to at most 12,000, `entities_us` to at most 18,000, and
-`frame_us` to at most 92,000 while keeping the corrected-Corvus tutorial2
-combat sweep, deterministic effects, translated camera orbit, model count,
-animations, gameplay, 320x240 RGB565 output, and rendering cadence fixed. The
-overall 15 fps target remains 66,667 us.
+Across 144 frames, 62,754 command groups encode 161,205 source triangles with
+286,713 command vertices instead of 483,615 flattened corner references. That
+is 40.72% command-corner reuse. Meshes contain only 99,580 unique projected
+vertices, 79.41% fewer than flattened corner references. After bbox and winding
+rejection, the live set still contains 218,214 corner references but only
+142,245 unique command occurrences, preserving 34.81% potential reuse.
 
-Attack setup duplication rather than pixels. The FM loader retains original
-strip/fan commands but expands them to independent triangles. Runtime projection
-is cached per vertex, yet every source triangle repeats three lookup/cache
-checks and rebuilds command UV/corner records.
+The reuse ratios did not predict Pentium-MMX cost:
 
-### Metric contract
+- Mesh-batched projection changed frame 99.473 -> 99.443 ms and flex triangles
+  17.863 -> 17.833 ms. The 30 us change is within noise and did not justify
+  eager loops plus a second access path.
+- A lazy per-entity command-ID cache of opaque-affine corners regressed frame to
+  99.621 ms and flex triangles to 18.043 ms.
+- A group-local rolling strip/fan corner cache regressed frame to 99.699 ms and
+  flex triangles to 18.087 ms.
 
-- **Primary**: frozen combat `frame_us`, lower is better.
-- **Target pools**: entities, flex entities, flex triangle loop, flex prologue,
-  source triangles, command groups/vertices, repeated command corners, unique
-  projected vertices, path-class counts, and P55C static telemetry.
-- **Hard functional guards**: combat `status=PASS`; Pentium-MMX-compatible code;
-  no gameplay, workload, camera, model-count, benchmark, resolution, simulation,
-  mesh-detail, triangle, visibility, or rendering-cadence shortcuts.
-- **Output guards**: preserve triangle order, strip parity, fan winding,
-  per-command UV seams, clipping, bbox/winding decisions, depth ties, mask
-  selection, affine/perspective interpolation, RGB565 output, skeletal state,
-  node overrides, shadows, and translucency. Retain all existing image gates.
-- **Fallback guard**: flattened `sw_flex_rtri_t` traversal remains available for
-  unsupported or clipped command groups until a batched path proves exact.
-
-The ruler separates the pool directly: over 144 frames flex visits only 853,778
-pixels (about 5,929/frame), but its triangle loop costs 17.863 ms. It dispatches
-72,738 triangles, rejects another 29,570 by bbox and 60,310 by winding, and thus
-pays setup for roughly 1,129 source triangles/frame. Prologue costs only 1.584
-ms and swap/references 0.083 ms. Harness, workload, metrics, and gates freeze
-after the new baseline.
-
-### Planned mechanisms and stop conditions
-
-First census original command groups, command vertices, corner reuse, and unique
-projected vertices for drawn meshes. Then compare one mechanism per iteration:
-(1) mesh-batched projection with direct cache indexing, (2) original-order
-rolling strip/fan records with shared command-corner construction, and (3)
-generation-tagged path-local corner records if command traversal loses. Keep
-only exact end-to-end gains outside noise. Stop at the targets, if census reuse
-is poor, after two failed command/corner implementations, after three
-representation-level rejects, on user interruption, or at a tooling dead end.
+All prototypes preserved the image gates, but cache checks, pointer indirection,
+validity state, changed calling shape, and cache footprint cost more than the
+few scalar assignments and multiplies removed. The declared two-failed-cache
+stop condition was reached. No renderer mechanism was retained; the final
+reproduction returned exactly to 99.473 ms frame, 60.864 ms world, 24.645 ms
+entities, and 17.863 ms flex triangles with all checks passing. Future flex work
+must replace more of scan conversion or triangle setup, not cache command
+records around the current rasterizer.
 
 ## Segment 20: retail player frame-order correctness
 
