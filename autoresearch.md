@@ -1,62 +1,60 @@
 # Autoresearch: DOS combat renderer
 
-## Active Segment 27: material-local shade rows and compact world depth
+## Active Segment 28: packed world interpolation state
 
-Commit `f1ad6521` is the retained full-resolution source: 109.264 ms frame,
-69.673 ms world, 25.663 ms entities, and 9.165 ms exact blend. Segment 25 proved
-screen-space temporal reuse slower and invalid under the translated camera
-orbit, so this segment removes temporal code and its launcher/test surfaces
-before establishing a new baseline.
+Commit `8341d8cd` is the retained full-resolution source: 101.958 ms frame,
+63.350 ms world, 24.645 ms entities, and 9.210 ms blend. Segment 27 removed the
+exhausted temporal architecture and retained an exact M8 material/light
+shade-row kernel. Compact world-depth ownership is closed: exact affine runs
+averaged only 9.45 pixels, naive ownership cost 20.52 ms, and deleting the hot
+depth store established an absolute saving ceiling of only 0.721 ms.
 
 ### Objective and frozen workload
 
-Reduce `world_us` to at most 45,000 and `frame_us` to at most 85,000 while
-keeping 320x240 RGB565 output, corrected retail Corvus, the deterministic
-combat/effects load, 7.5-degree translated camera sweep, model count, gameplay,
-and rendering cadence fixed. The overall 15 fps target remains 66,667 us.
+Reduce `world_us` to at most 55,000 and `frame_us` to at most 94,000 while
+keeping the corrected-Corvus tutorial2 combat sweep, deterministic effects,
+7.5-degree translated camera orbit, model count, gameplay, 320x240 RGB565
+output, and rendering cadence fixed. The overall 15 fps target remains 66,667
+us.
 
-Attack representations rather than local arithmetic: retain material-local M8
-indices and cache their exact palette-to-RGB565 lighting functions; then replace
-opaque static world's per-pixel depth writes with exact visible depth runs that
-later primitives query on demand.
+Attack the remaining hot world pixel lane by moving its four fixed-point
+interpolants and four steps out of the global memory context. Pack texture
+`(iu,it)` and light `(ils,ilt)` pairs in P55C MMX registers for each accepted
+run, advance them with `paddd`, and spill only once at run completion.
 
 ### Metric contract
 
 - **Primary**: frozen combat `frame_us`, lower is better.
-- **Target pools**: `world_us`, M8 accepted pixels, material-light reloads and
-  distinct keys, shade-row hits/misses/builds, accepted world depth runs,
-  downstream world-depth queries, entities, blend, and P55C static telemetry.
-- **Hard functional guards**: combat `status=PASS`; P55C-compatible code; no
-  gameplay, workload, camera, model-count, benchmark, resolution, simulation,
-  model-detail, or rendering-cadence shortcuts.
-- **Output guards**: initial mechanisms must be bit-exact. Retain the historical
-  EFFECTS budget and every 2%/32 dB RENDER, flex, and COMBAT gate.
-- **Shade-cache guard**: keys derive from ordinary image identity, its original
-  256-entry M8 palette, and exact packed light. Cache replacement is bounded
-  and deterministic; M32, warped, translucent, animated, unsupported, and
-  allocation-failure paths retain the established RGB565 painter.
-- **Depth-run guard**: recorded runs reproduce the exact 31-bit inverse-depth
-  key at every covered pixel before any full-depth write is removed. Brush,
-  flex, sprite, particle, light, alpha-test, and translucent ordering semantics
-  remain unchanged.
+- **Target pool**: `world_us`; secondary metrics are entities, blend, accepted
+  world pixels, shade-row hits/misses/builds/overflow, and P55C static telemetry.
+- **Hard functional guards**: combat `status=PASS`; Pentium-MMX-compatible code;
+  no gameplay, workload, camera, model-count, benchmark, resolution, simulation,
+  model-detail, rendering-cadence, visibility, or depth-semantics shortcuts.
+- **Output guards**: the packed lane must be bit-exact, including signed
+  fixed-point wrap, texture/light cell transitions, RGB565 output, coverage,
+  and 31-bit inverse-depth keys. Retain the historical EFFECTS budget and every
+  2%/32 dB RENDER, flex, and COMBAT gate.
+- **Fallback guard**: the retained exact M8 and RGB565 kernels remain available
+  for unsupported materials and any packed-path validation failure.
 
-The ruler separates realistic cases: the current world lane processes about
-85,313 samples/frame for 76,800 output pixels, so visibility work has little
-headroom, while its accepted-pixel kernel still performs one RGB565 texture
-read, three shade lookups, a color write, and a 32-bit depth write. The M8/key
-census and dual depth-run oracle must prove each new data shape before behavior
-changes. Workload, harness, metrics, and gates freeze after the clean baseline.
+The ruler separates realistic hot-kernel cases: on this identical workload the
+Segment-27 byte/shade-row lane reduced world time 69.638 to 63.350 ms with every
+gate passing. The current lane accepts 11,246,343 pixels over 144 frames, about
+78,100/frame, and currently updates `iu`, `it`, `ils`, and `ilt` through global
+memory for every pixel. Harness, workload, metrics, and gates freeze after the
+new baseline.
 
 ### Planned mechanisms and stop conditions
 
-First remove temporal code and baseline. Then (1) census M8 coverage and exact
-material-light reuse, (2) implement a bounded material-local 256-entry RGB565
-shade-row cache if amortization is proven, (3) census and dual-record exact
-world depth runs, (4) stop writing opaque static world depth only after a full
-run-vs-buffer oracle passes, and (5) combine independent winners. Stop at the
-segment targets, when either census disproves its premise, after two failed
-implementations per mechanism, after three consecutive representation-level
-rejects, on user interruption, or at a tooling dead end.
+Compare one mechanism per iteration: (1) register-resident MMX pairs extracted
+with `movd` and shifts, (2) MMX pairs extracted through an aligned stack spill
+if register extraction loses narrowly, and (3) scalar two-pixel state batching
+if `emms` or MMX extraction dominates. Keep only exact end-to-end gains outside
+noise. Stop at the segment targets, after all three designs fail, after two
+crashes with the same root cause, on user interruption, or at a tooling dead
+end. If packed state fails, pivot to exact flex strip/setup batching rather than
+reopening temporal, spatial scaling, depth runs, surface caches, or face-wide
+shade-pointer maps.
 
 ## Segment 20: retail player frame-order correctness
 

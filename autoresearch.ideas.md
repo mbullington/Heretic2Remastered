@@ -1,15 +1,14 @@
-# Segment 27 untried representation hypotheses
+# Segment 28 untried hypotheses
 
-1. **Material-local exact shade rows** — retain original byte texels and each
-   M8 wall texture's own 256-entry RGB565 palette. Cache the exact 256-result
-   function for `(image, packed light)` and select its row when the world kernel
-   reloads a light cell. First prove M8 accepted-pixel coverage and key reuse.
-2. **Compact exact world-depth runs** — opaque static world already resolves
-   visibility front-to-back. Record each accepted interval as
-   `(row, x0, x1, key0, key_step)`, verify every reconstructed key against the
-   current z-buffer, then let later primitives query runs instead of paying a
-   32-bit world depth write at every pixel.
-3. **Combined color-only static-world kernel** — if both representations win,
-   specialize the existing fixed ABI world painter for byte texels, one shade
-   row lookup, RGB565 color stores, coverage, and depth-run emission. Keep the
-   current exact RGB565/full-depth sibling for every unsupported path.
+1. **MMX register-resident interpolation pairs** — hold `(iu,it)`, `(ils,ilt)`,
+   and their steps in MMX registers for an accepted run; extract with `movd`
+   and shifted temporaries, advance with `paddd`, and spill only at return.
+2. **MMX spill extraction** — if shifts/extracts dominate, store each packed
+   pair to an aligned run-local scratch for integer address-generation loads;
+   retain packed `paddd` updates and one final context spill.
+3. **Scalar two-pixel state batching** — amortize global interpolation state
+   updates over two pixels without MMX, accepting stack pressure only if the
+   measured `emms`/extraction cost closes both packed designs.
+4. **Next-segment fallback: flex strip/setup batching** — if all packed world
+   state designs fail, reuse projected strip vertices and batch tiny-triangle
+   setup exactly; do not revive real mesh LOD or disconnected surfels.
