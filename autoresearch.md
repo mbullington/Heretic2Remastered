@@ -1,58 +1,61 @@
 # Autoresearch: DOS combat renderer
 
-## Active Segment 26: exact RGB565 transfer architecture
+## Active Segment 27: material-local shade rows and compact world depth
 
-Commit `d83f7c5b` is the full-resolution source with temporal scheduler evidence.
-The frozen combat frame remains about 112.57 ms, including 69.66 ms world,
-25.65 ms entities, 12.494 ms blend, and 3.480 ms particles.
-
-Segment 25 exhausted temporal reuse for this workload. The translated camera
-orbit rejected the rotation-only mapper on all 143 eligible frames, reaching
-120.372 degrees aggregate angle delta and 21,401.7 units squared origin delta.
-A per-pixel translated depth splat regressed to 147.076 ms and failed EFFECTS at
-35.97%/16.68 dB; an 8-pixel connected segment splat still regressed to 132.547
-ms and failed at 31.20%/17.20 dB. Fresh rendering already touches only about
-85,313 world samples per frame, so full-resolution reprojection has no remaining
-work advantage on a P55C. Temporal stays diagnostic; do not weaken image quality
-or spatial resolution to force reuse.
+Commit `f1ad6521` is the retained full-resolution source: 109.264 ms frame,
+69.673 ms world, 25.663 ms entities, and 9.165 ms exact blend. Segment 25 proved
+screen-space temporal reuse slower and invalid under the translated camera
+orbit, so this segment removes temporal code and its launcher/test surfaces
+before establishing a new baseline.
 
 ### Objective and frozen workload
 
-Continue toward `frame_us <= 66,667` (15 fps), with a 50,000 us stretch target,
-by eliminating exact full-frame post-processing work before returning to larger
-world/entity representations. Keep the corrected-Corvus tutorial2 combat sweep,
-deterministic effects, 7.5-degree translated camera orbit, model count, 320x240
-RGB565 output, and all gameplay fixed.
+Reduce `world_us` to at most 45,000 and `frame_us` to at most 85,000 while
+keeping 320x240 RGB565 output, corrected retail Corvus, the deterministic
+combat/effects load, 7.5-degree translated camera sweep, model count, gameplay,
+and rendering cadence fixed. The overall 15 fps target remains 66,667 us.
+
+Attack representations rather than local arithmetic: retain material-local M8
+indices and cache their exact palette-to-RGB565 lighting functions; then replace
+opaque static world's per-pixel depth writes with exact visible depth runs that
+later primitives query on demand.
 
 ### Metric contract
 
 - **Primary**: frozen combat `frame_us`, lower is better.
-- **First target**: reduce `blend_us` from 12,494 us to at most 4,000 us without
-  increasing another pool enough to erase the gain.
-- **Secondary metrics**: world, entities, particles, clear/present, exact blend
-  cache hits/misses/builds, and P55C static telemetry.
+- **Target pools**: `world_us`, M8 accepted pixels, material-light reloads and
+  distinct keys, shade-row hits/misses/builds, accepted world depth runs,
+  downstream world-depth queries, entities, blend, and P55C static telemetry.
 - **Hard functional guards**: combat `status=PASS`; P55C-compatible code; no
   gameplay, workload, camera, model-count, benchmark, resolution, simulation,
-  or rendering-cadence shortcuts.
-- **Output guards**: blend transfer must be bit-exact. Retain the historical
+  model-detail, or rendering-cadence shortcuts.
+- **Output guards**: initial mechanisms must be bit-exact. Retain the historical
   EFFECTS budget and every 2%/32 dB RENDER, flex, and COMBAT gate.
-- **Cache guard**: keys derive only from the ordinary RGB565 source color and
-  8-bit alpha. Allocation failure falls back to the existing exact channel-map
-  loop. Cache replacement is deterministic and bounded.
+- **Shade-cache guard**: keys derive from ordinary image identity, its original
+  256-entry M8 palette, and exact packed light. Cache replacement is bounded
+  and deterministic; M32, warped, translucent, animated, unsupported, and
+  allocation-failure paths retain the established RGB565 painter.
+- **Depth-run guard**: recorded runs reproduce the exact 31-bit inverse-depth
+  key at every covered pixel before any full-depth write is removed. Brush,
+  flex, sprite, particle, light, alpha-test, and translucent ordering semantics
+  remain unchanged.
 
-The ruler separates the target directly: the frozen deterministic full-screen
-damage overlay spends 12.494 ms per frame in `SW_BlendRect`, while zero-alpha
-and opaque paths bypass the blend arithmetic. Harness, workload, and gates
-freeze after the new baseline.
+The ruler separates realistic cases: the current world lane processes about
+85,313 samples/frame for 76,800 output pixels, so visibility work has little
+headroom, while its accepted-pixel kernel still performs one RGB565 texture
+read, three shade lookups, a color write, and a 32-bit depth write. The M8/key
+census and dual depth-run oracle must prove each new data shape before behavior
+changes. Workload, harness, metrics, and gates freeze after the clean baseline.
 
 ### Planned mechanisms and stop conditions
 
-Compare (1) a bounded cache of complete 65,536-entry transfer functions keyed by
-color+alpha, (2) a smaller byte-decomposed or page-local exact transfer if full
-LUT cache locality loses, and (3) a corrected assembly/MMX lane only if table
-architectures cannot reach 4 ms. Never revive the previously corrupt intrinsic
-MMX path without a startup oracle and end-to-end captures. Stop at 4,000 us
-blend, after all three mechanisms fail, after three consecutive mechanism-level
+First remove temporal code and baseline. Then (1) census M8 coverage and exact
+material-light reuse, (2) implement a bounded material-local 256-entry RGB565
+shade-row cache if amortization is proven, (3) census and dual-record exact
+world depth runs, (4) stop writing opaque static world depth only after a full
+run-vs-buffer oracle passes, and (5) combine independent winners. Stop at the
+segment targets, when either census disproves its premise, after two failed
+implementations per mechanism, after three consecutive representation-level
 rejects, on user interruption, or at a tooling dead end.
 
 ## Segment 20: retail player frame-order correctness

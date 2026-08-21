@@ -20,7 +20,7 @@ EVIDENCE = ROOT / ".dos-build" / "guest" / "BENCH-EVIDENCE.TXT"
 RUN_DIR = ROOT / ".dos-build" / "guest"
 BASELINE_DIR = Path(
     os.environ.get(
-        "BB_THREAD_STORAGE", "/Users/mbullington/.bb/thread-storage/thr_z5sba9gfja"
+        "BB_THREAD_STORAGE", "/Users/mbullington/.bb/thread-storage/thr_383at2iyri"
     )
 ) / "bench"
 EXACT_MAX_BIG_FRACTION = 0.0006  # unaffected output: historical z-fight budget

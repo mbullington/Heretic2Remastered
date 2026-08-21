@@ -401,14 +401,9 @@ static inline uint16_t span_modulate(const uint16_t texel, const uint32_t light_
 #define SW_COVER_WORDS 20 // 640 px max / 32
 extern uint32_t sw_covermask[480][SW_COVER_WORDS];
 
-#define SW_SCISSOR_TILES_Y 60
-extern uint64_t sw_scissor_row[SW_SCISSOR_TILES_Y];
-extern qboolean sw_scissor_active;
-extern qboolean sw_world_repair_pass;
-extern qboolean sw_temporal_warp_now;
 // The coverage mask is only equivalent to a z-test while the static world is
-// emitted in strict front-to-back BSP order. Brush entities and temporal
-// repair passes do not satisfy that invariant.
+// emitted in strict front-to-back BSP order. Brush entities do not satisfy
+// that invariant.
 static qboolean sw_world_ftb_mask_active;
 static qboolean sw_brush_span_active;
 static qboolean project_point(const vec3_t point, int *x, int *y, float *depth);
@@ -1412,34 +1407,6 @@ static void draw_face(const sw_bsp_t *bsp, const int face_index, const vec3_t or
 		if (pos < -0.01f)
 			return;
 	}
-	// Hole-repair scissor: skip faces that miss all hole tiles AND are not
-	// temporally dynamic (animated/flowing/warped/lightstyled faces
-	// re-render every frame regardless; they are few).
-	if (sw_world_repair_pass && bsp->packets != NULL)
-	{
-		const sw_face_packet_t *pk = &bsp->packets[face_index];
-		if (pk->verts != NULL && !pk->temporal_dynamic)
-		{
-			vec3_t wc;
-			VectorAdd(pk->center, origin, wc);
-			int sx, sy;
-			float depth;
-			if (project_point(wc, &sx, &sy, &depth))
-			{
-				const float scr_r = pk->radius * max(projection_x, projection_y) / max(depth, 1.0f);
-				const int t0 = ClampI((int)floorf(((float)sx - scr_r) * 0.125f), 0, (sw_width >> 3) - 1);
-				const int t1 = ClampI((int)floorf(((float)sx + scr_r) * 0.125f), 0, (sw_width >> 3) - 1);
-				const int r0 = ClampI((int)floorf(((float)sy - scr_r) * 0.125f), 0, SW_SCISSOR_TILES_Y - 1);
-				const int r1 = ClampI((int)floorf(((float)sy + scr_r) * 0.125f), 0, SW_SCISSOR_TILES_Y - 1);
-				const uint64_t range = ((2ull << (t1 - t0)) - 1) << t0;
-				qboolean hit = false;
-				for (int ry = r0; ry <= r1 && !hit; ++ry)
-					hit = (sw_scissor_row[ry] & range) != 0;
-				if (!hit)
-					return;
-			}
-		}
-	}
 	int animation_frames;
 	const sw_image_t *image = texture_animation(bsp, texinfo_index, entity_frame, &animation_frames);
 	if (image == NULL)
@@ -1767,12 +1734,6 @@ static float sw_canon_angle(const float a)
 	return c;
 }
 
-static float sw_angle_delta(const float a, const float b)
-{
-	float d = fabsf(sw_canon_angle(a) - sw_canon_angle(b));
-	return d > 180.0f ? 360.0f - d : d;
-}
-
 static qboolean sky_cache_matches(const refdef_t *fd, const float rotation_angle)
 {
 	return sky_cache_key.valid && sky_cache_key.generation == sw_sky_generation &&
@@ -1871,20 +1832,17 @@ void SW_RasterSky(const refdef_t *fd)
 	unsigned rendered_face_mask = 0;
 	for (int y = minimum_y; y < maximum_y; ++y)
 	{
-		if (!sw_temporal_warp_now)
-		{
-			// S-buffer row-coverage proof: every pixel painted => no sky px here
-			const uint32_t *cw = sw_covermask[y];
-			qboolean full = true;
-			for (int w = minimum_x >> 5; w <= (maximum_x - 1) >> 5; ++w)
-				if (cw[w] != 0xFFFFFFFFu)
-				{
-					full = false;
-					break;
-				}
-			if (full)
-				continue;
-		}
+		// S-buffer row-coverage proof: every pixel painted => no sky px here.
+		const uint32_t *cw = sw_covermask[y];
+		qboolean full = true;
+		for (int w = minimum_x >> 5; w <= (maximum_x - 1) >> 5; ++w)
+			if (cw[w] != 0xFFFFFFFFu)
+			{
+				full = false;
+				break;
+			}
+		if (full)
+			continue;
 		const float vertical = (center_y - (y + 0.5f)) * vertical_step;
 		vec3_t direction;
 		vec3_t step;
@@ -2040,8 +1998,7 @@ void SW_RasterWorld(const refdef_t *fd)
 {
 	if (sw_world_model == NULL || sw_world_model->bsp == NULL || (fd->rdflags & RDF_NOWORLDMODEL))
 		return;
-	if (!sw_world_repair_pass)
-		memset(sw_covermask, 0, (size_t)sw_height * sizeof(sw_covermask[0])); // fresh frame vs repair-continuation
+	memset(sw_covermask, 0, (size_t)sw_height * sizeof(sw_covermask[0]));
 	// Per-face stores are keyed by face index into this BSP; invalidate all of
 	// them when the world changes so a new map cannot reuse stale light.
 	if (sw_face_light_world != sw_world_model->bsp)
@@ -2084,7 +2041,7 @@ void SW_RasterWorld(const refdef_t *fd)
 	}
 	if (bsp->submodels != NULL && bsp->num_submodels > 0)
 	{
-		sw_world_ftb_mask_active = !sw_world_repair_pass;
+		sw_world_ftb_mask_active = true;
 		const int head_node = LittleLong(bsp->submodels[0].headnode);
 		if (head_node >= 0 && head_node < bsp->num_nodes)
 			draw_world_node_ftb(bsp, head_node, fd->vieworg, sw_visible_faces, (int)(fd->time * 2.0f));
@@ -2097,8 +2054,7 @@ void SW_RasterWorld(const refdef_t *fd)
 		}
 		sw_world_ftb_mask_active = false;
 	}
-	if (!sw_world_repair_pass)
-		sw_scan_phase ^= 1; // alternate stripe phase per fresh world pass
+	sw_scan_phase ^= 1;
 }
 
 static qboolean project_point(const vec3_t point, int *x, int *y, float *depth)
@@ -4963,31 +4919,9 @@ void SW_RasterLights(const refdef_t *fd)
 	}
 }
 
-// ---------------------------------------------------------------------------
-// E61 temporal world reuse (turbo, r_swtemporal / H2DOS_SW_TEMPORAL=1).
-// Even frames render the world normally and snapshot the WORLD-ONLY color +
-// depth (no entities) after the sky pass. Odd frames skip the world pass and
-// forward-warp the snapshot under the new camera: per source pixel, rebuild
-// the view-space ray, scale by true z (the inverse-z key), transform into the
-// destination camera, depth-splat nearest-wins. Destination depth starts
-// zeroed so disocclusions stay zb==0 and the unchanged sky pass fills them
-// (the accepted turbo artifact: disoccluded world reads as sky). Entities,
-// brush models, particles, lights all render fresh per frame over the warped
-// depth. Bit-exact when the cvar is off: the only shared-state change is one
-// parity counter.
-static uint16_t *sw_snap_color;
-static uint32_t *sw_snap_zb;
-static size_t sw_snap_pixels;
-static vec3_t sw_snap_vieworg, sw_snap_forward, sw_snap_right, sw_snap_up;
-static float sw_snap_projection_x, sw_snap_projection_y;
-static int sw_snap_width, sw_snap_height, sw_snap_x, sw_snap_y;
-static const sw_model_t *sw_snap_world;
-static qboolean sw_snap_valid;
-static int sw_temporal_warp_budget;
-qboolean sw_temporal_warp_now;
-static cvar_t *sw_cvar_temporal;
+// Optional checkerboard stripe-interleave diagnostic.
 static cvar_t *sw_cvar_scan2;
-int sw_scan_phase; // stripe-parity of the column pairs the world paints this frame
+int sw_scan_phase;
 qboolean sw_scan2_active(void)
 {
 	if (sw_cvar_scan2 == NULL)
@@ -4995,177 +4929,7 @@ qboolean sw_scan2_active(void)
 	return sw_cvar_scan2 != NULL && sw_cvar_scan2->value != 0.0f;
 }
 
-// Hole-repair scissor: after the homography warp, the world pass is re-run
-// clipped to the 8x8 tiles the warp never covered, replacing smear/sky with
-// fresh, camera-exact pixels only where reprojection had nothing. The mask
-// is accumulated inside the warp loop itself (one flag per dest pixel/block).
-#define SW_SCISSOR_TILES_Y 60
-uint64_t sw_scissor_row[SW_SCISSOR_TILES_Y];
-qboolean sw_scissor_active;
 uint32_t sw_covermask[480][SW_COVER_WORDS];
-qboolean sw_world_repair_pass;
-
-static void sw_temporal_invalidate(void)
-{
-	sw_snap_valid = false;
-	sw_snap_world = NULL;
-}
-
-static qboolean sw_temporal_enabled(void)
-{
-	// Hole-repair scissor rows use one uint64_t bitset of 8px tiles: 64*8=512.
-	// Wider modes need a wider/dynamic mask before temporal reprojection is safe.
-	if (sw_width > 512 || sw_height > 480)
-		return false;
-	if (sw_cvar_temporal == NULL)
-	{
-		const char *env = getenv("H2DOS_SW_TEMPORAL");
-		sw_cvar_temporal = sw_ri.Cvar_Get("r_swtemporal", env != NULL ? env : "1", 0);
-	}
-	return sw_cvar_temporal != NULL && sw_cvar_temporal->value != 0.0f;
-}
-
-static void sw_temporal_snapshot(const refdef_t *fd)
-{
-	const size_t pixels = (size_t)sw_width * (size_t)sw_height;
-	if (pixels > sw_snap_pixels)
-	{
-		uint16_t *new_color = realloc(sw_snap_color, pixels * sizeof(*sw_snap_color));
-		uint32_t *new_zb = realloc(sw_snap_zb, pixels * sizeof(*sw_snap_zb));
-		if (new_color == NULL || new_zb == NULL)
-		{
-			free(new_color != NULL ? new_color : sw_snap_color);
-			free(new_zb != NULL ? new_zb : sw_snap_zb);
-			sw_snap_color = NULL;
-			sw_snap_zb = NULL;
-			sw_snap_pixels = 0;
-			sw_temporal_invalidate();
-			return;
-		}
-		sw_snap_color = new_color;
-		sw_snap_zb = new_zb;
-		sw_snap_pixels = pixels;
-	}
-	memcpy(sw_snap_color, sw_color, pixels * sizeof(*sw_snap_color));
-	memcpy(sw_snap_zb, sw_depth, pixels * sizeof(*sw_snap_zb));
-	VectorCopy(fd->vieworg, sw_snap_vieworg);
-	VectorCopy(view_forward, sw_snap_forward);
-	VectorCopy(view_right, sw_snap_right);
-	VectorCopy(view_up, sw_snap_up);
-	sw_snap_projection_x = projection_x;
-	sw_snap_projection_y = projection_y;
-	sw_snap_width = sw_width;
-	sw_snap_height = sw_height;
-	sw_snap_x = fd->x;
-	sw_snap_y = fd->y;
-	sw_snap_world = sw_world_model;
-	sw_snap_valid = true;
-}
-
-// E61 stage 3: 2D tile-forward warp. Per source 32x32 tile, the four corner
-// pixels take the exact reprojection chain; the destination quad is then
-// walked as two triangles with affine source (u,v) + inverse-z keyed by the
-// corners (turbo-class linearization, rotation-correct unlike the 1D
-// segment kernel, and shared tile edges meet crack-free). Source sky pixels
-// stay holes for the sky pass; disoccluded regions are the honest remainder
-// (sky-filled, documented).
-// E61 stage 3.5: 1D segment warp (fastest measured kernel) + near-plane
-// corner pinning (edge wedges survive as near content) + dilation fill for
-// disocclusions after the walk.
-// E61 v4: backward destination-driven homography warp. For rotation, every
-// destination pixel's view ray maps to a source view ray by the frame-constant
-// matrix T = M_s^T M_d, so the mapping needs no depth and covers the viewport
-// exactly once (it is a function: no per-pixel zb compare). Block endpoints
-// (8 px) divide exactly; inside blocks it follows the renderer's fixed-point
-// span conventions. This path is rotation-only: translation is rejected by
-// the scheduler because a backward map then becomes depth-dependent.
-#define SW_WARP_BLOCK 8
-static void sw_temporal_warp(const refdef_t *fd)
-{
-	memset(sw_depth, 0, (size_t)sw_width * (size_t)sw_height * sizeof(*sw_depth));
-	const float cx_s = sw_snap_x + sw_snap_width * 0.5f;
-	const float cy_s = sw_snap_y + sw_snap_height * 0.5f;
-	const float hs_d = 1.0f / projection_x;
-	const float vs_d = 1.0f / projection_y;
-	const float cx_d = fd->x + fd->width * 0.5f;
-	const float cy_d = fd->y + fd->height * 0.5f;
-	// T = M_s^T * M_d: T_ij = dot(basis_s_i, basis_d_j)
-	const float T0 = dot3(sw_snap_right, view_right), T1 = dot3(sw_snap_right, view_up), T2 = dot3(sw_snap_right, view_forward);
-	const float T3 = dot3(sw_snap_up, view_right), T4 = dot3(sw_snap_up, view_up), T5 = dot3(sw_snap_up, view_forward);
-	const float T6 = dot3(sw_snap_forward, view_right), T7 = dot3(sw_snap_forward, view_up), T8 = dot3(sw_snap_forward, view_forward);
-	const float px_s = sw_snap_projection_x;
-	const float py_s = sw_snap_projection_y;
-	const int ty_count = min(SW_SCISSOR_TILES_Y, (sw_height + 7) >> 3);
-	for (int ty = 0; ty < ty_count; ++ty)
-		sw_scissor_row[ty] = 0;
-	sw_scissor_active = false;
-	const int y0 = max(0, fd->y), y1 = min(sw_height, fd->y + fd->height);
-	const int x0 = max(0, fd->x), x1 = min(sw_width, fd->x + fd->width);
-	for (int y = y0; y < y1; ++y)
-	{
-		const float dy_row = (cy_d - (y + 0.5f)) * vs_d;
-		const float dx_row = (x0 + 0.5f - cx_d) * hs_d;
-		float dsx = T0 * dx_row + T1 * dy_row + T2;
-		float dsy = T3 * dx_row + T4 * dy_row + T5;
-		float dsz = T6 * dx_row + T7 * dy_row + T8;
-		const float stx = T0 * hs_d, sty = T3 * hs_d, stz = T6 * hs_d;
-		uint16_t *const fb_row = sw_color + (size_t)y * sw_width;
-		uint32_t *const zb_row = sw_depth + (size_t)y * sw_width;
-		int x = x0;
-		while (x < x1)
-		{
-			const int block_start = x;
-			const int block = min(SW_WARP_BLOCK, x1 - x);
-			const float esx = dsx + stx * block;
-			const float esy = dsy + sty * block;
-			const float esz = dsz + stz * block;
-			if (dsz <= 1e-6f || esz <= 1e-6f)
-			{
-				// whole block back-projects behind the source camera: holes
-				const int t0 = x >> 3, t1 = (x + block - 1) >> 3;
-				if ((y >> 3) < SW_SCISSOR_TILES_Y)
-					sw_scissor_row[y >> 3] |= ((2ull << (t1 - t0)) - 1) << t0;
-				sw_scissor_active = true;
-				x += block;
-				dsx = esx; dsy = esy; dsz = esz;
-				continue;
-			}
-			qboolean block_holes = false;
-			float qsx = dsx, qsy = dsy, qz = dsz;
-			for (int i = 0; i < block; ++i, ++x, qsx += stx, qsy += sty, qz += stz)
-			{
-				const float inv_z = 1.0f / qz;
-				const int sx = (int)((cx_s + qsx * inv_z * px_s) * 65536.0f) >> 16;
-				const int sy = (int)((cy_s - qsy * inv_z * py_s) * 65536.0f) >> 16;
-				if (sx < sw_snap_x || sx >= sw_snap_x + sw_snap_width ||
-					sy < sw_snap_y || sy >= sw_snap_y + sw_snap_height)
-				{
-					block_holes = true;
-					continue;
-				}
-				const size_t sidx = (size_t)sy * (size_t)sw_width + (size_t)sx;
-				const uint32_t skey = sw_snap_zb[sidx];
-				if (skey != 0)
-				{
-					// For pure rotation, qz = z_source / z_dest, so inverse-z in
-					// destination space is source_inverse_z * qz. Keeping the old
-					// key breaks occlusion against freshly rendered entities.
-					zb_row[x] = (uint32_t)((float)skey * qz);
-					fb_row[x] = sw_snap_color[sidx];
-				}
-				else
-					block_holes = true;
-			}
-			if (block_holes && (y >> 3) < SW_SCISSOR_TILES_Y)
-			{
-				const int t0 = block_start >> 3, t1 = (x - 1) >> 3;
-				sw_scissor_row[y >> 3] |= ((2ull << (t1 - t0)) - 1) << t0;
-				sw_scissor_active = true;
-			}
-			dsx = esx; dsy = esy; dsz = esz;
-		}
-	}
-}
 
 // Deterministic combat-fx load for the T3 holdout (H2DOS_SW_FXLOAD=1): the
 // production rasterizers see exactly the shapes real combat produces (typed
@@ -5270,86 +5034,14 @@ int SW_RenderFrame(const refdef_t *fd)
 			fd = &tour_fd;
 		}
 	}
-	// Quality-ruler hook: rotate only the renderer refdef so the camera origin
-	// stays fixed and the rotation-only temporal path is exercised.
-	refdef_t rotate_fd;
-	const char *rotate_step = getenv("H2DOS_SW_ROTATE_DEGREES");
-	if (rotate_step != NULL)
-	{
-		rotate_fd = *fd;
-		rotate_fd.viewangles[1] += (float)sw_stats.bench_frames * (float)atof(rotate_step);
-		fd = &rotate_fd;
-	}
 	sw_refdef = *fd;
 	setup_view(fd);
 	if (fd->rdflags & RDF_NOWORLDMODEL)
 		SW_ClearColorFill();
-	sw_temporal_warp_now = false;
-	sw_scissor_active = false;
-	if (!(fd->rdflags & RDF_NOWORLDMODEL) && sw_temporal_enabled())
-	{
-		if (sw_snap_world != sw_world_model || sw_snap_width != sw_width || sw_snap_height != sw_height)
-			sw_temporal_invalidate();
-		// Motion-driven scheduling: the current backward homography is exact only
-		// for a shared camera origin (rotation-only reprojection). Any translation
-		// needs depth-dependent mapping, so render a real frame when vieworg moves.
-		// Rotation reuse remains capped at 3 warps per real frame.
-		static vec3_t sched_angles, sched_org;
-		static qboolean sched_init = false;
-		qboolean force_real = true;
-		if (sw_snap_valid && sw_temporal_warp_budget > 0 && sched_init)
-		{
-			force_real = false;
-			const float dangle = sw_angle_delta(fd->viewangles[0], sched_angles[0]) +
-				sw_angle_delta(fd->viewangles[1], sched_angles[1]) +
-				sw_angle_delta(fd->viewangles[2], sched_angles[2]);
-			const vec3_t dv = { fd->vieworg[0] - sched_org[0], fd->vieworg[1] - sched_org[1],
-				fd->vieworg[2] - sched_org[2] };
-			const float moved_sq = dv[0] * dv[0] + dv[1] * dv[1] + dv[2] * dv[2];
-			++sw_stats.bench_temporal_sched_checks;
-			if (dangle > sw_stats.bench_temporal_max_dangle)
-				sw_stats.bench_temporal_max_dangle = dangle;
-			if (moved_sq > sw_stats.bench_temporal_max_moved_sq)
-				sw_stats.bench_temporal_max_moved_sq = moved_sq;
-			if (dangle > 3.0f)
-				++sw_stats.bench_temporal_angle_rejects;
-			if (moved_sq > 1e-6f)
-				++sw_stats.bench_temporal_move_rejects;
-			if (sw_temporal_warp_budget <= 1)
-				++sw_stats.bench_temporal_budget_rejects;
-			if (dangle > 3.0f || moved_sq > 1e-6f || sw_temporal_warp_budget <= 1)
-				force_real = true;
-		}
-		if (force_real)
-		{
-			VectorCopy(fd->viewangles, sched_angles);
-			VectorCopy(fd->vieworg, sched_org);
-			sched_init = true;
-			sw_temporal_warp_budget = 4; // real frame now; up to 3 warps follow
-		}
-		else
-		{
-			sw_temporal_warp_now = true;
-			--sw_temporal_warp_budget;
-			++sw_stats.bench_temporal_warps;
-		}
-	}
 	const uclock_t frame_start = uclock();
 	uclock_t mark = frame_start;
-	// Sky runs AFTER the world pass and writes only where depth is still far
-	// (the sky draws no depth, so world-covered pixels cost one int compare).
-	if (sw_temporal_warp_now)
-	{
-		sw_temporal_warp(fd);
-		// Refresh pass: hole tiles (warp gaps) + dynamic faces (animation,
-		// flowing/warped/undulating surfaces, nonzero lightstyles) re-render
-		// fresh every frame; static warped snapshot covers only the rest.
-		sw_world_repair_pass = true;
-		SW_RasterWorld(fd);
-		sw_world_repair_pass = false;
-	}
-	else
-		SW_RasterWorld(fd);
+	// Sky runs after the world pass and writes only where depth is still far.
+	SW_RasterWorld(fd);
 	{
 		const uclock_t next = uclock();
 		sw_stats.bench_us_world += (unsigned long long)(next - mark);
@@ -5361,8 +5053,6 @@ int SW_RenderFrame(const refdef_t *fd)
 		sw_stats.bench_us_sky += (unsigned long long)(next - mark);
 		mark = next;
 	}
-	if (!sw_temporal_warp_now && sw_temporal_enabled())
-		sw_temporal_snapshot(fd); // world+sky only: entities never enter the snapshot
 	SW_RasterEntities(fd);
 	{
 		const uclock_t next = uclock();

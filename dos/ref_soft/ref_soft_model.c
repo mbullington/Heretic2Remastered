@@ -483,12 +483,6 @@ static void bake_face_packets(sw_bsp_t *bsp)
 			packet->center[2] = c[2];
 			packet->radius = sqrtf(r);
 		}
-		// Myrddin-era temporal reuse: these faces invalidate any snapshot of
-		// the static world, so they must re-render every frame.
-		packet->temporal_dynamic = (LittleLong(texture->flags) &
-			(SURF_FLOWING | SURF_WARP | SURF_UNDULATE | SURF_QUAKE)) != 0 ||
-			LittleLong(texture->nexttexinfo) != -1 ||
-			face->styles[0] != 0 || face->styles[1] != 255 || face->styles[2] != 255 || face->styles[3] != 255;
 	}
 }
 

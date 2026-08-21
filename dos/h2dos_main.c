@@ -894,13 +894,6 @@ static void log_bench_summary(void)
 		stats->bench_flex_area_hist[6], stats->bench_flex_unique_px);
 	log_append("bench-flex-nodes=%u\nbench-flex-nodes-culled=%u\n",
 		stats->bench_flex_nodes, stats->bench_flex_nodes_culled);
-	log_append("bench-temporal-warps=%u\n", stats->bench_temporal_warps);
-	log_append("bench-temporal-sched-checks=%u\nbench-temporal-angle-rejects=%u\n"
-		"bench-temporal-move-rejects=%u\nbench-temporal-budget-rejects=%u\n",
-		stats->bench_temporal_sched_checks, stats->bench_temporal_angle_rejects,
-		stats->bench_temporal_move_rejects, stats->bench_temporal_budget_rejects);
-	log_append("bench-temporal-max-dangle=%g\nbench-temporal-max-moved-sq=%g\n",
-		(double)stats->bench_temporal_max_dangle, (double)stats->bench_temporal_max_moved_sq);
 	log_append("bench-blend-lut-hits=%u\nbench-blend-lut-misses=%u\nbench-blend-lut-builds=%u\n",
 		stats->bench_blend_lut_hits, stats->bench_blend_lut_misses, stats->bench_blend_lut_builds);
 }
