@@ -510,8 +510,10 @@ typedef char sw_world_paint_ctx_key_check[offsetof(sw_world_paint_ctx_t, ikey) =
 static sw_world_paint_ctx_t sw_world_paint_ctx;
 extern void sw_world_paint_run_pmmx(void);
 extern void sw_world_paint_m8_run_pmmx(void);
+extern void sw_world_paint_m8_packed_pmmx(void);
 extern void sw_world_paint_zrun_pmmx(void);
 extern uint32_t *sw_world_patch_sites[8];
+extern uint32_t *sw_world_packed_patch_sites[4];
 
 __asm__(
 	".intel_syntax noprefix\n"
@@ -789,6 +791,89 @@ __asm__(
 	".text\n"
 	".att_syntax prefix\n");
 
+__asm__(
+	".intel_syntax noprefix\n"
+	".align 16\n"
+	".globl _sw_world_paint_m8_packed_pmmx\n"
+	"_sw_world_paint_m8_packed_pmmx:\n"
+	"push ebp\n"
+	"push ebx\n"
+	"push esi\n"
+	"push edi\n"
+	"mov edi, DWORD PTR [_sw_world_paint_ctx+0]\n"
+	"mov esi, DWORD PTR [_sw_world_paint_ctx+4]\n"
+	"mov ebp, DWORD PTR [_sw_world_paint_ctx+88]\n"
+	"movq mm0, QWORD PTR [_sw_world_paint_ctx+56]\n"
+	"movq mm1, QWORD PTR [_sw_world_paint_ctx+72]\n"
+	"movq mm2, QWORD PTR [_sw_world_paint_ctx+64]\n"
+	"movq mm3, QWORD PTR [_sw_world_paint_ctx+80]\n"
+	"_sw_world_m8packed_px_prefix:\n"
+	"movq mm4, mm0\n"
+	"movd ecx, mm4\n"
+	"psrlq mm4, 32\n"
+	"movd eax, mm4\n"
+	"sar eax, 16\n"
+	".byte 0x25\n"
+	".Lsw_m8packed_patch_mask_h: .long 0x12345678\n"
+	".byte 0x69, 0xc0\n"
+	".Lsw_m8packed_patch_width: .long 0x12345678\n"
+	"sar ecx, 16\n"
+	".byte 0x81, 0xe1\n"
+	".Lsw_m8packed_patch_mask_w: .long 0x12345678\n"
+	"add eax, ecx\n"
+	".byte 0x0f, 0xb6, 0x1c, 0x05\n"
+	".Lsw_m8packed_patch_pixels: .long 0x12345678\n"
+	"movq mm4, mm2\n"
+	"movd ecx, mm4\n"
+	"psrlq mm4, 32\n"
+	"movd eax, mm4\n"
+	"shr eax, 20\n"
+	"imul eax, DWORD PTR [_sw_world_paint_ctx+48]\n"
+	"shr ecx, 20\n"
+	"add eax, ecx\n"
+	"cmp eax, DWORD PTR [_sw_world_paint_ctx+96]\n"
+	"je _sw_world_m8packed_shade_store\n"
+	"mov DWORD PTR [_sw_world_paint_ctx+96], eax\n"
+	"mov edx, DWORD PTR [_sw_world_paint_ctx+12]\n"
+	"mov edx, DWORD PTR [edx+eax*4]\n"
+	"push edx\n"
+	"call _sw_world_shade_row\n"
+	"add esp, 4\n"
+	"mov DWORD PTR [_sw_world_paint_ctx+24], eax\n"
+	"_sw_world_m8packed_shade_store:\n"
+	"mov edx, DWORD PTR [_sw_world_paint_ctx+24]\n"
+	"movzx eax, WORD PTR [edx+ebx*2]\n"
+	"xor edx, edx\n"
+	"cmp ax, 0xf81f\n"
+	"sete dl\n"
+	"add DWORD PTR [_sw_world_paint_ctx+100], edx\n"
+	"mov WORD PTR [edi], ax\n"
+	"mov DWORD PTR [esi], ebp\n"
+	"paddd mm0, mm1\n"
+	"paddd mm2, mm3\n"
+	"add ebp, DWORD PTR [_sw_world_paint_ctx+92]\n"
+	"add edi, 2\n"
+	"add esi, 4\n"
+	"dec DWORD PTR [_sw_world_paint_ctx+52]\n"
+	"jnz _sw_world_m8packed_px_prefix\n"
+	"movq QWORD PTR [_sw_world_paint_ctx+56], mm0\n"
+	"movq QWORD PTR [_sw_world_paint_ctx+64], mm2\n"
+	"mov DWORD PTR [_sw_world_paint_ctx+88], ebp\n"
+	"emms\n"
+	"pop edi\n"
+	"pop esi\n"
+	"pop ebx\n"
+	"pop ebp\n"
+	"ret\n"
+	".data\n"
+	".align 4\n"
+	".globl _sw_world_packed_patch_sites\n"
+	"_sw_world_packed_patch_sites:\n"
+	".long .Lsw_m8packed_patch_mask_h, .Lsw_m8packed_patch_width\n"
+	".long .Lsw_m8packed_patch_mask_w, .Lsw_m8packed_patch_pixels\n"
+	".text\n"
+	".att_syntax prefix\n");
+
 static void sw_world_patch_material(const uint16_t *pixels, const byte *src8,
 	const int width, const int mask_w, const int mask_h)
 {
@@ -806,6 +891,10 @@ static void sw_world_patch_material(const uint16_t *pixels, const byte *src8,
 	*(volatile uint32_t *)sw_world_patch_sites[5] = (uint32_t)width;
 	*(volatile uint32_t *)sw_world_patch_sites[6] = (uint32_t)mask_w;
 	*(volatile uint32_t *)sw_world_patch_sites[7] = (uint32_t)(uintptr_t)src8;
+	*(volatile uint32_t *)sw_world_packed_patch_sites[0] = (uint32_t)mask_h;
+	*(volatile uint32_t *)sw_world_packed_patch_sites[1] = (uint32_t)width;
+	*(volatile uint32_t *)sw_world_packed_patch_sites[2] = (uint32_t)mask_w;
+	*(volatile uint32_t *)sw_world_packed_patch_sites[3] = (uint32_t)(uintptr_t)src8;
 	patched_pixels = pixels;
 	patched_src8 = src8;
 	patched_width = width;
@@ -1190,7 +1279,7 @@ static void draw_face_spans(const screen_vertex_t *verts, const int n, const sw_
 								iu, it, ils, ilt, iu_step, it_step, ils_step, ilt_step,
 								ikey, ikey_step, m8_light_prev_idx, 0
 							};
-							sw_world_paint_m8_run_pmmx();
+							sw_world_paint_m8_packed_pmmx();
 							m8_light_prev_idx = sw_world_paint_ctx.light_prev_idx;
 							shade_row = (const uint16_t *)sw_world_paint_ctx.mul5r;
 						}
