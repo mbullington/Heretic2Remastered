@@ -3729,37 +3729,34 @@ static void span_raster_flex_opaque_affine(const flex_opaque_vertex_t a,
 	const int db = (int)(gi_x * sw_flex_affine_base[2] * 131072.0f);
 	const int ikey_step = (int)(gw_x * SW_DEPTH_SCALE);
 	const qboolean has_key = !image->no_zero_texel;
-	for (int y = scan_first; y <= scan_last; ++y)
+	int y = scan_first;
+	while (left_cur != bottom && verts[left_cur]->y <= (y + 0.5f))
 	{
-		++sw_stats.bench_flex_spans;
-		const float y_center = y + 0.5f - a.y;
-		const int old_left_prev = left_prev, old_right_prev = right_prev;
-		while (left_cur != bottom && verts[left_cur]->y <= (y + 0.5f))
+		left_prev = left_cur;
+		left_cur = (left_cur + 1) % 3;
+	}
+	while (right_cur != bottom && verts[right_cur]->y <= (y + 0.5f))
+	{
+		right_prev = right_cur;
+		right_cur = (right_cur + 2) % 3;
+	}
+	const flex_opaque_vertex_t *lp0 = verts[left_prev], *lp1 = verts[left_cur];
+	const flex_opaque_vertex_t *rp0 = verts[right_prev], *rp1 = verts[right_cur];
+	left_slope = lp1->y > lp0->y ? (lp1->x - lp0->x) / (lp1->y - lp0->y) : 0.0f;
+	right_slope = rp1->y > rp0->y ? (rp1->x - rp0->x) / (rp1->y - rp0->y) : 0.0f;
+	left_x = lp0->x + (lp1->y > lp0->y ? ((y + 0.5f) - lp0->y) * left_slope : 0.0f);
+	right_x = rp0->x + (rp1->y > rp0->y ? ((y + 0.5f) - rp0->y) * right_slope : 0.0f);
+	while (y <= scan_last)
+	{
+		int phase_last = scan_last;
+		if (left_cur != bottom)
+			phase_last = min(phase_last, (int)ceilf(verts[left_cur]->y - 0.5f) - 1);
+		if (right_cur != bottom)
+			phase_last = min(phase_last, (int)ceilf(verts[right_cur]->y - 0.5f) - 1);
+		for (; y <= phase_last; ++y, left_x += left_slope, right_x += right_slope)
 		{
-			left_prev = left_cur;
-			left_cur = (left_cur + 1) % 3;
-		}
-		while (right_cur != bottom && verts[right_cur]->y <= (y + 0.5f))
-		{
-			right_prev = right_cur;
-			right_cur = (right_cur + 2) % 3;
-		}
-		const flex_opaque_vertex_t *lp0 = verts[left_prev], *lp1 = verts[left_cur];
-		const flex_opaque_vertex_t *rp0 = verts[right_prev], *rp1 = verts[right_cur];
-		if (left_prev != old_left_prev || y == scan_first)
-		{
-			left_slope = lp1->y > lp0->y ? (lp1->x - lp0->x) / (lp1->y - lp0->y) : 0.0f;
-			left_x = lp0->x + (lp1->y > lp0->y ? ((y + 0.5f) - lp0->y) * left_slope : 0.0f);
-		}
-		else
-			left_x += left_slope;
-		if (right_prev != old_right_prev || y == scan_first)
-		{
-			right_slope = rp1->y > rp0->y ? (rp1->x - rp0->x) / (rp1->y - rp0->y) : 0.0f;
-			right_x = rp0->x + (rp1->y > rp0->y ? ((y + 0.5f) - rp0->y) * right_slope : 0.0f);
-		}
-		else
-			right_x += right_slope;
+			++sw_stats.bench_flex_spans;
+			const float y_center = y + 0.5f - a.y;
 		const int xa = ClampI((int)ceilf(min(left_x, right_x) - 0.5f), 0, sw_width - 1);
 		const int xb = ClampI((int)ceilf(max(left_x, right_x) - 0.5f) - 1, 0, sw_width - 1);
 		if (xa > xb)
@@ -3824,6 +3821,31 @@ static void span_raster_flex_opaque_affine(const flex_opaque_vertex_t a,
 				}
 			}
 			iu += du; it += dt; ir += dr; ig += dg; ib += db; ikey += (uint32_t)ikey_step;
+		}
+		}
+		if (y > scan_last)
+			break;
+		if (left_cur != bottom && verts[left_cur]->y <= (y + 0.5f))
+		{
+			do {
+				left_prev = left_cur;
+				left_cur = (left_cur + 1) % 3;
+			} while (left_cur != bottom && verts[left_cur]->y <= (y + 0.5f));
+			lp0 = verts[left_prev];
+			lp1 = verts[left_cur];
+			left_slope = lp1->y > lp0->y ? (lp1->x - lp0->x) / (lp1->y - lp0->y) : 0.0f;
+			left_x = lp0->x + (lp1->y > lp0->y ? ((y + 0.5f) - lp0->y) * left_slope : 0.0f);
+		}
+		if (right_cur != bottom && verts[right_cur]->y <= (y + 0.5f))
+		{
+			do {
+				right_prev = right_cur;
+				right_cur = (right_cur + 2) % 3;
+			} while (right_cur != bottom && verts[right_cur]->y <= (y + 0.5f));
+			rp0 = verts[right_prev];
+			rp1 = verts[right_cur];
+			right_slope = rp1->y > rp0->y ? (rp1->x - rp0->x) / (rp1->y - rp0->y) : 0.0f;
+			right_x = rp0->x + (rp1->y > rp0->y ? ((y + 0.5f) - rp0->y) * right_slope : 0.0f);
 		}
 	}
 	++sw_stats.triangles;
