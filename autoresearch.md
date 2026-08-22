@@ -1,5 +1,27 @@
 # Autoresearch: DOS combat renderer
 
+## Active Segment 30: exact four-wide world light-cell runs
+
+Commit `80307e75` retains the exact 99.473 ms frame: 60.864 ms world,
+24.645 ms entities, and 9.211 ms blend. Reaching 80 ms requires a world-sized
+mechanism; Segment 29 proved flex command caching cannot supply it.
+
+Target `world_us <= 47,000` and `frame_us <= 85,000` first, then recover the
+remaining margin from flex setup and hot diagnostic subtraction. The primary
+prototype is a four-pixel M8 packed kernel that proves the current and third
+pixel remain in the same S and T light cells. Eligible groups resolve one shade
+row and bypass three light-coordinate spills, cell-index calculations,
+comparisons, and loop branches while preserving each texture sample, RGB565
+lookup, depth key, coverage decision, and write order exactly. Compare an
+eight-wide sibling only if four-wide wins. Retain scalar behavior for short or
+cross-cell tails and every existing unusual path.
+
+All corrected-Corvus workload, 320x240 RGB565 quality, gameplay, model count,
+render cadence, world/effects/UI semantics, PMMX compatibility, and image gates
+remain frozen. Stop after two slower width variants, any exactness failure, or
+when world reaches 47 ms. The complete design is in
+`~/.cache/plans/2026-08-20-four-wide-world-kernel-design.md`.
+
 ## Completed Segment 29: exact flex setup and strip batching
 
 Commit `31956c54` records the retained full-resolution baseline: 99.473 ms frame,

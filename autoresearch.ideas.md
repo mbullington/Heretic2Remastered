@@ -1,3 +1,15 @@
+# Segment 30 hypotheses
+
+1. **Four-wide same-light-cell world kernel.** Independently compare S and T
+   cells at pixels 0 and 3, then reuse the shade row and unroll exact sampling
+   and writes when constant signed interpolation proves all four remain in-cell.
+2. **Eight-wide same-light-cell sibling.** Try only if four-wide wins; the
+   measured 9.38-pixel mean light run makes width eight plausible but tails and
+   transitions may erase its benefit.
+3. **Hot diagnostic subtraction.** Once the structural kernel is selected,
+   remove per-pixel magenta accounting and other output-irrelevant telemetry
+   from production assembly while retaining frame-level correctness gates.
+
 # Segment 29 results
 
 1. **Mesh-batched projection table — rejected.** Logical projection reuse was
