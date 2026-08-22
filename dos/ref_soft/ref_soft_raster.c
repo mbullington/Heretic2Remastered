@@ -3436,13 +3436,11 @@ static void span_raster_flex_triangle(const flex_screen_vertex_t a, const flex_s
 							min(255u, (min(255u, mr) * (unsigned)salpha + (((unsigned)dst >> 8) & 0xF8u) * 255u) / 255u),
 							min(255u, (min(255u, mg) * (unsigned)salpha + (((unsigned)dst >> 3) & 0xFCu) * 255u) / 255u),
 							min(255u, (min(255u, mb) * (unsigned)salpha + (((unsigned)dst << 3) & 0xF8u) * 255u) / 255u));
-						sw_stats.bench_mag_flex += (fpx == 0xF81Fu);
 						fb_row[idx] = fpx;
 					}
 					else if (salpha == 255)
 					{
 						const uint16_t fpx = SW_RGB565(min(255u, mr), min(255u, mg), min(255u, mb));
-						sw_stats.bench_mag_flex += (fpx == 0xF81Fu);
 						fb_row[idx] = fpx;
 						if (depth_write && !no_depth_test)
 						{
@@ -3458,7 +3456,6 @@ static void span_raster_flex_triangle(const flex_screen_vertex_t a, const flex_s
 							min(255u, (min(255u, mr) * (unsigned)salpha + (((unsigned)dst >> 8) & 0xF8u) * dw) / 255u),
 							min(255u, (min(255u, mg) * (unsigned)salpha + (((unsigned)dst >> 3) & 0xFCu) * dw) / 255u),
 							min(255u, (min(255u, mb) * (unsigned)salpha + (((unsigned)dst << 3) & 0xF8u) * dw) / 255u));
-						sw_stats.bench_mag_flex += (fpx == 0xF81Fu);
 						fb_row[idx] = fpx;
 					}
 				}
@@ -3822,7 +3819,6 @@ static void span_raster_flex_opaque_affine(const flex_opaque_vertex_t a,
 					const int cb = min(512, max(0, ib >> 9));
 					const uint16_t fpx = (uint16_t)((sw_flex5lut[cr][(texel >> 11) & 31] << 11) |
 						(sw_flex6lut[cg][(texel >> 5) & 63] << 5) | sw_flex5lut[cb][texel & 31]);
-					sw_stats.bench_mag_flex += fpx == 0xF81Fu;
 					fb_row[idx] = fpx;
 					zb_row[idx] = ikey;
 					++sw_stats.depth_writes;
@@ -3985,7 +3981,6 @@ static void span_raster_flex_opaque(const flex_screen_vertex_t a, const flex_scr
 								sw_ri.Con_Printf(PRINT_ALL,
 									"tagxy clut bf=%u ir=%d lvl=%d s8=%d fpx=%04x pal=%04x blkey=%u\n",
 									sw_stats.bench_frames, ir, level, s8, fpx, image->pal565[s8], sw_clut_keys ? sw_clut_keys[sw_clut_cur] : 0u);
-							sw_stats.bench_mag_flex += (fpx == 0xF81Fu);
 							fb_row[idx] = fpx;
 							zb_row[idx] = ikey;
 							++sw_stats.depth_writes;
@@ -4033,7 +4028,6 @@ static void span_raster_flex_opaque(const flex_screen_vertex_t a, const flex_scr
 							const int cb = min(512, max(0, ib >> 9));
 							const uint16_t fpx = (uint16_t)((sw_flex5lut[cr][(texel >> 11) & 31] << 11) |
 								(sw_flex6lut[cg][(texel >> 5) & 63] << 5) | sw_flex5lut[cb][texel & 31]);
-							sw_stats.bench_mag_flex += (fpx == 0xF81Fu);
 							fb_row[idx] = fpx;
 							zb_row[idx] = ikey;
 							++sw_stats.depth_writes;
