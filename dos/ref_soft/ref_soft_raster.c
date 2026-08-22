@@ -4458,14 +4458,29 @@ void SW_RasterFlexEntity(const entity_t *entity, const sw_model_t *model, const 
 			const flex_proj_cache_t *projected[3];
 			int vertex_indices[3];
 			qboolean cache_ok = true;
+			qboolean vertices_valid = true;
+			int behind_near = 0;
 			for (int corner = 0; corner < 3; ++corner)
 			{
 				const int vertex = rt->vi[corner];
 				vertex_indices[corner] = vertex;
-				projected[corner] = (vertex >= 0 && vertex < SW_MAX_FLEX_VERTS) ?
-					flex_proj_lookup(entity, lerped, ent_view_m, ent_view_t, vertex) : NULL;
+				if (vertex >= 0 && vertex < SW_MAX_FLEX_VERTS)
+					projected[corner] = flex_proj_lookup(entity, lerped, ent_view_m, ent_view_t, vertex);
+				else
+				{
+					projected[corner] = NULL;
+					vertices_valid = false;
+				}
 				if (projected[corner] == NULL)
+				{
 					cache_ok = false;
+					++behind_near;
+				}
+			}
+			if (vertices_valid && behind_near == 3)
+			{
+				++sw_stats.bench_flex_tris_behind;
+				continue;
 			}
 				// Early trivial-reject, identical to the checks inside
 				// span_raster_flex_triangle/draw_flex_triangle: these triangles produce
