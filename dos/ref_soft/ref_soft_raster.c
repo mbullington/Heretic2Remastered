@@ -4517,18 +4517,16 @@ void SW_RasterFlexEntity(const entity_t *entity, const sw_model_t *model, const 
 				}
 				const qboolean opaque_tri = flex_opaque_ok && !use_color && cache_ok &&
 					skin != NULL && skin->pixels != NULL;
-			for (int corner = 0; corner < 3; ++corner)
-			{
-				uv[corner][0] = rt->st[corner][0];
-				uv[corner][1] = rt->st[corner][1];
-					if (!opaque_tri)
-					{
-						const float intensity = use_color || (entity->flags & RF_FULLBRIGHT) ? 1.0f : intensities[vertex_indices[corner]];
-						colors[corner][0] = use_color ? node_color[0] : base_light[0] * intensity;
-						colors[corner][1] = use_color ? node_color[1] : base_light[1] * intensity;
-						colors[corner][2] = use_color ? node_color[2] : base_light[2] * intensity;
-						colors[corner][3] = node_color[3];
-					}
+			if (!opaque_tri)
+				for (int corner = 0; corner < 3; ++corner)
+				{
+					uv[corner][0] = rt->st[corner][0];
+					uv[corner][1] = rt->st[corner][1];
+					const float intensity = use_color || (entity->flags & RF_FULLBRIGHT) ? 1.0f : intensities[vertex_indices[corner]];
+					colors[corner][0] = use_color ? node_color[0] : base_light[0] * intensity;
+					colors[corner][1] = use_color ? node_color[1] : base_light[1] * intensity;
+					colors[corner][2] = use_color ? node_color[2] : base_light[2] * intensity;
+					colors[corner][3] = node_color[3];
 				}
 				sw_bench_tri_category = 1;
 				++sw_stats.bench_flex_tris;
@@ -4546,8 +4544,8 @@ void SW_RasterFlexEntity(const entity_t *entity, const sw_model_t *model, const 
 							corners[corner].x = projected[corner]->x;
 							corners[corner].y = projected[corner]->y;
 							corners[corner].inverse_z = projected[corner]->inverse_z;
-							corners[corner].s = uv[corner][0] * (float)skin->width;
-							corners[corner].t = uv[corner][1] * (float)skin->height;
+							corners[corner].s = rt->st[corner][0] * (float)skin->width;
+							corners[corner].t = rt->st[corner][1] * (float)skin->height;
 							corners[corner].red = sw_flex_vcolor[vertex_indices[corner]][0];
 							corners[corner].green = sw_flex_vcolor[vertex_indices[corner]][1];
 							corners[corner].blue = sw_flex_vcolor[vertex_indices[corner]][2];
@@ -4563,8 +4561,10 @@ void SW_RasterFlexEntity(const entity_t *entity, const sw_model_t *model, const 
 							corners[corner].x = projected[corner]->x;
 							corners[corner].y = projected[corner]->y;
 							corners[corner].inverse_z = w;
-							corners[corner].s_over_z = uv[corner][0] * (float)skin->width * w;
-							corners[corner].t_over_z = uv[corner][1] * (float)skin->height * w;
+							const float s = opaque_tri ? rt->st[corner][0] : uv[corner][0];
+							const float t = opaque_tri ? rt->st[corner][1] : uv[corner][1];
+							corners[corner].s_over_z = s * (float)skin->width * w;
+							corners[corner].t_over_z = t * (float)skin->height * w;
 							if (opaque_tri)
 							{
 								corners[corner].red_over_z = sw_flex_vcolor[vertex_indices[corner]][0] * w;
