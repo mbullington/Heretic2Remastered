@@ -3546,8 +3546,10 @@ static void sw_flex_lut_init(void)
 
 typedef struct flex_mask_shape_s {
 	unsigned key_plus_one;
-	uint32_t coverage;
+	byte x[25];
+	byte y[25];
 	byte source[25];
+	byte count;
 	byte width, height;
 } flex_mask_shape_t;
 
@@ -3583,7 +3585,7 @@ static const flex_mask_shape_t *flex_mask_shape(const flex_mask_vertex_t vertice
 	if (shape->key_plus_one == key + 1u)
 		return shape;
 	shape->key_plus_one = key + 1u;
-	shape->coverage = 0;
+	shape->count = 0;
 	shape->width = (byte)width;
 	shape->height = (byte)height;
 	flex_mask_vertex_t local[3] = { vertices[0], vertices[1], vertices[2] };
@@ -3600,9 +3602,10 @@ static const flex_mask_shape_t *flex_mask_shape(const flex_mask_vertex_t vertice
 			const int e2 = flex_mask_orient(&local[0], &local[1], x, y);
 			if (e0 >= 0 && e1 >= 0 && e2 >= 0)
 			{
-				const int bit = y * 5 + x;
-				shape->coverage |= 1u << bit;
-				shape->source[bit] = (byte)(e0 >= e1 && e0 >= e2 ? 0 : (e1 >= e2 ? 1 : 2));
+				const int point = shape->count++;
+				shape->x[point] = (byte)x;
+				shape->y[point] = (byte)y;
+				shape->source[point] = (byte)(e0 >= e1 && e0 >= e2 ? 0 : (e1 >= e2 ? 1 : 2));
 			}
 		}
 	return shape;
@@ -3648,27 +3651,23 @@ static qboolean flex_mask_opaque(const flex_proj_cache_t *projected[3],
 		vertices[corner].depth = (uint32_t)(projected[corner]->inverse_z * SW_DEPTH_SCALE);
 	}
 	const flex_mask_shape_t *shape = flex_mask_shape(vertices, minimum_x, minimum_y, width, height);
-	for (int y = 0; y < shape->height; ++y)
-		for (int x = 0; x < shape->width; ++x)
+	for (int point = 0; point < shape->count; ++point)
+	{
+		const flex_mask_vertex_t *source = &vertices[shape->source[point]];
+		const int screen_x = minimum_x + shape->x[point];
+		const int screen_y = minimum_y + shape->y[point];
+		if (!source->paints || screen_x < 0 || screen_x >= sw_width ||
+			screen_y < 0 || screen_y >= sw_height)
+			continue;
+		const size_t index = (size_t)screen_y * sw_width + screen_x;
+		++sw_stats.bench_pixels_flex;
+		if (source->depth >= sw_depth[index])
 		{
-			const int bit = y * 5 + x;
-			if ((shape->coverage & (1u << bit)) == 0)
-				continue;
-			const flex_mask_vertex_t *source = &vertices[shape->source[bit]];
-			const int screen_x = minimum_x + x;
-			const int screen_y = minimum_y + y;
-			if (!source->paints || screen_x < 0 || screen_x >= sw_width ||
-				screen_y < 0 || screen_y >= sw_height)
-				continue;
-			const size_t index = (size_t)screen_y * sw_width + screen_x;
-			++sw_stats.bench_pixels_flex;
-			if (source->depth >= sw_depth[index])
-			{
-				sw_color[index] = source->color;
-				sw_depth[index] = source->depth;
-				++sw_stats.depth_writes;
-			}
+			sw_color[index] = source->color;
+			sw_depth[index] = source->depth;
+			++sw_stats.depth_writes;
 		}
+	}
 	++sw_stats.triangles;
 	++sw_stats.flex_triangles;
 	++sw_stats.bench_flex_tris_mask;
