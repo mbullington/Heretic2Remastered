@@ -1,25 +1,37 @@
 # Autoresearch: DOS combat renderer
 
-## Active Segment 30: exact four-wide world light-cell runs
+## Active Segment 31: multi-map entity architecture
 
-Commit `80307e75` retains the exact 99.473 ms frame: 60.864 ms world,
-24.645 ms entities, and 9.211 ms blend. Reaching 80 ms requires a world-sized
-mechanism; Segment 29 proved flex command caching cannot supply it.
+Commit `9aff7dce` retains every Segment-30 gain: the corrected-Corvus combat
+frame is 87.149 ms with 54.114 ms world, 23.773 ms entities, 18.913 ms flex,
+3.360 ms particles, and 4.628 ms blend. Segment 30 cut 12.324 ms without
+resolution, cadence, gameplay, model, or image changes.
 
-Target `world_us <= 47,000` and `frame_us <= 85,000` first, then recover the
-remaining margin from flex setup and hot diagnostic subtraction. The primary
-prototype is a four-pixel M8 packed kernel that proves the current and third
-pixel remain in the same S and T light cells. Eligible groups resolve one shade
-row and bypass three light-coordinate spills, cell-index calculations,
-comparisons, and loop branches while preserving each texture sample, RGB565
-lookup, depth key, coverage decision, and write order exactly. Compare an
-eight-wide sibling only if four-wide wins. Retain scalar behavior for short or
-cross-cell tails and every existing unusual path.
+Entity work now uses a three-map retail suite (`sstown`, `hive1`, and
+`tutorial2`) with the same deterministic combat population and camera sweep.
+The primary metric is the sum of `entities_us` across all maps; every map is a
+hard secondary guard and may not regress to improve the aggregate. The target
+is at least a 35% suite reduction, with the tutorial2 frame target still 80 ms.
+The final tutorial2 run preserves the existing combat/image backpressure gates;
+FLEXOLD/FLEXMID/FLEXNEW/FLEXSKEL remain independent pose and skeletal holdouts.
+No map, model, animation, benchmark, visibility, triangle, resolution, quality,
+or cadence special cases are allowed.
 
-All corrected-Corvus workload, 320x240 RGB565 quality, gameplay, model count,
-render cadence, world/effects/UI semantics, PMMX compatibility, and image gates
-remain frozen. Stop after two slower width variants, any exactness failure, or
-when world reaches 47 ms. The complete design is in
+The next mechanisms must remove work for entity data shapes generally: first
+separate clipped versus opaque-affine setup cost across all maps, then replace
+the dominant edge/gradient setup with one lower-work representation. Keep exact
+fallbacks for near clipping, translucency, CLUT, node overrides, shadows, and
+skeletal models. Stop mechanisms that win only one map.
+
+## Completed Segment 30: exact world groups and diagnostic subtraction
+
+Segment 30 retained exact four-wide same-light-cell world groups, hoisted shade
+rows, coalesced uncovered coverage words, removed obsolete per-pixel magenta
+accounting from world/blend/flex/particles, densely encoded microtriangle masks,
+and removed a slower mesh-node AABB pre-cull. The eight-wide kernel, patched
+power-of-two sampler shifts, and local flex counter aggregation were rejected.
+The retained combat result is 87.149 ms, down from 99.473 ms; all image and
+runtime gates passed. The design is in
 `~/.cache/plans/2026-08-20-four-wide-world-kernel-design.md`.
 
 ## Completed Segment 29: exact flex setup and strip batching

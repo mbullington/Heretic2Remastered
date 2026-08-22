@@ -138,7 +138,7 @@ def main() -> int:
                 failures.append(f"missing bench line: {prefix}...")
 
         leftover = subprocess.run(
-            ["pgrep", "-f", "dosbox-staging"], capture_output=True, text=True, check=False
+            ["pgrep", "-x", "dosbox-staging"], capture_output=True, text=True, check=False
         )
         if leftover.returncode == 0:
             failures.append("dosbox-staging process left running")

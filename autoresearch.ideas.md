@@ -1,14 +1,21 @@
-# Segment 30 hypotheses
+# Segment 31 untried hypotheses
 
-1. **Four-wide same-light-cell world kernel.** Independently compare S and T
-   cells at pixels 0 and 3, then reuse the shade row and unroll exact sampling
-   and writes when constant signed interpolation proves all four remain in-cell.
-2. **Eight-wide same-light-cell sibling.** Try only if four-wide wins; the
-   measured 9.38-pixel mean light run makes width eight plausible but tails and
-   transitions may erase its benefit.
-3. **Hot diagnostic subtraction.** Once the structural kernel is selected,
-   remove per-pixel magenta accounting and other output-irrelevant telemetry
-   from production assembly while retaining frame-level correctness gates.
+1. **Cross-map path-cost census.** Measure opaque-mask, opaque-affine,
+   perspective/CLUT, and near-clipped setup separately on `sstown`, `hive1`, and
+   `tutorial2`; select mechanisms only when the same path dominates broadly.
+2. **Incremental integer edge setup.** Replace repeated floating scanline edge
+   reconstruction for tiny opaque-affine triangles with exact fixed edge
+   start/step records while retaining the current interpolation and pixel loop.
+3. **Model command preprocessing by path facts.** Precompute only immutable
+   winding/UV/skin facts at load time, not runtime corners or projection caches;
+   Segment 29 proved runtime command caching loses.
+
+# Segment 30 results
+
+Four-wide light-cell groups, shade-row hoisting, uncovered-word coalescing,
+dense mask points, and diagnostic subtraction were retained. Eight-wide groups,
+patched texture shifts, and local counter aggregation were rejected. Combat
+improved from 99.473 to 87.149 ms without renderer quality changes.
 
 # Segment 29 results
 
