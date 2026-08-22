@@ -1,27 +1,39 @@
 # Autoresearch: DOS combat renderer
 
-## Active Segment 31: multi-map entity architecture
+## Active Segment 32: interactive `sstown` frame time
 
-Commit `9aff7dce` retains every Segment-30 gain: the corrected-Corvus combat
-frame is 87.149 ms with 54.114 ms world, 23.773 ms entities, 18.913 ms flex,
-3.360 ms particles, and 4.628 ms blend. Segment 30 cut 12.324 ms without
-resolution, cadence, gameplay, model, or image changes.
+Interactive walking reports that `sstown` remains slow, which the frozen retail
+suite confirms: 131.903 ms/frame versus 95.699 ms on `hive1` and 84.654 ms on
+`tutorial2`. The corrected `sstown` breakdown is 80.796 ms world, 28.210 ms
+entities, 12.239 ms dynamic lights, 4.782 ms blend, and 3.388 ms particles.
+Dynamic lights alone cost 80–170x the other two maps, while world remains the
+largest pool. This separation is the ruler for the new segment.
 
-Entity work now uses a three-map retail suite (`sstown`, `hive1`, and
-`tutorial2`) with the same deterministic combat population and camera sweep.
-The primary metric is the sum of `entities_us` across all maps; every map is a
-hard secondary guard and may not regress to improve the aggregate. The target
-is at least a 35% suite reduction, with the tutorial2 frame target still 80 ms.
-The final tutorial2 run preserves the existing combat/image backpressure gates;
-FLEXOLD/FLEXMID/FLEXNEW/FLEXSKEL remain independent pose and skeletal holdouts.
-No map, model, animation, benchmark, visibility, triangle, resolution, quality,
-or cadence special cases are allowed.
+The primary metric is frozen `sstown_frame_us`; first milestone is 120,000 us,
+then 100,000 us and the existing 80,000 us interactive target. The unchanged
+three-map suite remains the workload: `hive1_frame_us`, `tutorial2_frame_us`,
+all entity/flex timings, and every existing image/functional gate are hard
+secondary guards. No map-name checks, scene keys, visibility/cadence shortcuts,
+resolution changes, gameplay changes, light-count reductions, or relaxed image
+budgets are permitted. Optimizations must improve general renderer mechanisms
+whose naturally higher coverage makes them matter more in `sstown`.
 
-The next mechanisms must remove work for entity data shapes generally: first
-separate clipped versus opaque-affine setup cost across all maps, then replace
-the dominant edge/gradient setup with one lower-work representation. Keep exact
-fallbacks for near clipping, translucency, CLUT, node overrides, shadows, and
-skeletal models. Stop mechanisms that win only one map.
+Start with exact dynamic-light transfer/setup work because its isolated 12.239
+ms pool can cross the first milestone, then return to exact world kernels.
+Freeze workload, captures, metrics, and gates after the Segment-32 baseline.
+Stop at 80,000 us, after three distinct representation-level rejects, on user
+interruption, or at a tooling dead end.
+
+## Completed Segment 31: multi-map entity architecture
+
+The three-map retail entity suite (`sstown`, `hive1`, and `tutorial2`) reduced
+from 89.125 to 75.592 ms while every map and image gate passed. Retained work
+rejects wholly-behind triangles before setup, expands dense connected masks to
+the gate-safe 9x9 boundary, removes redundant opaque UV copies, hoists winding
+state, represents affine Gouraud lighting with one intensity plane, and groups
+scanlines into exact stable edge phases. Final per-map entity times are 28.210,
+26.108, and 21.274 ms; tutorial2 frame time is 84.654 ms. Exact fallbacks remain
+for clipping, translucency, CLUT, node overrides, shadows, and skeletal models.
 
 ## Completed Segment 30: exact world groups and diagnostic subtraction
 
