@@ -5185,7 +5185,10 @@ void SW_RasterParticles(const refdef_t *fd)
 #define SW_DL_RADIUS_MAX 64
 #define SW_DL_STRIDE (2 * SW_DL_RADIUS_MAX + 1)
 #define SW_DL_FACTOR_SIZE (2 * SW_DL_RADIUS_MAX * SW_DL_RADIUS_MAX + 1)
+#define SW_DL_D2_MAX (SW_DL_RADIUS_MAX * SW_DL_RADIUS_MAX)
 static float sw_dl_factor[SW_DL_RADIUS_MAX + 1][SW_DL_FACTOR_SIZE];
+static byte sw_dl_alpha[SW_DL_RADIUS_MAX + 1][SW_DL_D2_MAX + 1];
+static uint16_t sw_dl_alpha_tag[SW_DL_RADIUS_MAX + 1];
 static byte sw_dl_extent[SW_DL_RADIUS_MAX + 1][SW_DL_STRIDE];
 static byte sw_dl_built[SW_DL_RADIUS_MAX + 1];
 
@@ -5249,6 +5252,15 @@ void SW_RasterLights(const refdef_t *fd)
 		const unsigned sg = (color >> 3) & 0xFCu;
 		const unsigned sb = (color << 3) & 0xF8u;
 		const float *const factor = sw_dl_factor[radius];
+		const uint16_t alpha_tag = (uint16_t)light->color.a + 1u;
+		if (sw_dl_alpha_tag[radius] != alpha_tag)
+		{
+			byte *const alpha_build = sw_dl_alpha[radius];
+			for (int d2 = 0; d2 <= radius * radius; ++d2)
+				alpha_build[d2] = (byte)(factor[d2] * light->color.a * 0.35f);
+			sw_dl_alpha_tag[radius] = alpha_tag;
+		}
+		const byte *const alpha_row = sw_dl_alpha[radius];
 		unsigned mag = 0;
 		for (int py = -radius; py <= radius; ++py)
 		{
@@ -5266,7 +5278,7 @@ void SW_RasterLights(const refdef_t *fd)
 				// SW_PutPixel production z-guard: writes iff key >= stored (rejects key < zb).
 				if (zbr[px] > key)
 					continue;
-				const byte alpha = (byte)(factor[py2 + px * px] * light->color.a * 0.35f);
+				const byte alpha = alpha_row[py2 + px * px];
 				if (alpha == 0)
 					continue;
 				const uint16_t dcol = dst[px];
