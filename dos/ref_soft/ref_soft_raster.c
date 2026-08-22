@@ -3543,12 +3543,13 @@ static void sw_flex_lut_init(void)
 }
 
 #define SW_FLEX_MASK_CACHE_SIZE 256
+#define SW_FLEX_MASK_MAX 8
 
 typedef struct flex_mask_shape_s {
 	unsigned key_plus_one;
-	byte x[25];
-	byte y[25];
-	byte source[25];
+	byte x[SW_FLEX_MASK_MAX * SW_FLEX_MASK_MAX];
+	byte y[SW_FLEX_MASK_MAX * SW_FLEX_MASK_MAX];
+	byte source[SW_FLEX_MASK_MAX * SW_FLEX_MASK_MAX];
 	byte count;
 	byte width, height;
 } flex_mask_shape_t;
@@ -3578,8 +3579,8 @@ static const flex_mask_shape_t *flex_mask_shape(const flex_mask_vertex_t vertice
 	{
 		local_x[corner] = vertices[corner].x - origin_x;
 		local_y[corner] = vertices[corner].y - origin_y;
-		const unsigned point = (unsigned)(local_y[corner] * 6 + local_x[corner]);
-		key = key * 36u + point;
+		const unsigned point = (unsigned)(local_y[corner] * (SW_FLEX_MASK_MAX + 1) + local_x[corner]);
+		key = key * ((SW_FLEX_MASK_MAX + 1) * (SW_FLEX_MASK_MAX + 1)) + point;
 	}
 	flex_mask_shape_t *shape = &sw_flex_mask_cache[key & (SW_FLEX_MASK_CACHE_SIZE - 1)];
 	if (shape->key_plus_one == key + 1u)
@@ -3633,7 +3634,7 @@ static qboolean flex_mask_opaque(const flex_proj_cache_t *projected[3],
 	}
 	const int width = maximum_x - minimum_x;
 	const int height = maximum_y - minimum_y;
-	if (width < 1 || height < 1 || width > 5 || height > 5 ||
+	if (width < 1 || height < 1 || width > SW_FLEX_MASK_MAX || height > SW_FLEX_MASK_MAX ||
 		flex_mask_orient(&vertices[0], &vertices[1], vertices[2].x, vertices[2].y) <= 0)
 		return false;
 	for (int corner = 0; corner < 3; ++corner)
