@@ -5192,6 +5192,16 @@ static uint16_t sw_dl_alpha_tag[SW_DL_RADIUS_MAX + 1];
 static byte sw_dl_extent[SW_DL_RADIUS_MAX + 1][SW_DL_STRIDE];
 static byte sw_dl_built[SW_DL_RADIUS_MAX + 1];
 
+#define SW_DL_COLOR_SLOTS 64
+typedef struct sw_dl_color_row_s {
+	uint16_t key;
+	byte valid;
+	byte r[256];
+	byte g[256];
+	byte b[256];
+} sw_dl_color_row_t;
+static sw_dl_color_row_t sw_dl_color_rows[SW_DL_COLOR_SLOTS];
+
 static void sw_dl_build(const int radius)
 {
 	sw_dl_built[radius] = 1;
@@ -5251,6 +5261,19 @@ void SW_RasterLights(const refdef_t *fd)
 		const unsigned sr = (color >> 8) & 0xF8u;
 		const unsigned sg = (color >> 3) & 0xFCu;
 		const unsigned sb = (color << 3) & 0xF8u;
+		sw_dl_color_row_t *const color_row =
+			&sw_dl_color_rows[(color ^ (color >> 6)) & (SW_DL_COLOR_SLOTS - 1)];
+		if (!color_row->valid || color_row->key != color)
+		{
+			for (unsigned alpha = 0; alpha < 256; ++alpha)
+			{
+				color_row->r[alpha] = (byte)(((sr * alpha) * 0x8081u) >> 23);
+				color_row->g[alpha] = (byte)(((sg * alpha) * 0x8081u) >> 23);
+				color_row->b[alpha] = (byte)(((sb * alpha) * 0x8081u) >> 23);
+			}
+			color_row->key = color;
+			color_row->valid = 1;
+		}
 		const float *const factor = sw_dl_factor[radius];
 		const uint16_t alpha_tag = (uint16_t)light->color.a + 1u;
 		if (sw_dl_alpha_tag[radius] != alpha_tag)
@@ -5282,9 +5305,9 @@ void SW_RasterLights(const refdef_t *fd)
 				if (alpha == 0)
 					continue;
 				const uint16_t dcol = dst[px];
-				const unsigned r = min(255u, ((dcol >> 8) & 0xF8u) + (((sr * alpha) * 0x8081u) >> 23));
-				const unsigned g = min(255u, ((dcol >> 3) & 0xFCu) + (((sg * alpha) * 0x8081u) >> 23));
-				const unsigned b = min(255u, ((dcol << 3) & 0xF8u) + (((sb * alpha) * 0x8081u) >> 23));
+				const unsigned r = min(255u, ((dcol >> 8) & 0xF8u) + color_row->r[alpha]);
+				const unsigned g = min(255u, ((dcol >> 3) & 0xFCu) + color_row->g[alpha]);
+				const unsigned b = min(255u, ((dcol << 3) & 0xF8u) + color_row->b[alpha]);
 				const uint16_t out = SW_RGB565(r, g, b);
 				dst[px] = out;
 				mag += (out == 0xF81Fu);
