@@ -2720,10 +2720,10 @@ typedef struct flex_opaque_vertex_s {
 	float inverse_z;
 	float s;
 	float t;
-	float red;
-	float green;
-	float blue;
+	float intensity;
 } flex_opaque_vertex_t;
+
+static float sw_flex_affine_base[3];
 
 typedef struct flex_screen_vertex_s {
 	float x;
@@ -3698,7 +3698,7 @@ static void span_raster_flex_opaque_affine(const flex_opaque_vertex_t a,
 		return;
 	const float inv = 1.0f / denom;
 	float gs_x, gs_y, gt_x, gt_y, gw_x, gw_y;
-	float gr_x, gr_y, gg_x, gg_y, gb_x, gb_y;
+	float gi_x, gi_y;
 #define SWA_GRAD(attr, ox, oy) do { \
 		const float p10 = b.attr - a.attr; \
 		const float p20 = c.attr - a.attr; \
@@ -3708,9 +3708,7 @@ static void span_raster_flex_opaque_affine(const flex_opaque_vertex_t a,
 	SWA_GRAD(s, gs_x, gs_y);
 	SWA_GRAD(t, gt_x, gt_y);
 	SWA_GRAD(inverse_z, gw_x, gw_y);
-	SWA_GRAD(red, gr_x, gr_y);
-	SWA_GRAD(green, gg_x, gg_y);
-	SWA_GRAD(blue, gb_x, gb_y);
+	SWA_GRAD(intensity, gi_x, gi_y);
 #undef SWA_GRAD
 
 	const flex_opaque_vertex_t *verts[3] = { &a, &b, &c };
@@ -3726,9 +3724,9 @@ static void span_raster_flex_opaque_affine(const flex_opaque_vertex_t a,
 	float left_x = 0.0f, right_x = 0.0f, left_slope = 0.0f, right_slope = 0.0f;
 	const int du = (int)(gs_x * 65536.0f);
 	const int dt = (int)(gt_x * 65536.0f);
-	const int dr = (int)(gr_x * 131072.0f);
-	const int dg = (int)(gg_x * 131072.0f);
-	const int db = (int)(gb_x * 131072.0f);
+	const int dr = (int)(gi_x * sw_flex_affine_base[0] * 131072.0f);
+	const int dg = (int)(gi_x * sw_flex_affine_base[1] * 131072.0f);
+	const int db = (int)(gi_x * sw_flex_affine_base[2] * 131072.0f);
 	const int ikey_step = (int)(gw_x * SW_DEPTH_SCALE);
 	const qboolean has_key = !image->no_zero_texel;
 	for (int y = scan_first; y <= scan_last; ++y)
@@ -3770,9 +3768,10 @@ static void span_raster_flex_opaque_affine(const flex_opaque_vertex_t a,
 		const float x_center = xa + 0.5f - a.x;
 		int iu = (int)((a.s + gs_x * x_center + gs_y * y_center) * 65536.0f);
 		int it = (int)((a.t + gt_x * x_center + gt_y * y_center) * 65536.0f);
-		int ir = (int)((a.red + gr_x * x_center + gr_y * y_center) * 131072.0f);
-		int ig = (int)((a.green + gg_x * x_center + gg_y * y_center) * 131072.0f);
-		int ib = (int)((a.blue + gb_x * x_center + gb_y * y_center) * 131072.0f);
+		const float intensity = a.intensity + gi_x * x_center + gi_y * y_center;
+		int ir = (int)(intensity * sw_flex_affine_base[0] * 131072.0f);
+		int ig = (int)(intensity * sw_flex_affine_base[1] * 131072.0f);
+		int ib = (int)(intensity * sw_flex_affine_base[2] * 131072.0f);
 		uint32_t ikey = (uint32_t)((a.inverse_z + gw_x * x_center + gw_y * y_center) * SW_DEPTH_SCALE);
 		uint16_t *const fb_row = sw_color + (size_t)y * sw_width;
 		uint32_t *const zb_row = sw_depth + (size_t)y * sw_width;
@@ -4406,6 +4405,9 @@ void SW_RasterFlexEntity(const entity_t *entity, const sw_model_t *model, const 
 	const qboolean flex_opaque_ok = opaque_depth && !additive && !shadow_pass;
 	if (flex_opaque_ok && flex->render_num_xyz <= SW_MAX_FLEX_VERTS)
 	{
+		sw_flex_affine_base[0] = base_light[0];
+		sw_flex_affine_base[1] = base_light[1];
+		sw_flex_affine_base[2] = base_light[2];
 		const qboolean fullbright = (entity->flags & RF_FULLBRIGHT) != 0;
 		for (int vertex = 0; vertex < flex->render_num_xyz; ++vertex)
 		{
@@ -4547,9 +4549,8 @@ void SW_RasterFlexEntity(const entity_t *entity, const sw_model_t *model, const 
 							corners[corner].inverse_z = projected[corner]->inverse_z;
 							corners[corner].s = rt->st[corner][0] * (float)skin->width;
 							corners[corner].t = rt->st[corner][1] * (float)skin->height;
-							corners[corner].red = sw_flex_vcolor[vertex_indices[corner]][0];
-							corners[corner].green = sw_flex_vcolor[vertex_indices[corner]][1];
-							corners[corner].blue = sw_flex_vcolor[vertex_indices[corner]][2];
+							corners[corner].intensity = (entity->flags & RF_FULLBRIGHT) != 0 ?
+								1.0f : intensities[vertex_indices[corner]];
 						}
 						span_raster_flex_opaque_affine(corners[0], corners[1], corners[2], skin);
 					}
