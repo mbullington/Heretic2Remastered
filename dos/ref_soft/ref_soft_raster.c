@@ -3543,7 +3543,7 @@ static void sw_flex_lut_init(void)
 }
 
 #define SW_FLEX_MASK_CACHE_SIZE 256
-#define SW_FLEX_MASK_MAX 8
+#define SW_FLEX_MASK_MAX 9
 
 typedef struct flex_mask_shape_s {
 	unsigned key_plus_one;
