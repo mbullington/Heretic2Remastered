@@ -4417,6 +4417,13 @@ void SW_RasterFlexEntity(const entity_t *entity, const sw_model_t *model, const 
 		if (sw_clut_enabled() && base_skin != NULL && base_skin->src8 != NULL)
 			sw_clut_select(base_light, base_skin);
 	}
+	static cvar_t *sw_wind;
+	if (sw_wind == NULL)
+	{
+		const char *env = getenv("H2DOS_SW_WIND");
+		sw_wind = sw_ri.Cvar_Get("r_swwind", env != NULL ? env : "1", 0);
+	}
+	const qboolean wind_enabled = sw_wind != NULL && sw_wind->value != 0.0f;
 	for (int mesh_index = 0; mesh_index < flex->header.num_mesh_nodes; ++mesh_index)
 	{
 		const fmnodeinfo_t *node = entity->fmnodeinfo != NULL ? &entity->fmnodeinfo[mesh_index] : NULL;
@@ -4499,13 +4506,7 @@ void SW_RasterFlexEntity(const entity_t *entity, const sw_model_t *model, const 
 				// E50-restore (ideas queue #1): default-ON winding cull after the
 				// 144-frame A/B measured 0 px delta with the gate swing (combat +
 				// player alias + monsters). Env off-switch: H2DOS_SW_WIND=0.
-				static cvar_t *sw_wind;
-				if (sw_wind == NULL)
-				{
-					const char *env = getenv("H2DOS_SW_WIND");
-					sw_wind = sw_ri.Cvar_Get("r_swwind", env != NULL ? env : "1", 0);
-				}
-				if (sw_wind != NULL && sw_wind->value != 0.0f && cache_ok)
+				if (wind_enabled && cache_ok)
 				{
 					const float area2 = (projected[1]->x - projected[0]->x) * (projected[2]->y - projected[0]->y) -
 						(projected[2]->x - projected[0]->x) * (projected[1]->y - projected[0]->y);
