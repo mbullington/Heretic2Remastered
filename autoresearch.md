@@ -1,6 +1,6 @@
 # Autoresearch: DOS combat renderer
 
-## Active Segment 32: interactive `sstown` frame time
+## Completed Segment 32: interactive `sstown` frame time
 
 Interactive walking reports that `sstown` remains slow, which the frozen retail
 suite confirms: 131.903 ms/frame versus 95.699 ms on `hive1` and 84.654 ms on
@@ -23,6 +23,13 @@ ms pool can cross the first milestone, then return to exact world kernels.
 Freeze workload, captures, metrics, and gates after the Segment-32 baseline.
 Stop at 80,000 us, after three distinct representation-level rejects, on user
 interruption, or at a tooling dead end.
+
+The user stopped the segment after exact dynamic-light transfer rows, cached
+RGB565 source contributions, direct packed-channel saturation, and prequantized
+5/6/5 contributions reduced `sstown` from 131.903 to 127.083 ms/frame. Dynamic
+lights fell from 12.239 to roughly 7.4 ms without changing their count, shape,
+depth behavior, color, or output. Every three-map and image gate passed. The
+unverified world-packet experiment was reverted when its run was interrupted.
 
 ## Completed Segment 31: multi-map entity architecture
 
