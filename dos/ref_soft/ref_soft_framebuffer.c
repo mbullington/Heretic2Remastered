@@ -479,8 +479,6 @@ void SW_BlendRect(const int x, const int y, const int w, const int h, const uint
 			for (int column = start_x; column < end_x; ++column)
 				dst[column] = color;
 		}
-		sw_stats.bench_mag_putpixel +=
-			(color == 0xF81Fu) ? (unsigned)((end_x - start_x) * (end_y - start_y)) : 0u;
 		return;
 	}
 	// n = sr*alpha + dr*(255-alpha) reaches at most 248*255 = 63240 because
@@ -513,7 +511,6 @@ void SW_BlendRect(const int x, const int y, const int w, const int h, const uint
 			sw_blend_rgmap[d] = (uint16_t)(rmap[d >> 6] | gmap[d & 63u]);
 	const uint16_t *const transfer = use_rgmap ?
 		sw_blend_lut_get(((uint32_t)color << 8) | alpha, bmap) : NULL;
-	unsigned mag = 0;
 	if (transfer != NULL)
 	{
 		for (int row = start_y; row < end_y; ++row)
@@ -530,14 +527,11 @@ void SW_BlendRect(const int x, const int y, const int w, const int h, const uint
 				dst[column + 1] = out1;
 				dst[column + 2] = out2;
 				dst[column + 3] = out3;
-				mag += (out0 == 0xF81Fu) + (out1 == 0xF81Fu) +
-					(out2 == 0xF81Fu) + (out3 == 0xF81Fu);
 			}
 			for (; column < end_x; ++column)
 			{
 				const uint16_t out = transfer[dst[column]];
 				dst[column] = out;
-				mag += (out == 0xF81Fu);
 			}
 		}
 	}
@@ -551,7 +545,6 @@ void SW_BlendRect(const int x, const int y, const int w, const int h, const uint
 				const uint16_t d = dst[column];
 				const uint16_t out = (uint16_t)(sw_blend_rgmap[d >> 5] | bmap[d & 31u]);
 				dst[column] = out;
-				mag += (out == 0xF81Fu);
 			}
 		}
 	}
@@ -565,11 +558,9 @@ void SW_BlendRect(const int x, const int y, const int w, const int h, const uint
 				const uint16_t d = dst[column];
 				const uint16_t out = (uint16_t)(rmap[d >> 11] | gmap[(d >> 5) & 63u] | bmap[d & 31u]);
 				dst[column] = out;
-				mag += (out == 0xF81Fu);
 			}
 		}
 	}
-	sw_stats.bench_mag_putpixel += mag;
 	if (sw_blend_pending)
 		sw_stats.bench_post_blend_writes += (unsigned)((end_x - start_x) * (end_y - start_y));
 }
