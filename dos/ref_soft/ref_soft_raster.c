@@ -5267,9 +5267,9 @@ void SW_RasterLights(const refdef_t *fd)
 		{
 			for (unsigned alpha = 0; alpha < 256; ++alpha)
 			{
-				color_row->r[alpha] = (byte)(((sr * alpha) * 0x8081u) >> 23);
-				color_row->g[alpha] = (byte)(((sg * alpha) * 0x8081u) >> 23);
-				color_row->b[alpha] = (byte)(((sb * alpha) * 0x8081u) >> 23);
+				color_row->r[alpha] = (byte)((((sr * alpha) * 0x8081u) >> 23) >> 3);
+				color_row->g[alpha] = (byte)((((sg * alpha) * 0x8081u) >> 23) >> 2);
+				color_row->b[alpha] = (byte)((((sb * alpha) * 0x8081u) >> 23) >> 3);
 			}
 			color_row->key = color;
 			color_row->valid = 1;
@@ -5305,9 +5305,9 @@ void SW_RasterLights(const refdef_t *fd)
 				if (alpha == 0)
 					continue;
 				const uint16_t dcol = dst[px];
-				const unsigned r = min(31u, (unsigned)(dcol >> 11) + (color_row->r[alpha] >> 3));
-				const unsigned g = min(63u, (unsigned)((dcol >> 5) & 63u) + (color_row->g[alpha] >> 2));
-				const unsigned b = min(31u, (unsigned)(dcol & 31u) + (color_row->b[alpha] >> 3));
+				const unsigned r = min(31u, (unsigned)(dcol >> 11) + color_row->r[alpha]);
+				const unsigned g = min(63u, (unsigned)((dcol >> 5) & 63u) + color_row->g[alpha]);
+				const unsigned b = min(31u, (unsigned)(dcol & 31u) + color_row->b[alpha]);
 				const uint16_t out = (uint16_t)((r << 11) | (g << 5) | b);
 				dst[px] = out;
 				mag += (out == 0xF81Fu);
