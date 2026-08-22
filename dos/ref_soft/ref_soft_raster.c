@@ -1362,6 +1362,7 @@ static void draw_face_spans(const screen_vertex_t *verts, const int n, const sw_
 			{
 				uint32_t *const cw = sw_covermask[y];
 				unsigned depth_writes = 0;
+				unsigned zrejects = 0;
 				int light_prev_idx = -1;
 				int m8_light_prev_idx = -1;
 				const uint16_t *shade_row = NULL;
@@ -1380,7 +1381,7 @@ static void draw_face_spans(const screen_vertex_t *verts, const int n, const sw_
 					const uint32_t covered = *word & runmask;
 					if (covered == runmask)
 					{
-						sw_stats.bench_world_zreject += (unsigned)run; // the z-test would have rejected all of these
+						zrejects += (unsigned)run; // the z-test would have rejected all of these
 						iu += iu_step * run; it += it_step * run; ils += ils_step * run; ilt += ilt_step * run;
 						ikey += (uint32_t)(ikey_step * run);
 						x += run;
@@ -1434,11 +1435,12 @@ static void draw_face_spans(const screen_vertex_t *verts, const int n, const sw_
 						iu = sw_world_paint_ctx.iu; it = sw_world_paint_ctx.it;
 						ils = sw_world_paint_ctx.ils; ilt = sw_world_paint_ctx.ilt;
 						ikey = sw_world_paint_ctx.ikey;
-						sw_stats.bench_mag_world += sw_world_paint_ctx.mag;
-						sw_tag_face_paint_last = face_index;
-						sw_tag_face_paint_count += run;
+						if (face_index == sw_dbg_tag_face)
+						{
+							sw_tag_face_paint_last = face_index;
+							sw_tag_face_paint_count += run;
+						}
 						depth_writes += (unsigned)run;
-						sw_stats.bench_world_zaccepted += (unsigned)run;
 						for (int marked = 0; marked < run; )
 						{
 							const int mark_x = x + marked;
@@ -1479,26 +1481,29 @@ static void draw_face_spans(const screen_vertex_t *verts, const int n, const sw_
 							}
 								const uint16_t wpx = (uint16_t)((mul5r[(texel >> 11) & 31u] << 11) |
 									(mul6g[(texel >> 5) & 63u] << 5) | mul5b[texel & 31u]);
-								sw_stats.bench_mag_world += (wpx == 0xF81Fu);
-								sw_tag_face_paint_last = face_index;
-								++sw_tag_face_paint_count;
+								if (face_index == sw_dbg_tag_face)
+								{
+									sw_tag_face_paint_last = face_index;
+									++sw_tag_face_paint_count;
+								}
 								if (sw_dbg_tag_x == x && sw_dbg_tag_y == y)
 									sw_ri.Con_Printf(PRINT_ALL, "tagxy worldspan bf=%u face=%d texel=%04x out=%04x key=%u zb=%u light=%08x\n",
 										sw_stats.bench_frames, face_index, texel, wpx, ikey, zb_row[idx], light_prev);
 								fb_row[idx] = wpx;
 								zb_row[idx] = ikey;
 								++depth_writes;
-								++sw_stats.bench_world_zaccepted;
 								outmask |= bit;
 							}
 						}
 						else
-							++sw_stats.bench_world_zreject;
+							++zrejects;
 						iu += iu_step; it += it_step; ils += ils_step; ilt += ilt_step; ikey += (uint32_t)ikey_step;
 					}
 					*word |= outmask;
 				}
 				sw_stats.depth_writes += depth_writes;
+				sw_stats.bench_world_zaccepted += depth_writes;
+				sw_stats.bench_world_zreject += zrejects;
 				sw_stats.bench_pixels_world += (unsigned)block;
 			}
 			else
