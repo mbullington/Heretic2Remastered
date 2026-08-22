@@ -1374,7 +1374,7 @@ static void draw_face_spans(const screen_vertex_t *verts, const int n, const sw_
 				int i = 0;
 				while (i < block)
 				{
-					const int run = min(block - i, 32 - (x & 31));
+					int run = min(block - i, 32 - (x & 31));
 					const uint32_t runmask = (run == 32) ? 0xFFFFFFFFu : (((1u << run) - 1u) << (x & 31));
 					uint32_t *const word = &cw[x >> 5];
 					const uint32_t covered = *word & runmask;
@@ -1392,6 +1392,17 @@ static void draw_face_spans(const screen_vertex_t *verts, const int n, const sw_
 					if (covered == 0 && !stripe_checker && !alpha_test &&
 						(sw_dbg_tag_y != y || sw_dbg_tag_x < x || sw_dbg_tag_x >= x + run))
 					{
+						if (sw_dbg_tag_y != y)
+							while (run < block - i)
+							{
+								const int next_x = x + run;
+								const int next_run = min(block - i - run, 32 - (next_x & 31));
+								const uint32_t next_mask = next_run == 32 ? 0xFFFFFFFFu :
+									(((1u << next_run) - 1u) << (next_x & 31));
+								if ((cw[next_x >> 5] & next_mask) != 0)
+									break;
+								run += next_run;
+							}
 						if (image->src8 != NULL)
 						{
 							sw_world_shade_image = image;
@@ -1428,7 +1439,15 @@ static void draw_face_spans(const screen_vertex_t *verts, const int n, const sw_
 						sw_tag_face_paint_count += run;
 						depth_writes += (unsigned)run;
 						sw_stats.bench_world_zaccepted += (unsigned)run;
-						*word |= runmask;
+						for (int marked = 0; marked < run; )
+						{
+							const int mark_x = x + marked;
+							const int mark_run = min(run - marked, 32 - (mark_x & 31));
+							const uint32_t mark_mask = mark_run == 32 ? 0xFFFFFFFFu :
+								(((1u << mark_run) - 1u) << (mark_x & 31));
+							cw[mark_x >> 5] |= mark_mask;
+							marked += mark_run;
+						}
 						x += run;
 						i += run;
 						continue;
