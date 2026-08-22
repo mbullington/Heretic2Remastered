@@ -5022,7 +5022,6 @@ static void draw_particle(const particle_t *particle, const qboolean additive)
 			const unsigned sr = (color565 >> 8) & 0xF8u;
 			const unsigned sg = (color565 >> 3) & 0xFCu;
 			const unsigned sb = (color565 << 3) & 0xF8u;
-			unsigned mag = 0;
 			for (int py = -radius; py <= radius; ++py)
 			{
 				// The general loop counted every in-disc px INCLUDING off-screen
@@ -5068,10 +5067,8 @@ static void draw_particle(const particle_t *particle, const qboolean additive)
 						out = SW_RGB565(r, g, b);
 					}
 					dst[px] = out;
-					mag += (out == 0xF81Fu);
 				}
 			}
-			sw_stats.bench_mag_putpixel += mag;
 			++sw_stats.particles;
 			return;
 		}
@@ -5100,7 +5097,6 @@ static void draw_particle(const particle_t *particle, const qboolean additive)
 		// Per-particle alpha: modulate() sets it to this same constant for any
 		// nonzero source texel (and zero otherwise). additive premultiplied a==255.
 		const byte quad_alpha_const = (byte)ClampI((int)(255.0f * fa), 0, 255);
-		unsigned mag = 0;
 		const byte *const rowcounts = sw_pt_rowcount_of(stamp, radius);
 		for (int py = -radius; py < radius; ++py)
 		{
@@ -5157,10 +5153,8 @@ static void draw_particle(const particle_t *particle, const qboolean additive)
 					fin = SW_RGB565(r, g, b);
 				}
 				dst[px] = fin;
-				mag += (fin == 0xF81Fu);
 			}
 		}
-		sw_stats.bench_mag_putpixel += mag;
 		sw_stats.texture_particles += (type_index >= 22 && type_index < 36) ? 2 : 1;
 		++sw_stats.particles;
 		return;
