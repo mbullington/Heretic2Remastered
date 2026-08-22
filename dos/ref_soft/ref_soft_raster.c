@@ -5305,10 +5305,10 @@ void SW_RasterLights(const refdef_t *fd)
 				if (alpha == 0)
 					continue;
 				const uint16_t dcol = dst[px];
-				const unsigned r = min(255u, ((dcol >> 8) & 0xF8u) + color_row->r[alpha]);
-				const unsigned g = min(255u, ((dcol >> 3) & 0xFCu) + color_row->g[alpha]);
-				const unsigned b = min(255u, ((dcol << 3) & 0xF8u) + color_row->b[alpha]);
-				const uint16_t out = SW_RGB565(r, g, b);
+				const unsigned r = min(31u, (unsigned)(dcol >> 11) + (color_row->r[alpha] >> 3));
+				const unsigned g = min(63u, (unsigned)((dcol >> 5) & 63u) + (color_row->g[alpha] >> 2));
+				const unsigned b = min(31u, (unsigned)(dcol & 31u) + (color_row->b[alpha] >> 3));
+				const uint16_t out = (uint16_t)((r << 11) | (g << 5) | b);
 				dst[px] = out;
 				mag += (out == 0xF81Fu);
 			}
