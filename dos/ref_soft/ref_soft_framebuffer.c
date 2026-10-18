@@ -1,10 +1,5 @@
 #include "ref_soft_local.h"
 
-#if defined(__GNUC__) && defined(__i386__)
-#include <mmintrin.h>
-#define SW_HAVE_MMX 1
-#endif
-
 #include <float.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -304,7 +299,6 @@ void SW_PutPixel(const int x, const int y, const float depth, const uint16_t col
 	const size_t index = (size_t)y * (size_t)sw_width + (size_t)x;
 	// All stored depths are 31-bit linear fixed-point inverse-z keys (see
 	// SW_DEPTH_SCALE in ref_soft_local.h); larger = closer, 0 = far/sky.
-	sw_debug_env_init();
 	if (sw_blend_pending)
 		++sw_stats.bench_post_blend_writes;
 	uint32_t depth_key;
@@ -335,7 +329,6 @@ void SW_PutPixel(const int x, const int y, const float depth, const uint16_t col
 	if (alpha == 255 && !additive)
 	{
 		sw_color[index] = color;
-		sw_stats.bench_mag_putpixel += (color == 0xF81Fu);
 	}
 	else if (alpha != 0)
 	{
@@ -353,7 +346,6 @@ void SW_PutPixel(const int x, const int y, const float depth, const uint16_t col
 		const unsigned b = min(255u, (sb * (unsigned)source_weight + db * (unsigned)destination_weight) / 255u);
 		const uint16_t out = SW_RGB565(r, g, b);
 		sw_color[index] = out;
-		sw_stats.bench_mag_putpixel += (out == 0xF81Fu);
 	}
 
 	if (depth_write)
@@ -363,57 +355,6 @@ void SW_PutPixel(const int x, const int y, const float depth, const uint16_t col
 	}
 }
 
-#ifdef SW_HAVE_MMX
-// B1/ideas MMX 4-wide exact blend (P55C ISA: PMULHUW is PII+, so the exact
-// (n*0x8081)>>23 = PSRLW(PMULHW(n,magic) + (n<0?magic:0) + (magic<0?n:0), 7);
-// magic<0-signed always => add n; sweep-verified offline per (d,s,alpha)).
-// n = s*aw + d*dw <= 63,240 fits u16; quotient <= 248 needs no clamp. mag
-// accumulates PCMPEQW-vs-0xF81F lanes. EMMS once per call.
-__attribute__((target("mmx")))
-static void sw_blend_rows_mmx(uint16_t *const fb, const size_t pitch, const int x, const int y,
-	const int start_y, const int end_y, const int start_x, const int end_x, const unsigned sr_w, const unsigned sg_w,
-	const unsigned sb_w, const unsigned dw, unsigned *mag)
-{
-	const __m64 vdw = _mm_set1_pi16((short)dw);
-	const __m64 vsr = _mm_set1_pi16((short)sr_w);
-	const __m64 vsg = _mm_set1_pi16((short)sg_w);
-	const __m64 vsb = _mm_set1_pi16((short)sb_w);
-	const __m64 vmagic = _mm_set1_pi16((short)0x8081u);
-	const __m64 vmask8 = _mm_set1_pi16((short)0xF8u);
-	const __m64 vmag = _mm_set1_pi16((short)0xF81Fu);
-	__m64 vacc = _mm_setzero_si64();
-	for (int row = start_y; row < end_y; ++row)
-	{
-		uint16_t *const dst = fb + (size_t)(y + row) * pitch + x;
-		for (int column = start_x; column + 4 <= end_x; column += 4)
-		{
-			const __m64 d = *(const __m64 *)(dst + column);
-			__m64 dr = _mm_and_si64(_mm_srli_pi16(d, 8), vmask8);
-			__m64 nr = _mm_add_pi16(_mm_mullo_pi16(dr, vdw), vsr);
-			dr = _mm_add_pi16(_mm_mulhi_pi16(nr, vmagic), nr);
-			dr = _mm_add_pi16(dr, _mm_and_si64(_mm_srai_pi16(nr, 15), vmagic));
-			dr = _mm_slli_pi16(_mm_srli_pi16(dr, 7), 8);
-			__m64 dg = _mm_and_si64(_mm_srli_pi16(d, 3), _mm_set1_pi16((short)0xFCu));
-			__m64 ng = _mm_add_pi16(_mm_mullo_pi16(dg, vdw), vsg);
-			dg = _mm_add_pi16(_mm_mulhi_pi16(ng, vmagic), ng);
-			dg = _mm_add_pi16(dg, _mm_and_si64(_mm_srai_pi16(ng, 15), vmagic));
-			dg = _mm_slli_pi16(_mm_srli_pi16(dg, 7), 5);
-			__m64 db = _mm_and_si64(_mm_slli_pi16(d, 3), vmask8);
-			__m64 nb = _mm_add_pi16(_mm_mullo_pi16(db, vdw), vsb);
-			db = _mm_add_pi16(_mm_mulhi_pi16(nb, vmagic), nb);
-			db = _mm_add_pi16(db, _mm_and_si64(_mm_srai_pi16(nb, 15), vmagic));
-			db = _mm_srli_pi16(db, 7 + 3);
-			const __m64 out = _mm_or_si64(_mm_or_si64(dr, dg), db);
-			*(__m64 *)(dst + column) = out;
-			vacc = _mm_sub_pi16(vacc, _mm_cmpeq_pi16(out, vmag));
-		}
-	}
-	_mm_empty();
-	const int m0 = _mm_cvtsi64_si32(vacc);
-	const int m1 = _mm_cvtsi64_si32(_mm_srli_si64(vacc, 32));
-	*mag += (unsigned)(-((short)m0 + (short)(m0 >> 16) + (short)m1 + (short)(m1 >> 16)));
-}
-#endif
 
 static const uint16_t *sw_blend_lut_get(const uint32_t key, const uint16_t bmap[32])
 {

@@ -18,6 +18,17 @@ static vec3_t view_right;
 static vec3_t view_up;
 static float projection_x;
 static float projection_y;
+// View-space frustum side planes as x/z and y/z ratio bounds for the actual
+// screen rectangle, with per-plane normalization factors for sphere tests:
+// inside iff kx0*z <= x <= kx1*z and ky0*z <= y <= ky1*z (z > 0).
+static float frustum_kx0, frustum_kx1, frustum_ky0, frustum_ky1;
+static float frustum_nx0, frustum_nx1, frustum_ny0, frustum_ny1;
+// Per-frame lightstyle fixed-point cache: style rgb -> *128 ints computed on
+// first use of each style per frame instead of per face referencing it.
+#define SW_STYLE_COUNT 256
+static int sw_style_fixed[SW_STYLE_COUNT][3];
+static unsigned sw_style_stamp[SW_STYLE_COUNT];
+static unsigned sw_style_frame;
 
 #define SW_SHADEDOT_QUANT 16
 extern float r_avertexnormal_dots[SW_SHADEDOT_QUANT][256];
@@ -58,6 +69,11 @@ static void draw_flex_triangle(const vec3_t points[3], const float uv[3][2], con
 
 static void setup_view(const refdef_t *fd)
 {
+	if (++sw_style_frame == 0)
+	{
+		memset(sw_style_stamp, 0, sizeof(sw_style_stamp));
+		sw_style_frame = 1;
+	}
 	AngleVectors(fd->viewangles, view_forward, view_right, view_up);
 	static int cached_width = -1, cached_height = -1;
 	static float cached_fov_x, cached_fov_y;
@@ -71,6 +87,18 @@ static void setup_view(const refdef_t *fd)
 		cached_fov_x = fd->fov_x;
 		cached_fov_y = fd->fov_y;
 	}
+	// project(): sx = fd->x + width/2 + x*projection_x/z over [0, sw_width],
+	// sy = fd->y + height/2 - y*projection_y/z over [0, sw_height].
+	const float center_x = fd->x + fd->width * 0.5f;
+	const float center_y = fd->y + fd->height * 0.5f;
+	frustum_kx0 = -center_x / projection_x;
+	frustum_kx1 = ((float)sw_width - center_x) / projection_x;
+	frustum_ky0 = (center_y - (float)sw_height) / projection_y;
+	frustum_ky1 = center_y / projection_y;
+	frustum_nx0 = sqrtf(1.0f + frustum_kx0 * frustum_kx0);
+	frustum_nx1 = sqrtf(1.0f + frustum_kx1 * frustum_kx1);
+	frustum_ny0 = sqrtf(1.0f + frustum_ky0 * frustum_ky0);
+	frustum_ny1 = sqrtf(1.0f + frustum_ky1 * frustum_ky1);
 }
 
 static sw_vertex_t world_to_view(const vec3_t point, const float s, const float t)
@@ -91,13 +119,47 @@ static sw_vertex_t world_to_view(const vec3_t point, const float s, const float 
 	return output;
 }
 
+// True iff the world-space sphere lies fully outside the view frustum
+// (near plane or any side plane). Conservative in the keep direction.
+static qboolean sphere_outside_frustum(const vec3_t center, float radius)
+{
+	const vec3_t delta = {
+		center[0] - sw_refdef.vieworg[0],
+		center[1] - sw_refdef.vieworg[1],
+		center[2] - sw_refdef.vieworg[2]
+	};
+	const float vx = dot3(delta, view_right);
+	const float vy = dot3(delta, view_up);
+	const float vz = dot3(delta, view_forward);
+	// Epsilon keeps the test conservative under float rounding of the
+	// center/delta chain: a grazing sphere is kept, never culled.
+	radius += 0.05f;
+	return vz + radius < SW_NEAR_CLIP ||
+		vx - frustum_kx1 * vz > radius * frustum_nx1 ||
+		frustum_kx0 * vz - vx > radius * frustum_nx0 ||
+		vy - frustum_ky1 * vz > radius * frustum_ny1 ||
+		frustum_ky0 * vz - vy > radius * frustum_ny0;
+}
+
 static int clip_near(const sw_vertex_t *input, const int input_count, sw_vertex_t *output)
 {
+	// Common cases first: wholly inside copies through, wholly behind the
+	// near plane emits nothing. Only straddling polygons pay the general loop.
+	int inside_count = 0;
+	for (int i = 0; i < input_count; ++i)
+		inside_count += input[i].z >= SW_NEAR_CLIP;
+	if (inside_count == input_count)
+	{
+		memcpy(output, input, sizeof(*input) * (size_t)input_count);
+		return input_count;
+	}
+	if (inside_count == 0)
+		return 0;
 	int output_count = 0;
+	sw_vertex_t previous = input[input_count - 1];
 	for (int i = 0; i < input_count; ++i)
 	{
 		const sw_vertex_t current = input[i];
-		const sw_vertex_t previous = input[(i + input_count - 1) % input_count];
 		const qboolean current_inside = current.z >= SW_NEAR_CLIP;
 		const qboolean previous_inside = previous.z >= SW_NEAR_CLIP;
 		if (current_inside != previous_inside)
@@ -115,6 +177,7 @@ static int clip_near(const sw_vertex_t *input, const int input_count, sw_vertex_
 		}
 		if (current_inside)
 			output[output_count++] = current;
+		previous = current;
 	}
 	return output_count;
 }
@@ -317,9 +380,15 @@ static int face_style_signature(const dface_t *face, int style_fixed[MAXLIGHTMAP
 	for (int style = 0; style < MAXLIGHTMAPS && face->styles[style] != 255; ++style)
 	{
 		const int style_index = face->styles[style];
-		const lightstyle_t *lightstyle = sw_refdef.lightstyles != NULL ? &sw_refdef.lightstyles[style_index] : NULL;
+		if (sw_style_stamp[style_index] != sw_style_frame)
+		{
+			const lightstyle_t *lightstyle = sw_refdef.lightstyles != NULL ? &sw_refdef.lightstyles[style_index] : NULL;
+			for (int channel = 0; channel < 3; ++channel)
+				sw_style_fixed[style_index][channel] = (int)((lightstyle != NULL ? lightstyle->rgb[channel] : 1.0f) * 128.0f + 0.5f);
+			sw_style_stamp[style_index] = sw_style_frame;
+		}
 		for (int channel = 0; channel < 3; ++channel)
-			style_fixed[num_styles][channel] = (int)((lightstyle != NULL ? lightstyle->rgb[channel] : 1.0f) * 128.0f + 0.5f);
+			style_fixed[num_styles][channel] = sw_style_fixed[style_index][channel];
 		styles[num_styles] = face->styles[style];
 		++num_styles;
 	}
@@ -1672,6 +1741,8 @@ static sw_image_t *texture_animation(const sw_bsp_t *bsp, const int root,
 		++count;
 	}
 	*frame_count = count;
+	if (count == 1)
+		return bsp->texinfo_images[root];
 	int frame = entity_frame;
 	if (LittleLong(bsp->texinfo[root].flags) & SURF_ANIMSPEED)
 		frame = (int)(sw_refdef.time * bsp->texinfo_images[root]->num_frames);
@@ -1798,6 +1869,24 @@ static void draw_face(const sw_bsp_t *bsp, const int face_index, const vec3_t or
 			nz * (sw_refdef.vieworg[2] - origin[2]) - pdist;
 		if (pos < -0.01f)
 			return;
+	}
+	// Frustum reject via the baked bounding sphere before any per-vertex
+	// transform/clip/project work. Conservative: the sphere bounds every
+	// packet vertex, so a fully-outside sphere proves no pixel can land on
+	// screen. Undulate/quake faces displace vertices off the packet sphere.
+	if ((flags & (SURF_UNDULATE | SURF_QUAKE)) == 0 && bsp->packets != NULL)
+	{
+		const sw_face_packet_t *pkt = &bsp->packets[face_index];
+		if (pkt->verts != NULL)
+		{
+			const vec3_t center = {
+				pkt->center[0] + origin[0],
+				pkt->center[1] + origin[1],
+				pkt->center[2] + origin[2]
+			};
+			if (sphere_outside_frustum(center, pkt->radius))
+				return;
+		}
 	}
 	int animation_frames;
 	const sw_image_t *image = texture_animation(bsp, texinfo_index, entity_frame, &animation_frames);
@@ -1995,6 +2084,15 @@ static int point_leaf(const sw_bsp_t *bsp, const vec3_t point)
 }
 
 static byte sw_pvs_row[(MAX_MAP_LEAFS + 7) / 8];
+static const sw_bsp_t *pvs_cache_bsp;
+static int pvs_cache_cluster;
+static qboolean pvs_cache_has_areabits;
+static byte pvs_cache_areabits[MAX_MAP_AREAS / 8];
+
+void SW_PvsCacheInvalidate(void)
+{
+	pvs_cache_bsp = NULL;
+}
 static byte sw_visible_faces[MAX_MAP_FACES];
 
 static qboolean decompress_pvs_row(const sw_bsp_t *bsp, const int view_cluster,
@@ -2365,6 +2463,20 @@ static void draw_world_node_ftb(const sw_bsp_t *bsp, const int node_index, const
 {
 	if (node_index < 0)
 		return; // leaf: no faces of its own (node lists partition all faces)
+	// Frustum pruning: the node bbox sphere bounds the whole subtree, so a
+	// fully-outside node cannot contribute a visible face. Pruning here
+	// skips the recursion, every descendant draw_face entry, and its
+	// backface/plane setup, not just the per-vertex work.
+	if (bsp->node_spheres != NULL)
+	{
+		const float *sphere = &bsp->node_spheres[node_index * 4];
+		if (sphere[3] >= 0.0f)
+		{
+			const vec3_t center = { sphere[0], sphere[1], sphere[2] };
+			if (sphere_outside_frustum(center, sphere[3]))
+				return;
+		}
+	}
 	const dnode_t *node = &bsp->nodes[node_index];
 	const dplane_t *plane = &bsp->planes[LittleLong(node->planenum)];
 	const float distance = vieworg[0] * LittleFloat(plane->normal[0]) +
@@ -2405,9 +2517,17 @@ void SW_RasterWorld(const refdef_t *fd)
 		}
 	}
 	const sw_bsp_t *bsp = sw_world_model->bsp;
-	memset(sw_visible_faces, 0, (size_t)bsp->num_faces);
 	const int leaf_index = point_leaf(bsp, fd->vieworg);
 	const int view_cluster = leaf_index >= 0 && leaf_index < bsp->num_leaves ? LittleShort(bsp->leaves[leaf_index].cluster) : -1;
+	// The visible-face set is a pure function of (bsp, view cluster, areabits);
+	// while all three are unchanged the previous set in sw_visible_faces is
+	// already exact, so skip the clear, PVS decompression, and leaf rescan.
+	const qboolean pvs_cache_hit = pvs_cache_bsp == bsp && pvs_cache_cluster == view_cluster &&
+		pvs_cache_has_areabits == (fd->areabits != NULL) &&
+		(fd->areabits == NULL || memcmp(pvs_cache_areabits, fd->areabits, sizeof(pvs_cache_areabits)) == 0);
+	if (!pvs_cache_hit)
+	{
+	memset(sw_visible_faces, 0, (size_t)bsp->num_faces);
 	int pvs_clusters = 0;
 	const qboolean have_pvs = decompress_pvs_row(bsp, view_cluster, sw_pvs_row, &pvs_clusters);
 	for (int i = 0; i < bsp->num_leaves; ++i)
@@ -2430,6 +2550,12 @@ void SW_RasterWorld(const refdef_t *fd)
 			if (index >= 0 && index < bsp->num_faces)
 				sw_visible_faces[index] = 1;
 		}
+	}
+	pvs_cache_bsp = bsp;
+	pvs_cache_cluster = view_cluster;
+	pvs_cache_has_areabits = fd->areabits != NULL;
+	if (fd->areabits != NULL)
+		memcpy(pvs_cache_areabits, fd->areabits, sizeof(pvs_cache_areabits));
 	}
 	if (bsp->submodels != NULL && bsp->num_submodels > 0)
 	{
@@ -5284,7 +5410,6 @@ void SW_RasterLights(const refdef_t *fd)
 			sw_dl_alpha_tag[radius] = alpha_tag;
 		}
 		const byte *const alpha_row = sw_dl_alpha[radius];
-		unsigned mag = 0;
 		for (int py = -radius; py <= radius; ++py)
 		{
 			const int dy = y + py;
@@ -5310,10 +5435,8 @@ void SW_RasterLights(const refdef_t *fd)
 				const unsigned b = min(31u, (unsigned)(dcol & 31u) + color_row->b[alpha]);
 				const uint16_t out = (uint16_t)((r << 11) | (g << 5) | b);
 				dst[px] = out;
-				mag += (out == 0xF81Fu);
 			}
 		}
-		sw_stats.bench_mag_putpixel += mag;
 		++sw_stats.dynamic_lights;
 	}
 }
@@ -5391,7 +5514,10 @@ int SW_RenderFrame(const refdef_t *fd)
 		fd->fov_x <= 1.0f || fd->fov_x >= 179.0f || fd->fov_y <= 1.0f || fd->fov_y >= 179.0f)
 		return 0;
 	refdef_t fx_fd;
-	if (getenv("H2DOS_SW_FXLOAD") != NULL)
+	static int fxload_enabled = -1;
+	if (fxload_enabled < 0)
+		fxload_enabled = getenv("H2DOS_SW_FXLOAD") != NULL;
+	if (fxload_enabled)
 	{
 		fx_fd = *fd;
 		sw_debug_fxload(&fx_fd);
@@ -5499,11 +5625,15 @@ int SW_RenderFrame(const refdef_t *fd)
 	{
 		// Coverage audit: count sky-visible (depth==0) pixels in the top 60
 		// rows so sky-band flicker can be attributed to world coverage
-		// holes rather than sky rendering itself.
-		unsigned holes = 0;
-		for (size_t i = 0; i < (size_t)60 * (size_t)sw_width; ++i)
-			holes += sw_depth[i] == 0;
-		sw_stats.bench_holes_topband = holes;
+		// holes rather than sky rendering itself. Only the skydiag prints
+		// consume it, so production frames skip the scan.
+		if (sw_dbg_skydiag)
+		{
+			unsigned holes = 0;
+			for (size_t i = 0; i < (size_t)60 * (size_t)sw_width; ++i)
+				holes += sw_depth[i] == 0;
+			sw_stats.bench_holes_topband = holes;
+		}
 		(void)mark;
 		sw_stats.bench_us_frame += (unsigned long long)(uclock() - frame_start);
 		++sw_stats.bench_frames;

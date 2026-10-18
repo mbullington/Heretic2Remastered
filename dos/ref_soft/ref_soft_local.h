@@ -108,6 +108,7 @@ typedef struct sw_bsp_s {
 	int visibility_length;
 	sw_image_t **texinfo_images;
 	sw_face_packet_t *packets; // E58: per-face baked static geometry, NULL until baked
+	float *node_spheres; // num_nodes * 4: bbox center xyz + radius, NULL until baked
 } sw_bsp_t;
 
 typedef struct sw_flex_vertex_s {
@@ -253,6 +254,7 @@ qboolean SW_SavePPM(const char *path);
 void SW_ImageInit(void);
 void SW_ImageShutdown(void);
 void SW_WorldShadeCacheReset(void);
+void SW_PvsCacheInvalidate(void);
 sw_image_t *SW_FindImage(const char *name, sw_image_kind_t kind);
 void SW_FreeUnusedImages(void);
 void SW_DrawImage(int x, int y, int w, int h, const sw_image_t *image, float alpha);

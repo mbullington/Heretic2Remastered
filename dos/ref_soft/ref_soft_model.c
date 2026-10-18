@@ -486,6 +486,38 @@ static void bake_face_packets(sw_bsp_t *bsp)
 	}
 }
 
+// Baked node bounding spheres from the BSP node mins/maxs (which bound the
+// whole subtree), for frustum pruning of the front-to-back walk. An invalid
+// bbox leaves radius -1, which the walk treats as never culled.
+static void bake_node_spheres(sw_bsp_t *bsp)
+{
+	if (bsp->num_nodes <= 0)
+		return;
+	bsp->node_spheres = malloc((size_t)bsp->num_nodes * 4u * sizeof(float));
+	if (bsp->node_spheres == NULL)
+		return;
+	for (int i = 0; i < bsp->num_nodes; ++i)
+	{
+		const dnode_t *node = &bsp->nodes[i];
+		float *sphere = &bsp->node_spheres[i * 4];
+		float radius_sq = 0.0f;
+		qboolean valid = true;
+		for (int axis = 0; axis < 3; ++axis)
+		{
+			const float lo = (float)LittleShort(node->mins[axis]);
+			const float hi = (float)LittleShort(node->maxs[axis]);
+			if (lo > hi)
+				valid = false;
+			sphere[axis] = (lo + hi) * 0.5f;
+			const float half = (hi - lo) * 0.5f;
+			radius_sq += half * half;
+		}
+		// Node mins/maxs are shorts: qbsp may have truncated float bounds
+		// toward zero, so pad the radius to stay strictly conservative.
+		sphere[3] = valid ? sqrtf(radius_sq) + 16.0f : -1.0f;
+	}
+}
+
 static void free_bsp(sw_bsp_t *bsp)
 {
 	if (bsp == NULL)
@@ -496,6 +528,7 @@ static void free_bsp(sw_bsp_t *bsp)
 			free(bsp->packets[i].verts);
 		free(bsp->packets);
 	}
+	free(bsp->node_spheres);
 	free(bsp->texinfo_images);
 	if (bsp->file != NULL)
 		sw_ri.FS_FreeFile(bsp->file);
@@ -594,6 +627,7 @@ static sw_bsp_t *load_bsp(const char *name)
 		bsp->texinfo_images[i] = SW_FindImage(texture_name, SW_IMAGE_WALL);
 	}
 	bake_face_packets(bsp);
+	bake_node_spheres(bsp);
 	return bsp;
 }
 
@@ -817,6 +851,7 @@ void SW_ModelShutdown(void)
 		SW_FreeFlex(sw_models[i].flex);
 	}
 	free_bsp(sw_world_bsp);
+	SW_PvsCacheInvalidate();
 	memset(sw_models, 0, sizeof(sw_models));
 	sw_num_models = 0;
 	sw_world_model = NULL;
