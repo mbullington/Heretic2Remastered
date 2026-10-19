@@ -2,7 +2,7 @@
 
 ## Current status
 
-**Classification: production lifecycle plus software-renderer and software-audio slices with synthetic data, and a bounded production-path smoke against user-supplied original retail PAKs; not playable and gameplay remains unverified.**
+**Classification: production lifecycle plus software-renderer and software-audio slices with synthetic data, and bounded production-path smokes against user-supplied original retail PAKs on every retail map; interactive play in DOSBox works for entering maps and combat, but a start-to-finish campaign remains unverified, so this is not yet a fully playable release.**
 
 The DJGPP graph builds three independent executables:
 
@@ -139,7 +139,9 @@ gameplay=UNVERIFIED
 
 The guest counters are read while holding SDL's audio-stream lock. They prove the generated WAV crossed the production loader, cache, channel mixer, callback, and SDL Sound Blaster submission boundaries; they do not prove game content or gameplay. The runner rejects callback-lock or shutdown errors and writes the ignored host summary to `.dos-build/DOS-AUDIO-EVIDENCE.TXT`.
 
-The production loopback check sends through `NET_SendPacket(NS_CLIENT, ...)` and receives through `NET_GetPacket(NS_SERVER, ...)`. The DOS backend preserves `NA_LOOPBACK`, packet bounds, latency, send-rate, and receive-rate behavior while rejecting external addresses.
+The production loopback check sends through `NET_SendPacket(NS_CLIENT, ...)` and receives through `NET_GetPacket(NS_SERVER, ...)`. The DOS backend preserves `NA_LOOPBACK`, packet bounds, latency, send-rate, and receive-rate behavior for local play.
+
+External multiplayer uses IPX (`dos/net_dos.c`): when an IPX driver answers INT 2Fh AX=7A00h at startup, the backend opens the engine's client/server sockets and routes `NA_IPX`/`NA_BROADCAST_IPX` datagrams through ECBs in DOS memory, using the same `net:node:socket` address strings as `net_wins.c`. DOSBox Staging supplies that API with `ipx=true` plus `ipxnet startserver`/`connect` (see `H2DOS_IPXSERVER`/`H2DOS_IPXCONNECT` in `scripts/run-dos-play.sh`); on real hardware the same calls run against a loaded IPX driver. A two-instance DOSBox proof (dedicated DOS server plus a DOS client connecting to its printed IPX address and entering the map) passes. IP/UDP networking is not implemented in the DOS target.
 
 ## Synthetic fixture
 
@@ -242,4 +244,4 @@ Synthetic checker fallback is enabled only when the renderer finds the explicit 
 
 The renderer accepts bounded standard-frame Raven flexible models and renders validated mesh command spans with skins, frame interpolation, model lighting, skeletal/reference interpolation, node policy, and translucent shadow material. Compressed FM blocks and malformed skeleton/reference blocks without serialized placements are rejected rather than misrendered. The permanent proof uses an original synthetic Corvus fixture with 9 vertices, 3 mesh nodes, 2 frames, and 18 malformed variants. Original retail data now loads and renders through a bounded non-interactive smoke (see "Original-data production-path smoke"), but interactive performance and visual parity against the reference GL renderer remain unverified. Exact per-type behavior for all 62 particle effects and complete sprite variants also remain incomplete.
 
-The generated map proves the local client/server handshake and precache sequence only for the labeled synthetic fixture. Read-only user-supplied PAKs are now available under the ignored `.dos-data/base/` directory, but this proof does not mount them. A separate fresh allowlisted DOSBox run must validate representative maps, models, sounds, and gameplay before any gameplay claim. OGG music remains excluded from the DOS target, and hardware beyond SDL's DOSBox-provided Sound Blaster driver remains unverified.
+The generated map proves the local client/server handshake and precache sequence only for the labeled synthetic fixture. The real-data runner accepts `H2DOS_REALDATA_MAP` and has now been run per map across all 29 retail BSPs (each reaching the active/spawned client state with rendered frames; `sspalace` initially exposed an over-strict submodel headnode check, since fixed), and an `H2DOS_SAVELOAD=1` run proves a console save/load round trip returns to the spawned state. These are load and lifecycle proofs, not campaign completion: objectives, transitions, bosses, cinematics, and long-session stability still need a human playthrough before any fully-playable claim. OGG music remains excluded from the DOS target, physical-hardware IPX is implemented against the standard driver API but untested on a real machine, and hardware beyond SDL's DOSBox-provided Sound Blaster driver remains unverified.

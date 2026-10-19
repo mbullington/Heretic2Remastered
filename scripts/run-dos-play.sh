@@ -11,6 +11,9 @@ DOSBOX=${DOSBOX:-dosbox-staging}
 CYCLES=${H2DOS_CYCLES:-140000}
 MAP=${H2DOS_MAP-ssdocks}
 FULLSCREEN=${H2DOS_FULLSCREEN:-0}
+TILE=${H2DOS_TILE:-0}
+IPXSERVER=${H2DOS_IPXSERVER:-}
+IPXCONNECT=${H2DOS_IPXCONNECT:-}
 
 usage() {
 	cat <<EOF
@@ -25,6 +28,9 @@ Environment variables:
   H2DOS_CYCLES           Fixed emulated CPU speed (default: 140000)
   H2DOS_MAP              Initial map (default: ssdocks; empty opens the menu)
   H2DOS_FULLSCREEN       Start fullscreen, 0 or 1 (default: 0)
+  H2DOS_TILE             Tile round-robin world bands, 0=off, 2-16 (default: 0)
+  H2DOS_IPXSERVER        Host an IPX tunnel on this UDP port (DOSBox ipxnet startserver)
+  H2DOS_IPXCONNECT       Join an IPX tunnel, host:port (DOSBox ipxnet connect)
 
 Examples:
   ./scripts/run-dos-play.sh
@@ -55,6 +61,16 @@ case "$CYCLES" in
 		exit 2
 		;;
 esac
+case "$TILE" in
+	''|*[!0-9]*)
+		echo "H2DOS_TILE must be an integer from 0 to 16" >&2
+		exit 2
+		;;
+esac
+if [ "$TILE" -gt 16 ]; then
+	echo "H2DOS_TILE must be an integer from 0 to 16" >&2
+	exit 2
+fi
 case "$FULLSCREEN" in
 	0|1) ;;
 	*)
@@ -105,6 +121,9 @@ if [ -n "$MAP" ]; then
 else
 	START_COMMAND=" +menu_main"
 fi
+if [ "$TILE" != "0" ]; then
+	START_COMMAND="$START_COMMAND +set r_swtile $TILE"
+fi
 
 {
 	printf '@echo off\r\n'
@@ -122,9 +141,17 @@ set -- \
 	--set "cputype=pentium_mmx" \
 	--set "cpu_cycles=$CYCLES" \
 	--set "cpu_cycles_protected=$CYCLES" \
+	--set "ipx=true" \
 	--exit \
 	-c "mount c \"$PLAY_DIR\"" \
-	-c "c:" \
+	-c "c:"
+if [ -n "$IPXSERVER" ]; then
+	set -- "$@" -c "ipxnet startserver $IPXSERVER"
+fi
+if [ -n "$IPXCONNECT" ]; then
+	set -- "$@" -c "ipxnet connect $IPXCONNECT"
+fi
+set -- "$@" \
 	-c "play.bat" \
 	-c "exit"
 if [ "$FULLSCREEN" = 1 ]; then

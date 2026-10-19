@@ -327,8 +327,20 @@ void GLimp_ShutdownGraphics(void)
 // (Un)grab Input.
 void GLimp_GrabInput(const qboolean grab)
 {
-	if (window != NULL)
+	// Called every frame; only touch SDL on an actual state change. Without
+	// this, drivers that cannot do relative mode (SDL's DOS driver) retry
+	// and warn every frame, flooding the console. Remembering the attempted
+	// state also suppresses retry spam after a failure.
+	static SDL_Window* grabbed_window;
+	static qboolean grabbed_state;
+	static qboolean grab_attempted;
+
+	if (window != NULL && (!grab_attempted || grabbed_window != window || grabbed_state != grab))
 	{
+		grab_attempted = true;
+		grabbed_window = window;
+		grabbed_state = grab;
+
 		if (!SDL_SetWindowMouseGrab(window, grab))
 			Com_Printf("WARNING: failed to lock mouse to game window, reason: %s\n", SDL_GetError());
 

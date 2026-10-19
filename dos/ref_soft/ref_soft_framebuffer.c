@@ -261,7 +261,21 @@ void SW_Clear(const uint16_t color)
 	// Color fill is deferred: SW_RasterFrame re-fills only frames without a
 	// worldmodel. Worldmodel frames are fully repainted by world/sky spans.
 	// Depth stores inverse-z (larger = closer), so the far plane is zero.
-	if (!sw_scan2_active())
+	if (sw_tile_bands > 0 && sw_tile_world_depth != NULL)
+	{
+		// Tile round-robin: only the band about to be repainted gets fresh
+		// depth in the retained world buffer; other bands keep theirs. The
+		// display depth is overwritten by the composite before entities
+		// draw, but clear it anyway for world-less (menu) frames. The band
+		// derives from the same phase the upcoming world pass will use.
+		const int band_h = (sw_height + sw_tile_bands - 1) / sw_tile_bands;
+		const int y0 = sw_tile_phase * band_h;
+		const int y1 = y0 + band_h < sw_height ? y0 + band_h : sw_height;
+		memset(sw_tile_world_depth + (size_t)y0 * (size_t)sw_width, 0,
+			(size_t)(y1 - y0) * (size_t)sw_width * sizeof(*sw_tile_world_depth));
+		memset(sw_depth, 0, pixels * sizeof(*sw_depth));
+	}
+	else if (!sw_scan2_active())
 		memset(sw_depth, 0, pixels * sizeof(*sw_depth));
 	else
 	{

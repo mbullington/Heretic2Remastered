@@ -35,8 +35,13 @@ STAGE_KIND = "realdata"
 PUBLISH = ("REALMENU.PPM", "REALCON.PPM", "CLIENT.PPM", "SWREAL.OUT", "SILVER.LOG", "SILVER.OK")
 ALLOWLISTED_PAKS = ("Htic2-0.pak", "Htic2-1.pak")
 FRAME_LIMIT = int(os.environ.get("H2DOS_REALDATA_FRAMES", "24"))
-TIMEOUT_SECONDS = 300
+MAP = os.environ.get("H2DOS_REALDATA_MAP", "tutorial2")
+TOUR = os.environ.get("H2DOS_TOUR", "")
+FINAL_MAP = TOUR.split("+")[-1] if TOUR else MAP
+TIMEOUT_SECONDS = int(os.environ.get("H2DOS_REALDATA_TIMEOUT", "300"))
 MIN_UNIQUE_COLORS = {"REALMENU.PPM": 3, "REALCON.PPM": 3, "CLIENT.PPM": 20}
+if not MAP or any(ch not in "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_./-" for ch in MAP):
+    raise SystemExit(f"H2DOS_REALDATA_MAP contains unsupported characters: {MAP!r}")
 
 REQUIRED_LOG_LINES = (
     "artifact=SILVER.EXE",
@@ -61,7 +66,7 @@ REQUIRED_LOG_LINES = (
     "sound-proof-counters=PASS",
     "game-api-init=PASS",
     "player-api-init=PASS",
-    "server-map=tutorial2",
+    f"server-map={FINAL_MAP}",
     "local-client-server-handshake=PASS",
     "client-state=active",
     "server-client-state=spawned",
@@ -149,8 +154,10 @@ def main() -> int:
         run_dosbox(
             GuestStage(stage_path, None, set()),
             f"set H2DOS_RUN_ID={RUN_ID}\nset H2DOS_FRAMES={FRAME_LIMIT}\n"
-            "set H2DOS_RENDERER=1\nset H2DOS_AUDIO=1\nset H2DOS_REALDATA=1\n"
-            "silver.exe -basedir H2REAL +set developer 1 +map tutorial2 > SWREAL.OUT",
+            + "set H2DOS_RENDERER=1\nset H2DOS_AUDIO=1\nset H2DOS_REALDATA=1\n"
+            + ("set H2DOS_SAVELOAD=1\n" if os.environ.get("H2DOS_SAVELOAD") else "")
+            + (f"set H2DOS_TOUR={os.environ['H2DOS_TOUR']}\n" if os.environ.get("H2DOS_TOUR") else "")
+            + f"silver.exe -basedir H2REAL +set developer 1 +map {MAP} > SWREAL.OUT",
             TIMEOUT_SECONDS,
         )
 
@@ -206,7 +213,7 @@ def main() -> int:
             "boundary=original-paks-read-only-production-path-smoke-non-gameplay\n"
             f"original-pak-Htic2-0-sha256={pak_sha256['Htic2-0.pak']}\n"
             f"original-pak-Htic2-1-sha256={pak_sha256['Htic2-1.pak']}\n"
-            "map=tutorial2\n"
+            f"map={MAP}\n"
             "dosbox-version=dosbox-staging, version 0.82.2 (f8c24)\n"
             + log_text,
             encoding="ascii",

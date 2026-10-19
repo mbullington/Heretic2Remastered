@@ -358,7 +358,9 @@ static qboolean bsp_semantics_valid(const sw_bsp_t *bsp)
 	{
 		const dmodel_t *model = &bsp->submodels[i];
 		const int headnode = LittleLong(model->headnode);
-		if (!vector_finite(model->mins, 9) || headnode < 0 || headnode >= bsp->num_nodes ||
+		// Brush submodels may root at a leaf: negative headnode encodes
+		// -(leaf + 1), exactly like node children (retail sspalace has two).
+		if (!vector_finite(model->mins, 9) || !child_valid(headnode, bsp->num_nodes, bsp->num_leaves) ||
 			!range_contains(LittleLong(model->firstface), LittleLong(model->numfaces), bsp->num_faces))
 			return BSP_REJECT_CODE();
 		for (int axis = 0; axis < 3; ++axis)

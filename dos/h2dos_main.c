@@ -1271,6 +1271,112 @@ int main(const int argc, char** argv)
 			begin_audio_proof(realdata);
 			audio_started = true;
 		}
+		{
+			// Save/load round-trip proof (H2DOS_SAVELOAD): once the local
+			// client is fully spawned, save through the production console
+			// command, run a few frames, then load it back the same way.
+			// Success is judged below by the client returning to the
+			// active/spawned state before the frame budget runs out.
+			static int saveload_stage;
+			static int saveload_frame;
+			if (realdata && getenv("H2DOS_SAVELOAD") != NULL && cls.state == ca_active && cl.refresh_prepped)
+			{
+				if (saveload_stage == 0)
+				{
+					Cbuf_AddText("save proofsave\n");
+					saveload_stage = 1;
+					saveload_frame = frame;
+					log_append("saveload-save-issued=frame-%d\n", frame);
+				}
+				else if (saveload_stage == 1 && frame >= saveload_frame + 4)
+				{
+					Cbuf_AddText("load proofsave\n");
+					saveload_stage = 2;
+					saveload_frame = frame;
+					log_append("saveload-load-issued=frame-%d\n", frame);
+				}
+				else if (saveload_stage == 2 && frame > saveload_frame &&
+					svs.initialized && svs.clients != NULL && svs.clients[0].state == cs_spawned)
+				{
+					saveload_stage = 3;
+					log_append("saveload-roundtrip=PASS\n");
+				}
+			}
+		}
+		{
+			// Campaign transition proof (H2DOS_TOUR="map1+map2+..."): chain
+			// production `map` transitions inside one session, dwelling a
+			// few active frames per map. Each arrival is judged by the
+			// server actually running the named map with the local client
+			// back in the active/spawned state, which exercises repeated
+			// server spawn, precache, registration, and client reconnect
+			// far beyond single cold loads.
+			static char tour_maps[32][32];
+			static int tour_count = -1;
+			static int tour_stage;
+			static int tour_active_since = -1;
+			static qboolean tour_issued;
+			if (realdata && tour_count < 0)
+			{
+				tour_count = 0;
+				const char *tour = getenv("H2DOS_TOUR");
+				if (tour != NULL)
+				{
+					const char *cur = tour;
+					while (*cur != '\0' && tour_count < 32)
+					{
+						const char *comma = strchr(cur, '+');
+						const size_t len = comma != NULL ? (size_t)(comma - cur) : strlen(cur);
+						if (len > 0 && len < sizeof(tour_maps[0]))
+						{
+							memcpy(tour_maps[tour_count], cur, len);
+							tour_maps[tour_count][len] = '\0';
+							++tour_count;
+						}
+						if (comma == NULL)
+							break;
+						cur = comma + 1;
+					}
+				}
+				tour_stage = 1;
+			}
+			// Scripted map-entry cinematics refuse gamemap; leave them the
+			// same way a player does (esc_cinematic) and wait for thaw.
+			if (realdata && tour_count > 1 &&
+				(cl.cinematictime > 0 || cl.frame.playerstate.cinematicfreeze))
+				cls.esc_cinematic = true;
+			if (realdata && tour_count > 1 && tour_stage < tour_count &&
+				cls.state == ca_active && cl.refresh_prepped && svs.initialized &&
+				svs.clients != NULL && svs.clients[0].state == cs_spawned)
+			{
+				if (strcmp(sv.name, tour_maps[tour_stage]) == 0)
+				{
+					log_append("tour-map-%s=PASS\n", tour_maps[tour_stage]);
+					++tour_stage;
+					tour_issued = false;
+					tour_active_since = frame;
+					if (tour_stage >= tour_count)
+						log_append("tour-complete=PASS\n");
+				}
+				else if (strcmp(sv.name, tour_maps[tour_stage - 1]) == 0)
+				{
+					if (tour_active_since < 0)
+						tour_active_since = frame;
+					if (!tour_issued && frame >= tour_active_since + 4 &&
+						cl.cinematictime <= 0 && !cl.frame.playerstate.cinematicfreeze)
+					{
+						char command[48];
+						snprintf(command, sizeof(command), "map %s\n", tour_maps[tour_stage]);
+						Cbuf_AddText(command);
+						log_append("tour-goto-%s=frame-%d\n", tour_maps[tour_stage], frame);
+						tour_issued = true;
+						tour_active_since = -1;
+					}
+				}
+			}
+			else if (tour_count > 1 && cls.state != ca_active)
+				tour_active_since = -1;
+		}
 	}
 
 	if (svs.initialized)
@@ -1291,6 +1397,36 @@ int main(const int argc, char** argv)
 		log_realdata_stats();
 	if (bench_requested && realdata)
 		log_bench_summary();
+	if (getenv("H2DOS_TOUR") != NULL)
+	{
+		FILE *probe = fopen(H2DOS_LOG, "r");
+		char line[256];
+		qboolean tour_done = false;
+		if (probe != NULL)
+		{
+			while (fgets(line, sizeof(line), probe) != NULL)
+				if (strstr(line, "tour-complete=PASS") != NULL)
+					tour_done = true;
+			fclose(probe);
+		}
+		if (!tour_done)
+			Sys_Error("Campaign tour did not reach every map in sequence");
+	}
+	if (getenv("H2DOS_SAVELOAD") != NULL)
+	{
+		FILE *probe = fopen(H2DOS_LOG, "r");
+		char line[256];
+		qboolean roundtrip = false;
+		if (probe != NULL)
+		{
+			while (fgets(line, sizeof(line), probe) != NULL)
+				if (strstr(line, "saveload-roundtrip=PASS") != NULL)
+					roundtrip = true;
+			fclose(probe);
+		}
+		if (!roundtrip)
+			Sys_Error("Save/load round trip did not return to the spawned state");
+	}
 	if (integrated_proof)
 	{
 		const h2dos_net_stats_t net_stats = NET_GetDOSStats();

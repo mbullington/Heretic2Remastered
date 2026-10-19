@@ -64,6 +64,7 @@ static qboolean sw_sprite_no_depth_test;
 // Bench attribution for shared triangle code: 0=other, 1=flex model, 2=sprite.
 static int sw_bench_tri_category;
 static qboolean normalize_checked(vec3_t vector);
+static void sw_tile_update(void);
 static void draw_flex_triangle(const vec3_t points[3], const float uv[3][2], const float colors[3][4],
 	const sw_image_t *image, const qboolean depth_write, const qboolean additive);
 
@@ -1127,6 +1128,10 @@ static void draw_face_spans(const screen_vertex_t *verts, const int n, const sw_
 			sw_ri.Con_Printf(PRINT_ALL, "tagface pregrad bf=%u face=%d minx=%g maxx=%g miny=%g maxy=%g n=%d\n",
 				sw_stats.bench_frames, face_index, minx, maxx, miny, maxy, n);
 	}
+	// Tile round-robin: faces wholly outside the current band skip even
+	// gradient/light setup; the scan range clamp below handles straddlers.
+	if (sw_tile_world_pass && (maxy <= (float)sw_tile_y0 || miny >= (float)sw_tile_y1))
+		return;
 
 	// Plane gradients in screen space for the five interpolated attributes.
 	// u/z, v/z and 1/z are exactly affine in (x, y) for a planar polygon.
@@ -1301,6 +1306,13 @@ static void draw_face_spans(const screen_vertex_t *verts, const int n, const sw_
 			sw_ri.Con_Printf(PRINT_ALL, "tagface abort scanrange bf=%u face=%d first=%d last=%d top=%d(%g) bottom=%d(%g)\n",
 				sw_stats.bench_frames, face_index, scan_first, scan_last, top, verts[top].y, bottom, verts[bottom].y);
 		return;
+	}
+	if (sw_tile_world_pass)
+	{
+		scan_first = max(scan_first, sw_tile_y0);
+		scan_last = min(scan_last, sw_tile_y1 - 1);
+		if (scan_first > scan_last)
+			return;
 	}
 
 	const qboolean stripe_checker = sw_scan2_active();
@@ -2246,9 +2258,14 @@ void SW_RasterSky(const refdef_t *fd)
 		if (sw_sky_images[face] == NULL)
 			return;
 	const int minimum_x = ClampI(fd->x, 0, sw_width);
-	const int minimum_y = ClampI(fd->y, 0, sw_height);
+	int minimum_y = ClampI(fd->y, 0, sw_height);
 	const int maximum_x = (int)min((long long)sw_width, (long long)fd->x + fd->width);
-	const int maximum_y = (int)min((long long)sw_height, (long long)fd->y + fd->height);
+	int maximum_y = (int)min((long long)sw_height, (long long)fd->y + fd->height);
+	if (sw_tile_y0 >= 0)
+	{
+		minimum_y = max(minimum_y, sw_tile_y0);
+		maximum_y = min(maximum_y, sw_tile_y1);
+	}
 	if (sw_width <= 0 || sw_height <= 0 || (size_t)sw_width > SIZE_MAX / (size_t)sw_height ||
 		(size_t)sw_width * (size_t)sw_height > SIZE_MAX / sizeof(*sky_cache))
 		return;
@@ -2267,7 +2284,10 @@ void SW_RasterSky(const refdef_t *fd)
 	const qboolean rotating = sw_sky_rotate != 0.0f;
 	const qboolean sky_checker2 = sw_scan2_active();
 	const size_t drawn_pixels = (size_t)max(0, maximum_x - minimum_x) * (size_t)max(0, maximum_y - minimum_y);
-	if (!rotating && sky_cache != NULL && sky_cache_matches(fd, rotation_angle))
+	// Tile round-robin renders one band per frame, so the whole-frame sky
+	// cache is never uniformly valid; always take the render path (which
+	// is band-clamped above) while tiled.
+	if (sw_tile_y0 < 0 && !rotating && sky_cache != NULL && sky_cache_matches(fd, rotation_angle))
 	{
 		++sw_stats.sky_cache_hits;
 		if (sw_dbg_skydiag)
@@ -2502,6 +2522,7 @@ void SW_RasterWorld(const refdef_t *fd)
 {
 	if (sw_world_model == NULL || sw_world_model->bsp == NULL || (fd->rdflags & RDF_NOWORLDMODEL))
 		return;
+	sw_tile_world_pass = sw_tile_bands > 0;
 	memset(sw_covermask, 0, (size_t)sw_height * sizeof(sw_covermask[0]));
 	// Per-face stores are keyed by face index into this BSP; invalidate all of
 	// them when the world changes so a new map cannot reuse stale light.
@@ -2573,6 +2594,9 @@ void SW_RasterWorld(const refdef_t *fd)
 		sw_world_ftb_mask_active = false;
 	}
 	sw_scan_phase ^= 1;
+	sw_tile_world_pass = false;
+	if (sw_tile_bands > 0)
+		sw_tile_phase = (sw_tile_phase + 1) % sw_tile_bands;
 }
 
 static qboolean project_point(const vec3_t point, int *x, int *y, float *depth)
@@ -5451,6 +5475,99 @@ qboolean sw_scan2_active(void)
 	return sw_cvar_scan2 != NULL && sw_cvar_scan2->value != 0.0f;
 }
 
+// Tile round-robin world refresh (r_swtile = band count, 0 = off): the
+// static world and sky repaint only one horizontal band per frame against
+// retained color+depth; entities, particles, lights, and blend stay
+// full-screen every frame. World paint cost divides by the band count;
+// in exchange, world pixels outside the current band are up to N-1 frames
+// stale under camera motion, and entity depth tests there compare against
+// equally stale depth.
+static cvar_t *sw_cvar_tile;
+int sw_tile_bands;
+int sw_tile_phase;
+int sw_tile_y0 = -1;
+int sw_tile_y1 = -1;
+qboolean sw_tile_world_pass;
+// Retained world buffers: world+sky render here (banded), then the whole
+// buffer is composited into the display buffers each frame so entities,
+// particles, lights, and blend always start from a clean world image and
+// never accumulate on stale bands.
+uint16_t *sw_tile_world_color;
+uint32_t *sw_tile_world_depth;
+static int sw_tile_alloc_w, sw_tile_alloc_h;
+static int sw_tile_warmup;
+static uint16_t *sw_tile_display_color;
+static uint32_t *sw_tile_display_depth;
+
+static void sw_tile_update(void)
+{
+	if (sw_cvar_tile == NULL)
+	{
+		const char *env = getenv("H2DOS_SW_TILE");
+		sw_cvar_tile = sw_ri.Cvar_Get("r_swtile", env != NULL ? env : "0", 0);
+	}
+	int bands = sw_cvar_tile != NULL ? (int)sw_cvar_tile->value : 0;
+	if (bands < 2 || bands > 16)
+		bands = 0;
+	sw_tile_bands = bands;
+	if (bands == 0 || sw_height <= 0 || sw_width <= 0)
+	{
+		sw_tile_y0 = -1;
+		sw_tile_y1 = -1;
+		return;
+	}
+	if (sw_tile_alloc_w != sw_width || sw_tile_alloc_h != sw_height)
+	{
+		free(sw_tile_world_color);
+		free(sw_tile_world_depth);
+		const size_t pixels = (size_t)sw_width * (size_t)sw_height;
+		sw_tile_world_color = calloc(pixels, sizeof(*sw_tile_world_color));
+		sw_tile_world_depth = calloc(pixels, sizeof(*sw_tile_world_depth));
+		if (sw_tile_world_color == NULL || sw_tile_world_depth == NULL)
+		{
+			free(sw_tile_world_color);
+			free(sw_tile_world_depth);
+			sw_tile_world_color = NULL;
+			sw_tile_world_depth = NULL;
+			sw_tile_bands = 0;
+			sw_tile_y0 = -1;
+			sw_tile_y1 = -1;
+			return;
+		}
+		sw_tile_alloc_w = sw_width;
+		sw_tile_alloc_h = sw_height;
+		sw_tile_warmup = 1;
+	}
+	if (sw_tile_warmup)
+	{
+		// First tiled frame paints the whole world so no band starts black.
+		sw_tile_warmup = 0;
+		sw_tile_y0 = 0;
+		sw_tile_y1 = sw_height;
+		return;
+	}
+	const int band_h = (sw_height + bands - 1) / bands;
+	sw_tile_y0 = sw_tile_phase * band_h;
+	sw_tile_y1 = min(sw_height, sw_tile_y0 + band_h);
+}
+
+static void sw_tile_swap_in(void)
+{
+	sw_tile_display_color = sw_color;
+	sw_tile_display_depth = sw_depth;
+	sw_color = sw_tile_world_color;
+	sw_depth = sw_tile_world_depth;
+}
+
+static void sw_tile_composite(void)
+{
+	const size_t pixels = (size_t)sw_width * (size_t)sw_height;
+	memcpy(sw_tile_display_color, sw_tile_world_color, pixels * sizeof(*sw_color));
+	memcpy(sw_tile_display_depth, sw_tile_world_depth, pixels * sizeof(*sw_depth));
+	sw_color = sw_tile_display_color;
+	sw_depth = sw_tile_display_depth;
+}
+
 uint32_t sw_covermask[480][SW_COVER_WORDS];
 
 // Deterministic combat-fx load for the T3 holdout (H2DOS_SW_FXLOAD=1): the
@@ -5565,6 +5682,10 @@ int SW_RenderFrame(const refdef_t *fd)
 		SW_ClearColorFill();
 	const uclock_t frame_start = uclock();
 	uclock_t mark = frame_start;
+	sw_tile_update();
+	const qboolean tile_active = sw_tile_bands > 0 && !(fd->rdflags & RDF_NOWORLDMODEL);
+	if (tile_active)
+		sw_tile_swap_in();
 	// Sky runs after the world pass and writes only where depth is still far.
 	SW_RasterWorld(fd);
 	{
@@ -5578,6 +5699,8 @@ int SW_RenderFrame(const refdef_t *fd)
 		sw_stats.bench_us_sky += (unsigned long long)(next - mark);
 		mark = next;
 	}
+	if (tile_active)
+		sw_tile_composite();
 	SW_RasterEntities(fd);
 	{
 		const uclock_t next = uclock();
