@@ -160,6 +160,24 @@ The PAK also contains explicitly malformed synthetic cases: truncated/invalid WA
 
 The BSP and assets exist only to exercise production collision, registration, rasterization, static APIs, game-frame paths, and malformed-input rejection. They are not copied from Heretic II and are not visual or gameplay substitutes. The fixture contains 69 entries and has SHA-256 `5c7ce341b48b59555731369cec029f5f6ce819bb00e62e65dfb2bdf297baaa6f`. The host verifies this pinned hash before staging, while the guest verifies its identity through `FS_LoadFile`, inventories its mounted PAK input, and records an engine checksum.
 
+## Getting the game data
+
+The DOS build is only an engine; it does not include the game. It needs the two data archives (\u201cPAK files\u201d) from a legal copy of Heretic II — the Steam or GOG release, or the original 1998 CD:
+
+- `Htic2-0.pak` (about 206 MB)
+- `Htic2-1.pak` (about 42 MB)
+
+`scripts/run-dos-play.sh` searches for them automatically, in this order: the directory named by `H2DOS_ORIGINAL_DATA` (default `.dos-data/` in this repository), then the usual installation locations for the host operating system, and announces what it found. Searched locations include:
+
+| Source | Windows | macOS | Linux |
+|---|---|---|---|
+| Steam | `C:\\Program Files (x86)\\Steam\\steamapps\\common\\Heretic 2\\base\\` | `~/Library/Application Support/Steam/steamapps/common/Heretic 2/base/` | `~/.local/share/Steam/steamapps/common/Heretic 2/base/` |
+| Steam extra libraries | read from `libraryfolders.vdf` | read from `libraryfolders.vdf` | read from `libraryfolders.vdf` (incl. Flatpak Steam) |
+| GOG | `C:\\GOG Games\\Heretic II\\base\\` (Galaxy: `...\\GOG Galaxy\\Games\\Heretic II\\base\\`) | `~/GOG Games/Heretic II/base/` | `~/GOG Games/Heretic II/base/`, Heroic under `~/Games/Heroic/` |
+| Original CD | copy from `Setup\\zip\\h2.zip` on the disc | mounted disc auto-extracted from `/Volumes/.../Setup/zip/h2.zip` | mounted disc auto-extracted from `/media/.../Setup/zip/h2.zip` |
+
+To point at an install manually, copy both files into `.dos-data/base/` in this repository, or set `H2DOS_ORIGINAL_DATA` to the folder that *contains* the `base/` folder (for example `H2DOS_ORIGINAL_DATA="$HOME/GOG Games/Heretic II"`). If nothing is found, the launcher prints these same locations and exits without starting DOSBox. The PAK files are identified by their `PACK` header before use, are only read (never modified), and are staged as copies under the ignored `.dos-build/play/` directory.
+
 ## Original-data production-path smoke
 
 `scripts/run-dos-realdata.py` is an opt-in bounded smoke proof that runs the production path against user-owned original retail PAKs placed at `.dos-data/base/Htic2-0.pak` and `.dos-data/base/Htic2-1.pak`. The directory is git-ignored, the files are treated as read-only proprietary user data, and they are never copied into the repository or its commits. The script records the SHA-256 of each PAK in the evidence (currently `72e0b4b589…b545` and `6b552ade72…20ef` for the user's retail files), verifies the staged copies match the originals byte-for-byte, and removes that private run directory after a successful run exactly like the synthetic proofs. On failure the run directory is kept for debugging and must be deleted after inspection.
@@ -170,7 +188,7 @@ The proof loads the smallest retail BSP (`maps/tutorial2.bsp`) through the unmod
 
 Evidence is published to `.dos-build/guest/REALDATA-EVIDENCE.TXT` with `boundary=original-paks-read-only-production-path-smoke-non-gameplay`, `gameplay=UNVERIFIED`, and guest counters such as frames presented, world faces, triangles, depth writes, sprite entities, flex models/entities, M8/M32 image counts, and sound mixer/submission counters.
 
-The retail 1.06 data layout predates remaster asset paths: requests such as `players/male/*.m8` and `pics/menu/num_*.m32` do not exist in the retail PAKs. The renderer logs them and serves its labeled missing-asset fallback, matching the reference GL renderer's no-extension-fallback behavior. The count is recorded as `realdata-missing-assets=`.
+The retail 1.06 data layout predates remaster asset paths: requests such as `players/male/*.m8` and `pics/menu/num_*.m32` do not exist in the retail PAKs. The DOS renderer resolves them through explicit player-alias entries and an `.m8`/`.m32` sibling retry (so the `FindFile` log lines for those names are probes, not failures); genuinely absent assets such as the Tornado pickup model still fall back and are counted in `realdata-missing-assets=`.
 
 ## Preserved diagnostic proofs
 
